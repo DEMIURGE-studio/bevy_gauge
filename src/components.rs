@@ -349,7 +349,7 @@ impl From<StatDefinitions> for GrantsStats {
 }
 
 #[derive(Component, Debug, Deserialize, Clone, Default)]
-pub struct Stats(HashMap<String, f32>);
+pub struct Stats(pub HashMap<String, f32>);
 
 impl Stats {
     /// Core getter method that accepts &str.
