@@ -7,10 +7,6 @@ edition = "2021"
 name = "bevy_guage"
 path = "src/lib.rs"
 
-[[bench]]
-name = "stats_bench"
-path = "benches/stats_bench.rs"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -33,3 +29,8 @@ evalexpr = "12.0.2"
 
 [dev-dependencies]
 criterion = "0.4"
+
+[[bench]]
+name = "stats_bench"
+path = "benches/stats_bench.rs"
+harness = false
