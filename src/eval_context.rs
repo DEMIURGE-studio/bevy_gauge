@@ -163,7 +163,7 @@ impl<'a> StatContextRefs<'a> {
 // Your data container, storing Entities only
 #[derive(Component, Default)]
 pub struct StatContext {
-    sources: HashMap<String, Entity>,
+    pub sources: HashMap<String, Entity>,
 }
 
 impl StatContext {
