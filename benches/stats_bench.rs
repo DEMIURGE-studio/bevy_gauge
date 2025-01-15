@@ -3,10 +3,7 @@ use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_guage::prelude::{
     StatDefinitions, StatContext, StatContextRefs, Stats,
-    // plus any other items you need
 };
-
-use std::fmt::Debug;
 
 /// Builds the ephemeral context for an entity, using QueryState lookups
 pub fn build<'a>(
@@ -215,7 +212,7 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
 
     // Rebuild ephemeral context 10,000 times
     let mut group = c.benchmark_group("deep_hierarchy_build");
-    group.bench_function("build E3 context x10000", |b| {
+    group.bench_function("build E3 context x10,000", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
                 let ctx_refs = build(e3, &world, &defs_query, &ctx_query);
@@ -231,16 +228,16 @@ fn bench_stats_lookups(c: &mut Criterion) {
     let mut stats = Stats::default();
 
     // 1) Populate Stats with 100 keys
-    for i in 0..100 {
+    for i in 0..10000 {
         let key = format!("StatKey{}", i);
         stats.0.insert(key, i as f32);
     }
 
     // 2) Benchmark 100 lookups
     let mut group = c.benchmark_group("stats_lookups");
-    group.bench_function("100 stats lookups", |b| {
+    group.bench_function("10,000 stats lookups", |b| {
         b.iter(|| {
-            for i in 0..100 {
+            for i in 0..10000 {
                 let key = format!("StatKey{}", i);
                 let val = stats.get(&key).unwrap(); 
                 black_box(val);
