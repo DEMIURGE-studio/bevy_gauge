@@ -6,8 +6,6 @@ use crate::prelude::*;
 pub enum StatContextRefs<'a> {
     Definitions(&'a StatDefinitions),
     SubContext(Box<HardMap<'a>>),
-    // This variant is used for an uninitialized or empty slot
-    NoContext,
 }
 
 // ---------------------------------------------------------------------
@@ -15,34 +13,34 @@ pub enum StatContextRefs<'a> {
 // ---------------------------------------------------------------------
 #[derive(Debug)]
 pub struct HardMap<'a> {
-    refs: [StatContextRefs<'a>; 3],
+    refs: [Option<StatContextRefs<'a>>; 3],
 }
 
 impl<'a> HardMap<'a> {
     pub fn new() -> Self {
         Self {
             refs: [
-                StatContextRefs::NoContext,
-                StatContextRefs::NoContext,
-                StatContextRefs::NoContext,
+                None,
+                None,
+                None,
             ]
         }
     }
 
     pub fn set(&mut self, key: StatContextType, val: StatContextRefs<'a>) {
-        self.refs[key.idx()] = val;
+        self.refs[key.idx()] = Some(val);
     }
 
-    pub fn get(&self, key: StatContextType) -> &StatContextRefs<'a> {
+    pub fn get(&self, key: StatContextType) -> &Option<StatContextRefs<'a>> {
         &self.refs[key.idx()]
     }
 
     /// A helper to pick the correct slot from a string:
     pub fn get_by_str(&self, key: &str) -> Option<&StatContextRefs<'a>> {
         match key {
-            "self"   => Some(self.get(StatContextType::This)),
-            "parent" => Some(self.get(StatContextType::Parent)),
-            "target" => Some(self.get(StatContextType::Target)),
+            "self"   => self.get(StatContextType::This).as_ref(),
+            "parent" => self.get(StatContextType::Parent).as_ref(),
+            "target" => self.get(StatContextType::Target).as_ref(),
             _        => None,
         }
     }
@@ -138,7 +136,7 @@ impl<'a> StatContextRefs<'a> {
                 // If the "head" starts uppercase, treat the entire string as a single stat in "self"
                 if Self::is_stat_name_segment(head) {
                     let joined = parts.join(".");
-                    if let StatContextRefs::Definitions(defs) = hard_map.get(StatContextType::This) {
+                    if let Some(StatContextRefs::Definitions(defs)) = hard_map.get(StatContextType::This) {
                         return defs.get_str(&joined, self);
                     } else {
                         return Err(StatError::NotFound(
@@ -179,7 +177,7 @@ impl<'a> StatContextRefs<'a> {
                         if Self::is_stat_name_segment(head2) {
                             // e.g. "parent.parent.Life" => entire remainder is "Life"
                             let joined = tail.join(".");
-                            if let StatContextRefs::Definitions(defs) = child_map.get(StatContextType::This) {
+                            if let Some(StatContextRefs::Definitions(defs)) = child_map.get(StatContextType::This) {
                                 return defs.get_str(&joined, self);
                             } else {
                                 return Err(StatError::NotFound(format!(
@@ -197,19 +195,12 @@ impl<'a> StatContextRefs<'a> {
                             }
                         }
                     }
-                    Some(StatContextRefs::NoContext) | None => {
+                    _ => {
                         Err(StatError::NotFound(format!(
                             "Key '{head}' not found among subcontext"
                         )))
                     }
                 }
-            }
-
-            // ================ 3) This slot is empty (NoContext) ================
-            StatContextRefs::NoContext => {
-                Err(StatError::NotFound(
-                    format!("NoContext: cannot resolve parts: {:?}", parts)
-                ))
             }
         }
     }
