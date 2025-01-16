@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_ecs::system::SystemParam;
 use bevy_utils::HashMap;
 use evalexpr::{
     Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
@@ -383,12 +384,11 @@ fn add_new_stats_system(
 
 fn update_stats_system(
     mut stat_entity_query: Query<(Entity, &mut Stats), Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
-    stat_context_query: Query<&StatContext>,
-    stat_definitions_query: Query<&StatDefinitions>,
+    stat_accessor: StatAccessor,
 ) {
     for (stats_entity, mut stats) in stat_entity_query.iter_mut() {
 
-        let stat_context = StatContextRefs::build(stats_entity, &stat_definitions_query, &stat_context_query);
+        let stat_context = stat_accessor.build(stats_entity);
 
         for (stat, value) in stats.0.iter_mut() {
             *value = stat_context.get(stat).unwrap_or(0.0);
@@ -440,4 +440,16 @@ pub(crate) fn plugin(app: &mut App) {
         update_parent_context,
         update_self_context,
     ));
+}
+
+#[derive(SystemParam)]
+struct StatAccessor<'w, 's> {
+    definitions: Query<'w, 's, &'static StatDefinitions>,
+    contexts: Query<'w, 's, &'static StatContext>,
+}
+
+impl StatAccessor<'_, '_> {
+    pub fn build(&self, entity: Entity) -> StatContextRefs {
+        StatContextRefs::build(entity, &self.definitions, &self.contexts)
+    }
 }
