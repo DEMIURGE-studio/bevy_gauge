@@ -292,6 +292,55 @@ fn bench_ecs_value_iteration(c: &mut Criterion) {
     group.finish();
 }
 
+/// A benchmark that tests a simple context, and **evaluates** `TotalLife` on E3 10,000 times.
+fn bench_simple_evaluation(c: &mut Criterion) {
+    let mut world = World::default();
+
+    let e0 = world.spawn_empty().id();
+
+    // (2) Insert definitions
+    {
+        let mut defs = StatDefinitions::new();
+        defs.add("AddedLife", 100).unwrap();
+        defs.add("IncreasedLife", 50).unwrap();
+        defs.set("TotalLife", bevy_guage::prelude::ExpressionPart::new(
+            1, 
+            "+= AddedLife * IncreasedLife / 100.0"
+        ));
+        world.entity_mut(e0).insert(defs);
+    }
+
+    // (3) Insert StatContext
+    {
+        let mut ctx = StatContext::default();
+        ctx.insert("self", e0);
+        world.entity_mut(e0).insert(ctx);
+    }
+
+    // (4) Insert Stats
+    world.entity_mut(e0).insert(Stats::default());
+
+    // (5) Build QueryStates & retrieve definitions
+    let mut defs_query = world.query::<&StatDefinitions>();
+    let mut ctx_query  = world.query::<&StatContext>();
+    let e0_defs = defs_query.get(&world, e0).unwrap();
+
+    // Build the ephemeral context for E3 once
+    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
+
+    // Evaluate "ChildLife" 10,000 times
+    let mut group = c.benchmark_group("deep_hierarchy_eval");
+    group.bench_function("evaluate E0.TotalLife x10000", |b| {
+        b.iter(|| {
+            for _ in 0..10_000 {
+                let val = e0_defs.get("TotalLife", &ctx_refs).unwrap();
+                black_box(val);
+            }
+        });
+    });
+    group.finish();
+}
+
 // Group all benchmarks together
 criterion_group!(
     benches,
@@ -299,5 +348,6 @@ criterion_group!(
     bench_deep_hierarchy_build,
     bench_stats_lookups,
     bench_ecs_value_iteration,
+    bench_simple_evaluation,
 );
 criterion_main!(benches);
