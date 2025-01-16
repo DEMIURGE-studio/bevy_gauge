@@ -2,33 +2,48 @@ use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_guage::prelude::{
-    StatDefinitions, StatContext, StatContextRefs, Stats,
+    HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions, Stats
 };
 
-/// Builds the ephemeral context for an entity, using QueryState lookups
 pub fn build<'a>(
     entity: Entity,
     world: &'a World,
     defs_query: &QueryState<&StatDefinitions>,
     ctx_query: &QueryState<&StatContext>,
 ) -> StatContextRefs<'a> {
-    let mut map = HashMap::default();
+    // Create a HardMap with default NoContext in each slot
+    let mut hard_map = HardMap::new();
 
+    // If the entity itself has definitions, store them under the "This" slot
     if let Ok(defs) = defs_query.get_manual(world, entity) {
-        map.insert("self", StatContextRefs::Definitions(defs));
+        hard_map.set(StatContextType::This, StatContextRefs::Definitions(defs));
     }
 
+    // If the entity has a StatContext, build subcontexts for each known key
     if let Ok(stat_context) = ctx_query.get_manual(world, entity) {
         for (key, child_entity) in &stat_context.sources {
-            if key == "self" {
+            // Avoid infinite recursion if an entity references itself
+            if *child_entity == entity {
                 continue;
             }
+            // Recursively build the child subcontext
             let child_src = build(*child_entity, world, defs_query, ctx_query);
-            map.insert(key.as_str(), child_src);
+
+            // Match the child key to one of our 3 slots
+            match key.as_str() {
+                "self"   => hard_map.set(StatContextType::This, child_src),
+                "parent" => hard_map.set(StatContextType::Parent, child_src),
+                "target" => hard_map.set(StatContextType::Target, child_src),
+                // If you have more “hard-coded” slots, handle them here
+                _ => {
+                    // Or ignore unknown keys
+                }
+            }
         }
     }
 
-    StatContextRefs::SubContext(map)
+    // Return a SubContext if we stored anything
+    StatContextRefs::SubContext(Box::new(hard_map))
 }
 
 /// A benchmark that tests a deep hierarchy of parent contexts, and **evaluates** `ChildLife` on E3 10,000 times.
