@@ -5,7 +5,7 @@ use crate::prelude::*;
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
     Definitions(&'a StatDefinitions),
-    SubContext(HardMap<'a>),
+    SubContext(Box<HardMap<'a>>),
     // This variant is used for an uninitialized or empty slot
     NoContext,
 }
