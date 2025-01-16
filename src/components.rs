@@ -204,12 +204,11 @@ impl Expression {
     pub fn evaluate(&self, eval_context: &StatContextRefs) -> f32 {
         // Start from base
         let mut current_value = self.base;
+        let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
 
-        // Evaluate each part in ascending priority
-        let parts = self.parts.clone();
-        for part in parts {
+        for part in self.parts.iter() {
             // Build a local evalexpr context for each part
-            let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
+            context.clear();
 
             context.set_value("Total".to_string(), EvalValue::from_float(current_value as f64)).unwrap();
 
