@@ -4,6 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_guage::prelude::{
     StatDefinitions, StatContext, StatContextRefs, Stats,
 };
+use micromap::Map;
 
 /// Builds the ephemeral context for an entity, using QueryState lookups
 pub fn build<'a>(
@@ -12,23 +13,29 @@ pub fn build<'a>(
     defs_query: &QueryState<&StatDefinitions>,
     ctx_query: &QueryState<&StatContext>,
 ) -> StatContextRefs<'a> {
-    let mut map = HashMap::default();
+    // We'll create a map for all sub-entries of this entity.
+    let mut map = Map::new();
 
+    // If the entity itself has definitions, we store them under “self”.
     if let Ok(defs) = defs_query.get_manual(world, entity) {
         map.insert("self", StatContextRefs::Definitions(defs));
     }
 
+    // If the entity has a StatContext, build subcontext entries for each.
     if let Ok(stat_context) = ctx_query.get_manual(world, entity) {
         for (key, child_entity) in &stat_context.sources {
-            if key == "self" {
+            if *child_entity == entity {
                 continue;
             }
-            let child_src = build(*child_entity, world, defs_query, ctx_query);
-            map.insert(key.as_str(), child_src);
+            // Build a sub tree for that child.
+            let child_source_ref = build(*child_entity, world, defs_query, ctx_query);
+            map.insert(key.as_str(), child_source_ref);
         }
     }
 
-    StatContextRefs::SubContext(map)
+    // If we ended up with an empty map, then there's no data at all. Return None.
+    // Otherwise, it's a "branch" node storing those sub references.
+    StatContextRefs::SubContext(Box::new(map))
 }
 
 /// A benchmark that tests a deep hierarchy of parent contexts, and **evaluates** `ChildLife` on E3 10,000 times.

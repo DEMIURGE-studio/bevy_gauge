@@ -1,11 +1,11 @@
 use bevy::prelude::*;
-use bevy_utils::HashMap;
+use micromap::Map;
 use crate::prelude::*;
 
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
     Definitions(&'a StatDefinitions),
-    SubContext(HashMap<&'a str, StatContextRefs<'a>>),
+    SubContext(Box<Map<&'a str, StatContextRefs<'a>, 3>>),
 }
 
 impl<'a> StatContextRefs<'a> {
@@ -135,7 +135,7 @@ impl<'a> StatContextRefs<'a> {
         ctx_query: &'a Query<'_, '_, &StatContext>,
     ) -> StatContextRefs<'a> {
         // We'll create a map for all sub-entries of this entity.
-        let mut map = HashMap::default();
+        let mut map = Map::new();
     
         // If the entity itself has definitions, we store them under “self”.
         if let Ok(defs) = stats_query.get(entity) {
@@ -156,14 +156,14 @@ impl<'a> StatContextRefs<'a> {
     
         // If we ended up with an empty map, then there's no data at all. Return None.
         // Otherwise, it's a "branch" node storing those sub references.
-        StatContextRefs::SubContext(map)
+        StatContextRefs::SubContext(Box::new(map))
     }
 }
 
 // Your data container, storing Entities only
 #[derive(Component, Default)]
 pub struct StatContext {
-    pub sources: HashMap<String, Entity>,
+    pub sources: Map<String, Entity, 3>,
 }
 
 impl StatContext {
