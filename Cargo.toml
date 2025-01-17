@@ -24,7 +24,7 @@ bevy_animation = "0.15.0"
 
 # Serialization
 ron = "0.8.1"
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { version = "1.0.197", features = ["derive", "rc"] }
 evalexpr = "12.0.2"
 
 [dev-dependencies]

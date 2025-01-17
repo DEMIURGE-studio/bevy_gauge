@@ -30,7 +30,7 @@ pub fn build<'a>(
             let child_src = build(*child_entity, world, defs_query, ctx_query);
 
             // Match the child key to one of our 3 slots
-            match key.as_str() {
+            match key.as_ref() {
                 "self"   => hard_map.set(StatContextType::This, child_src),
                 "parent" => hard_map.set(StatContextType::Parent, child_src),
                 "target" => hard_map.set(StatContextType::Target, child_src),

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_utils::HashMap;
 use evalexpr::{DefaultNumericTypes, Node};
 use serde::de::{self, Visitor};
@@ -222,13 +224,13 @@ enum NestedExpression {
     Expression(Expression),
 
     // Nested map of string -> NestedExpression
-    Map(HashMap<String, NestedExpression>),
+    Map(HashMap<Arc<str>, NestedExpression>),
 }
 
 fn flatten_nested_expressions(
     prefix: &str,
-    nested: &HashMap<String, NestedExpression>,
-    out: &mut HashMap<String, Expression>,
+    nested: &HashMap<Arc<str>, NestedExpression>,
+    out: &mut HashMap<Arc<str>, Expression>,
 ) {
     for (key, value) in nested {
         // If we already have a prefix, attach with a dot; otherwise use just `key`
@@ -241,7 +243,7 @@ fn flatten_nested_expressions(
         match value {
             NestedExpression::Expression(expr) => {
                 // This is a final leaf, store the flattened key
-                out.insert(new_key, expr.clone());
+                out.insert(new_key.into(), expr.clone());
             }
             NestedExpression::Map(submap) => {
                 // Recurse
@@ -257,7 +259,7 @@ impl<'de> Deserialize<'de> for StatDefinitions {
         D: Deserializer<'de>,
     {
         // First parse into an intermediate `HashMap<String, NestedExpression>`
-        let nested_map = HashMap::<String, NestedExpression>::deserialize(deserializer)?;
+        let nested_map = HashMap::<Arc<str>, NestedExpression>::deserialize(deserializer)?;
 
         // We'll build a new flattened map of type `HashMap<String, Expression>`
         let mut flat_map = HashMap::new();

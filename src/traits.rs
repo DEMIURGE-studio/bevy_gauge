@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::prelude::*;
 
 pub trait Named: Sized {
@@ -5,31 +7,43 @@ pub trait Named: Sized {
     fn to_string() -> String { Self::NAME.to_string() }
 }
 
-pub trait AsStr {
-    fn to_str(&self) -> &str;
+pub trait AsArcStr {
+    fn to_str(&self) -> Arc<str>;
 }
 
-impl<T: Named> AsStr for T {
-    fn to_str(&self) -> &str {
-        Self::NAME
+impl<T: Named> AsArcStr for T {
+    fn to_str(&self) -> Arc<str> {
+        Self::NAME.into()
     }
 }
 
-impl AsStr for String {
-    fn to_str(&self) -> &str {
-        self.as_str()
+impl AsArcStr for String {
+    fn to_str(&self) -> Arc<str> {
+        self.as_str().into()
     }
 }
 
-impl AsStr for &String {
-    fn to_str(&self) -> &str {
-        self.as_str()
+impl AsArcStr for &String {
+    fn to_str(&self) -> Arc<str> {
+        self.as_str().into()
     }
 }
 
-impl AsStr for &str {
-    fn to_str(&self) -> &str {
-        self
+impl AsArcStr for &str {
+    fn to_str(&self) -> Arc<str> {
+        (*self).into()
+    }
+}
+
+impl AsArcStr for Arc<str> {
+    fn to_str(&self) -> Arc<str> {
+        self.clone()
+    }
+}
+
+impl AsArcStr for &Arc<str> {
+    fn to_str(&self) -> Arc<str> {
+        (*self).clone()
     }
 }
 

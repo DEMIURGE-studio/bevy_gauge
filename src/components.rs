@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use bevy_utils::HashMap;
 use evalexpr::{
@@ -88,6 +90,9 @@ use super::serialization::ExprWrapper;
 /// against a special temporary context that includes the target entity and
 /// its subcontexts, so we could have something like "Total += target.Corrosion"
 /// as the expression
+/// 
+/// 2. Consider Rc<str> or Arc<str> for stat names
+/// 3. Try to make StatContextRefs work as a fasteval namespace
 
 // =======================================================
 // 1. StatError
@@ -254,7 +259,7 @@ impl ExpressionPart {
 
 #[derive(Component, Debug, Clone)]
 #[require(StatContext)]
-pub struct StatDefinitions(HashMap<String, Expression>);
+pub struct StatDefinitions(HashMap<Arc<str>, Expression>);
 
 impl StatDefinitions {
     pub fn new() -> Self {
@@ -262,41 +267,41 @@ impl StatDefinitions {
     }
 
     /// Core getter method that accepts &str.
-    pub(crate) fn get_str(&self, stat: &str, eval_context: &StatContextRefs) -> Result<f32, StatError> {
-        match self.0.get(stat) {
+    pub(crate) fn get_str(&self, stat: Arc<str>, eval_context: &StatContextRefs) -> Result<f32, StatError> {
+        match self.0.get(&stat) {
             Some(stat_value) => Ok(stat_value.evaluate(eval_context)),
             None => Err(StatError::NotFound(stat.to_string())),
         }
     }
 
     /// Helper getter method that accepts any AsStr implementor.
-    pub fn get<S: AsStr>(&self, stat: S, eval_context: &StatContextRefs) -> Result<f32, StatError> {
+    pub fn get<S: AsArcStr>(&self, stat: S, eval_context: &StatContextRefs) -> Result<f32, StatError> {
         self.get_str(stat.to_str(), eval_context)
     }
 
     /// Adds a value to a specific stat.
-    pub fn add<S: AsStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
+    pub fn add<S: AsArcStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
     where
         V: Into<Expression>,
     {
         let stat_name = stat.to_str();
         let stat_value = value.into();
-        let current = self.0.get(stat_name).cloned().unwrap_or_default();
+        let current = self.0.get(&stat_name).cloned().unwrap_or_default();
         let new_value = current.add(&stat_value)?;
-        self.0.insert(stat_name.to_string(), new_value);
+        self.0.insert(stat_name.into(), new_value);
         Ok(())
     }
 
     /// Subtracts a value from a specific stat.
-    pub fn subtract<S: AsStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
+    pub fn subtract<S: AsArcStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
     where
         V: Into<Expression>,
     {
         let stat_name = stat.to_str();
         let stat_value = value.into();
-        let current = self.0.get(stat_name).cloned().unwrap_or_default();
+        let current = self.0.get(&stat_name).cloned().unwrap_or_default();
         let new_value = current.remove(&stat_value)?;
-        self.0.insert(stat_name.to_string(), new_value);
+        self.0.insert(stat_name.into(), new_value);
         Ok(())
     }
 
@@ -316,18 +321,18 @@ impl StatDefinitions {
         Ok(())
     }
 
-    pub fn set<S: AsStr, V>(&mut self, stat: S, value: V) -> &mut Self
+    pub fn set<S: AsArcStr, V>(&mut self, stat: S, value: V) -> &mut Self
     where
         V: Into<Expression>,
     {
         let stat_name = stat.to_str();
-        self.0.insert(stat_name.to_string(), value.into());
+        self.0.insert(stat_name.into(), value.into());
         self
     }
 }
 
-impl From<HashMap<String, Expression>> for StatDefinitions {
-    fn from(value: HashMap<String, Expression>) -> Self {
+impl From<HashMap<Arc<str>, Expression>> for StatDefinitions {
+    fn from(value: HashMap<Arc<str>, Expression>) -> Self {
         return StatDefinitions(value);
     }
 }
