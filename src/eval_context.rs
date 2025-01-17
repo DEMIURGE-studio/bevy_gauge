@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_ecs::system::SystemParam;
 use bevy_utils::HashMap;
 use crate::prelude::*;
 
@@ -178,4 +179,16 @@ pub enum StatContextType {
     This,
     Parent,
     Target,
+}
+
+#[derive(SystemParam)]
+pub struct StatAccessor<'w, 's> {
+    definitions: Query<'w, 's, &'static StatDefinitions>,
+    contexts: Query<'w, 's, &'static StatContext>,
+}
+
+impl StatAccessor<'_, '_> {
+    pub fn build(&self, entity: Entity) -> StatContextRefs {
+        StatContextRefs::build(entity, &self.definitions, &self.contexts)
+    }
 }

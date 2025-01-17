@@ -11,7 +11,7 @@ use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext,
 pub struct StatRequirement(pub Node<DefaultNumericTypes>);
 
 impl StatRequirement {
-    pub fn met(&self, stats: &Stats) -> bool {
+    pub fn met(&self, stats: &StatContextRefs) -> bool {
         let mut context = HashMapContext::new();
 
         // Gather variable references from the expression
@@ -51,7 +51,7 @@ impl StatRequirements {
 
     /// Returns true if all constraints hold.
     /// If a stat is missing => treat it as 0.0.
-    pub fn met(&self, stats: &Stats) -> bool {
+    pub fn met(&self, stats: &StatContextRefs) -> bool {
         for req in self.0.iter() {
             if !req.met(stats) {
                 return false;

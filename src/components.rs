@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_ecs::system::SystemParam;
 use bevy_utils::HashMap;
 use evalexpr::{
     Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
@@ -254,7 +253,7 @@ impl ExpressionPart {
 }
 
 #[derive(Component, Debug, Clone)]
-#[require(Stats, StatContext)]
+#[require(StatContext)]
 pub struct StatDefinitions(HashMap<String, Expression>);
 
 impl StatDefinitions {
@@ -348,55 +347,10 @@ impl From<StatDefinitions> for GrantsStats {
     }
 }
 
-#[derive(Component, Debug, Deserialize, Clone, Default)]
-pub struct Stats(pub HashMap<String, f32>);
-
-impl Stats {
-    /// Core getter method that accepts &str.
-    pub(crate) fn get_str(&self, stat: &str) -> Result<f32, StatError> {
-        let val = self.0.get(stat);
-
-        match val {
-            Some(val) => Ok(*val),
-            None => Err(StatError::NotFound(format!("Stat was not found: {:#?}", stat))),
-        }
-    }
-
-    /// Helper getter method that accepts any AsStr implementor.
-    pub fn get<S: AsStr>(&self, stat: S) -> Result<f32, StatError> {
-        self.get_str(stat.to_str())
-    }
-}
-
-// TODO I need to make a plugin for this stuff. I also maybe need to adjust the stats schedule
-fn add_new_stats_system(
-    mut stat_entity_query: Query<(&StatDefinitions, &mut Stats), Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
-) {
-    for (stat_definitions, mut stats) in stat_entity_query.iter_mut() {
-        for (stat, _) in stat_definitions.0.iter() {
-            if !stats.0.contains_key(stat) {
-                stats.0.insert(stat.to_string(), 0.0);
-            }
-        }
-        stats.0.retain(|stat_key, _| stat_definitions.0.contains_key(stat_key));
-    }
-}
-
-fn update_stats_system(
-    mut stat_entity_query: Query<(Entity, &mut Stats), Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
-    stat_accessor: StatAccessor,
-) {
-    for (stats_entity, mut stats) in stat_entity_query.iter_mut() {
-
-        let stat_context = stat_accessor.build(stats_entity);
-
-        for (stat, value) in stats.0.iter_mut() {
-            *value = stat_context.get(stat).unwrap_or(0.0);
-        }
-    } 
-}
-
 /// This works for "parent" context updates but other contexts will need bespoke updating systems
+/// 
+/// This should probably be reversed. In the event that some parent entity updates its context or 
+/// stat definitions, this shhould trigger recalculations in the children, not vis versa
 fn update_parent_stat_definitions(
     stat_entity_query: Query<&Parent, Changed<StatDefinitions>>,
     mut stat_context_query: Query<&mut StatContext, Changed<StatContext>>,
@@ -432,24 +386,8 @@ fn update_self_context(
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(StatsUpdate, (
-        (
-            add_new_stats_system,
-            update_stats_system,
-        ).chain(),
         update_parent_stat_definitions,
         update_parent_context,
         update_self_context,
     ));
-}
-
-#[derive(SystemParam)]
-struct StatAccessor<'w, 's> {
-    definitions: Query<'w, 's, &'static StatDefinitions>,
-    contexts: Query<'w, 's, &'static StatContext>,
-}
-
-impl StatAccessor<'_, '_> {
-    pub fn build(&self, entity: Entity) -> StatContextRefs {
-        StatContextRefs::build(entity, &self.definitions, &self.contexts)
-    }
 }

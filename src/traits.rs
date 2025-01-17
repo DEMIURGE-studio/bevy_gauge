@@ -41,9 +41,9 @@ pub trait Fields {
 
 /// Requires a corresponding stat_component_system.
 pub trait StatDerived {
-    fn from_stats(stats: &Stats) -> Self;
+    fn from_stats(stats: &StatContextRefs) -> Self;
 
-    fn update_from_stats(&mut self, stats: &Stats);
+    fn update_from_stats(&mut self, stats: &StatContextRefs);
 
-    fn is_valid(stats: &Stats) -> bool;
+    fn is_valid(stats: &StatContextRefs) -> bool;
 }

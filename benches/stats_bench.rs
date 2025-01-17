@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_guage::prelude::{
-    StatDefinitions, StatContext, StatContextRefs, Stats,
+    StatDefinitions, StatContext, StatContextRefs,
 };
 
 /// Builds the ephemeral context for an entity, using QueryState lookups
@@ -102,12 +102,6 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
         world.entity_mut(e3).insert(ctx);
     }
 
-    // (4) Insert Stats
-    world.entity_mut(e0).insert(Stats::default());
-    world.entity_mut(e1).insert(Stats::default());
-    world.entity_mut(e2).insert(Stats::default());
-    world.entity_mut(e3).insert(Stats::default());
-
     // (5) Build QueryStates & retrieve definitions
     let mut defs_query = world.query::<&StatDefinitions>();
     let mut ctx_query  = world.query::<&StatContext>();
@@ -201,12 +195,6 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
         world.entity_mut(e3).insert(ctx);
     }
 
-    // Insert Stats
-    world.entity_mut(e0).insert(Stats::default());
-    world.entity_mut(e1).insert(Stats::default());
-    world.entity_mut(e2).insert(Stats::default());
-    world.entity_mut(e3).insert(Stats::default());
-
     let mut defs_query = world.query::<&StatDefinitions>();
     let mut ctx_query  = world.query::<&StatContext>();
 
@@ -222,31 +210,6 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
     });
     group.finish();
 }
-
-/// A simple benchmark for reading 100 stats from the `Stats` component
-fn bench_stats_lookups(c: &mut Criterion) {
-    let mut stats = Stats::default();
-
-    // 1) Populate Stats with 100 keys
-    for i in 0..10000 {
-        let key = format!("StatKey{}", i);
-        stats.0.insert(key, i as f32);
-    }
-
-    // 2) Benchmark 100 lookups
-    let mut group = c.benchmark_group("stats_lookups");
-    group.bench_function("10,000 stats lookups", |b| {
-        b.iter(|| {
-            for i in 0..10000 {
-                let key = format!("StatKey{}", i);
-                let val = stats.get(&key).unwrap(); 
-                black_box(val);
-            }
-        });
-    });
-    group.finish();
-}
-
 /// A simple component that holds a single f32 for ECS iteration test.
 #[derive(Component)]
 pub struct SimpleValue(pub f32);
@@ -302,9 +265,6 @@ fn bench_simple_evaluation(c: &mut Criterion) {
         world.entity_mut(e0).insert(ctx);
     }
 
-    // (4) Insert Stats
-    world.entity_mut(e0).insert(Stats::default());
-
     // (5) Build QueryStates & retrieve definitions
     let mut defs_query = world.query::<&StatDefinitions>();
     let mut ctx_query  = world.query::<&StatContext>();
@@ -331,7 +291,6 @@ criterion_group!(
     benches,
     bench_deep_hierarchy_evaluation,
     bench_deep_hierarchy_build,
-    bench_stats_lookups,
     bench_ecs_value_iteration,
     bench_simple_evaluation,
 );
