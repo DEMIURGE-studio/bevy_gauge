@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_guage::prelude::{
-    HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions,
+    Expression, HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions
 };
 
 pub fn build<'a>(
@@ -301,12 +301,62 @@ fn bench_simple_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
-// Group all benchmarks together
+/// Benchmarks inserting 1,000 key/value pairs into a StatDefinitions.
+fn bench_definitions_insertion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stat_definitions_insertion");
+    
+    group.bench_function("insert 1000 keys", |b| {
+        b.iter(|| {
+            // Create a new StatDefinitions instance per iteration
+            let mut defs = StatDefinitions::new();
+            for i in 0..1000 {
+                // Build a key like "Stat0", "Stat1", ..., "Stat999"
+                let key = format!("Stat{}", i);
+                // Here we use a simple expression from a float value;
+                // adjust as necessary for your real type.
+                defs.set(&key, Expression::from_float(i as f32));
+            }
+            black_box(defs);
+        });
+    });
+    
+    group.finish();
+}
+
+/// Benchmarks removing 1,000 key/value pairs in a StatDefinitions.
+fn bench_definitions_removal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stat_definitions_removal");
+    
+    // Create a new instance and insert 1,000 keys.
+    let mut defs = StatDefinitions::new();
+    for i in 0..1000 {
+        let key = format!("Stat{}", i);
+        defs.set(&key, Expression::from_float(i as f32));
+    }
+    
+    group.bench_function("remove 1000 keys", |b| {
+        b.iter(|| {
+            // Now remove each key.
+            for i in 0..1000 {
+                let key = format!("Stat{}", i);
+                // Assuming StatDefinitions is a thin wrapper around a HashMap,
+                // you can remove using the inner HashMap:
+                let _ = defs.subtract(key, Expression::from_float(i as f32));
+            }
+        });
+    });
+    
+    group.finish();
+}
+
+/// Group all benchmarks together.
 criterion_group!(
     benches,
     bench_deep_hierarchy_evaluation,
     bench_deep_hierarchy_build,
     bench_ecs_value_iteration,
     bench_simple_evaluation,
+    bench_definitions_insertion,
+    bench_definitions_removal,
 );
 criterion_main!(benches);
