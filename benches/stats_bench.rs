@@ -306,7 +306,7 @@ fn bench_simple_evaluation(c: &mut Criterion) {
 fn bench_definitions_insertion(c: &mut Criterion) {
     // Pre-build a vector of 1,000 keys.
     let keys: Vec<String> = (0..1000)
-        .map(|i| format!("Stat{}", i))
+        .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
         .collect();
         
     let mut group = c.benchmark_group("stat_definitions_insertion");
@@ -331,7 +331,7 @@ fn bench_definitions_insertion(c: &mut Criterion) {
 fn bench_definitions_removal(c: &mut Criterion) {
     // Pre-build a vector of 1,000 keys.
     let keys: Vec<String> = (0..1000)
-        .map(|i| format!("Stat{}", i))
+        .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
         .collect();
     
     let mut group = c.benchmark_group("stat_definitions_removal");
