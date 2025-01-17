@@ -348,19 +348,18 @@ impl From<StatDefinitions> for GrantsStats {
 }
 
 /// This works for "parent" context updates but other contexts will need bespoke updating systems
-/// 
-/// This should probably be reversed. In the event that some parent entity updates its context or 
-/// stat definitions, this shhould trigger recalculations in the children, not vis versa
 fn update_parent_stat_definitions(
-    stat_entity_query: Query<&Parent, Changed<StatDefinitions>>,
-    mut stat_context_query: Query<&mut StatContext, Changed<StatContext>>,
+    stat_entity_query: Query<&Children, Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
+    mut stat_context_query: Query<&mut StatContext>,
 ) {
-    for parent in stat_entity_query.iter() {
-        let Ok(mut parent_context) = stat_context_query.get_mut(parent.get()) else {
-            continue;
-        };
+    for children in stat_entity_query.iter() {
+        for child in children.iter() {
+            let Ok(mut child_context) = stat_context_query.get_mut(*child) else {
+                continue;
+            };
 
-        parent_context.trigger_change_detection();
+            child_context.trigger_change_detection();
+        }
     }
 }
 
