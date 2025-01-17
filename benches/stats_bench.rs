@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -301,20 +303,23 @@ fn bench_simple_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmarks inserting 1,000 key/value pairs into a StatDefinitions.
+/// Benchmarks inserting 1,000 key/value pairs into a StatDefinitions,
+/// using a pre-built array of keys (so the allocation for each key isn’t repeated).
 fn bench_definitions_insertion(c: &mut Criterion) {
+    // Pre-build a vector of 1,000 keys.
+    let keys: Vec<String> = (0..1000)
+        .map(|i| format!("Stat{}", i))
+        .collect();
+        
     let mut group = c.benchmark_group("stat_definitions_insertion");
     
     group.bench_function("insert 1000 keys", |b| {
         b.iter(|| {
-            // Create a new StatDefinitions instance per iteration
+            // Create a new StatDefinitions instance
             let mut defs = StatDefinitions::new();
-            for i in 0..1000 {
-                // Build a key like "Stat0", "Stat1", ..., "Stat999"
-                let key = format!("Stat{}", i);
-                // Here we use a simple expression from a float value;
-                // adjust as necessary for your real type.
-                defs.set(&key, Expression::from_float(i as f32));
+            // Insert each key from our pre-built vector.
+            for (i, key) in keys.iter().enumerate() {
+                defs.set(key, Expression::from_float(i as f32));
             }
             black_box(defs);
         });
@@ -323,26 +328,32 @@ fn bench_definitions_insertion(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmarks removing 1,000 key/value pairs in a StatDefinitions.
+/// Benchmarks removing 1,000 key/value pairs from a StatDefinitions,
+/// using a pre-built array of keys.
 fn bench_definitions_removal(c: &mut Criterion) {
-    let mut group = c.benchmark_group("stat_definitions_removal");
+    // Pre-build a vector of 1,000 keys.
+    let keys: Vec<String> = (0..1000)
+        .map(|i| format!("Stat{}", i))
+        .collect();
     
-    // Create a new instance and insert 1,000 keys.
-    let mut defs = StatDefinitions::new();
-    for i in 0..1000 {
-        let key = format!("Stat{}", i);
-        defs.set(&key, Expression::from_float(i as f32));
-    }
+    let mut group = c.benchmark_group("stat_definitions_removal");
     
     group.bench_function("remove 1000 keys", |b| {
         b.iter(|| {
-            // Now remove each key.
-            for i in 0..1000 {
-                let key = format!("Stat{}", i);
-                // Assuming StatDefinitions is a thin wrapper around a HashMap,
-                // you can remove using the inner HashMap:
+            // Create a new StatDefinitions and insert 1,000 key/value pairs.
+            let mut defs = StatDefinitions::new();
+            for (i, key) in keys.iter().enumerate() {
+                defs.set(key, Expression::from_float(i as f32));
+            }
+            
+            // Now, remove the key/value pairs.
+            // (Here, we assume that your StatDefinitions internally wraps a HashMap
+            // that is publicly accessible as `defs.0`. Adjust if needed.)
+            for (i, key) in keys.iter().enumerate() {
                 let _ = defs.subtract(key, Expression::from_float(i as f32));
             }
+            
+            black_box(defs);
         });
     });
     
