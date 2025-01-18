@@ -23,18 +23,18 @@ pub fn derive_simple_stat_derived(input: TokenStream) -> TokenStream {
     let name = &input.ident;
 
     let expanded = quote! {
-        impl bevy_guage::prelude::StatDerived for #name {
-            fn from_stats(stats: &bevy_guage::prelude::Stats) -> Self {
+        impl bevy_gauge::prelude::StatDerived for #name {
+            fn from_stats(stats: &bevy_gauge::prelude::StatContextRefs) -> Self {
                 let value = stats.get(Self::NAME).unwrap_or(0.0);
                 return Self(value);
             }
         
-            fn update_from_stats(&mut self, stats: &bevy_guage::prelude::Stats) {
+            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
                 let value = stats.get(Self::NAME).unwrap_or(0.0);
                 self.0 = value;
             }
 
-            fn is_valid(stats: &bevy_guage::prelude::Stats) -> bool {
+            fn is_valid(stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
                 stats.get(Self::NAME).is_ok()
             }
         }
@@ -176,7 +176,7 @@ pub fn complex_stat_derived(input: TokenStream) -> TokenStream {
 
             // impl Fields
             let fields_impl = quote! {
-                impl bevy_guage::prelude::Fields for #struct_ident<#cue_ident> {
+                impl bevy_gauge::prelude::Fields for #struct_ident<#cue_ident> {
                     const FIELDS: &'static [&'static str] = &[
                         #( #field_string_exprs ),*
                     ];
@@ -192,22 +192,22 @@ pub fn complex_stat_derived(input: TokenStream) -> TokenStream {
 
             // impl StatDerived
             let statderived_impl = quote! {
-                impl bevy_guage::prelude::StatDerived for #struct_ident<#cue_ident> {
-                    fn from_stats(stats: &bevy_guage::prelude::Stats) -> Self {
+                impl bevy_gauge::prelude::StatDerived for #struct_ident<#cue_ident> {
+                    fn from_stats(stats: &bevy_gauge::prelude::StatContextRefs) -> Self {
                         let mut s = Self::default();
                         s.update_from_stats(stats);
                         s
                     }
 
-                    fn update_from_stats(&mut self, stats: &bevy_guage::prelude::Stats) {
-                        for &field in <Self as bevy_guage::prelude::Fields>::FIELDS {
+                    fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
+                        for &field in <Self as bevy_gauge::prelude::Fields>::FIELDS {
                             let value = stats.get(field).unwrap_or(0.0);
-                            bevy_guage::prelude::Fields::set(self, field, value);
+                            bevy_gauge::prelude::Fields::set(self, field, value);
                         }
                     }
 
-                    fn is_valid(stats: &bevy_guage::prelude::Stats) -> bool {
-                        for &field in <Self as bevy_guage::prelude::Fields>::FIELDS {
+                    fn is_valid(stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
+                        for &field in <Self as bevy_gauge::prelude::Fields>::FIELDS {
                             if stats.get(field).is_ok() {
                                 return true;
                             }
@@ -251,7 +251,7 @@ pub fn complex_stat_derived(input: TokenStream) -> TokenStream {
 
         // impl Fields
         let fields_impl = quote! {
-            impl bevy_guage::prelude::Fields for #struct_ident #struct_generics {
+            impl bevy_gauge::prelude::Fields for #struct_ident #struct_generics {
                 const FIELDS: &'static [&'static str] = &[
                     #( #field_string_exprs ),*
                 ];
@@ -267,22 +267,22 @@ pub fn complex_stat_derived(input: TokenStream) -> TokenStream {
 
         // impl StatDerived
         let statderived_impl = quote! {
-            impl bevy_guage::prelude::StatDerived for #struct_ident #struct_generics {
-                fn from_stats(stats: &bevy_guage::prelude::Stats) -> Self {
+            impl bevy_gauge::prelude::StatDerived for #struct_ident #struct_generics {
+                fn from_stats(stats: &bevy_gauge::prelude::StatContextRefs) -> Self {
                     let mut s = Self::default();
                     s.update_from_stats(stats);
                     s
                 }
 
-                fn update_from_stats(&mut self, stats: &bevy_guage::prelude::Stats) {
-                    for &field in <Self as bevy_guage::prelude::Fields>::FIELDS {
+                fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
+                    for &field in <Self as bevy_gauge::prelude::Fields>::FIELDS {
                         let value = stats.get(field).unwrap_or(0.0);
-                        bevy_guage::prelude::Fields::set(self, field, value);
+                        bevy_gauge::prelude::Fields::set(self, field, value);
                     }
                 }
 
-                fn is_valid(stats: &bevy_guage::prelude::Stats) -> bool {
-                    for &field in <Self as bevy_guage::prelude::Fields>::FIELDS {
+                fn is_valid(stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
+                    for &field in <Self as bevy_gauge::prelude::Fields>::FIELDS {
                         if stats.get(field).is_ok() {
                             return true;
                         }
