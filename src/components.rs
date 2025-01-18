@@ -347,18 +347,23 @@ impl From<StatDefinitions> for GrantsStats {
     }
 }
 
+fn update_stats(
+    stat_entity_query: Query<Entity, Changed<StatContext>>,
+    mut commands: Commands,
+) {
+    for entity in stat_entity_query.iter() {
+        commands.entity(entity).touch::<StatDefinitions>();
+    }
+}
+
 /// This works for "parent" context updates but other contexts will need bespoke updating systems
 fn update_parent_stat_definitions(
     stat_entity_query: Query<&Children, Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
-    mut stat_context_query: Query<&mut StatContext>,
+    mut commands: Commands,
 ) {
     for children in stat_entity_query.iter() {
         for child in children.iter() {
-            let Ok(mut child_context) = stat_context_query.get_mut(*child) else {
-                continue;
-            };
-
-            child_context.trigger_change_detection();
+            commands.entity(*child).touch::<StatDefinitions>();
         }
     }
 }
@@ -385,6 +390,7 @@ fn update_self_context(
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(StatsUpdate, (
+        update_stats,
         update_parent_stat_definitions,
         update_parent_context,
         update_self_context,
