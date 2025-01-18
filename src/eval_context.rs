@@ -240,3 +240,9 @@ impl StatAccessor<'_, '_> {
         StatContextRefs::build(entity, &self.definitions, &self.contexts)
     }
 }
+
+#[derive(SystemParam)]
+pub struct StatAccessorMut<'w, 's> {
+    definitions: Query<'w, 's, &'static mut StatDefinitions>,
+    contexts: Query<'w, 's, &'static mut StatContext>,
+}

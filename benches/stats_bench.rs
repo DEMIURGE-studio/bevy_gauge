@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use bevy_guage::prelude::{
+use bevy_gauge::prelude::{
     Expression, HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions
 };
 
@@ -61,7 +61,7 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
         let mut defs = StatDefinitions::new();
         defs.add("AddedLife", 100).unwrap();
         defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
             1, 
             "+= AddedLife * IncreasedLife / 100.0"
         ));
@@ -69,7 +69,7 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeB", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLifeB", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.TotalLife + 20",
         ));
@@ -77,7 +77,7 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeA", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLifeA", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.ChildLifeB + 20",
         ));
@@ -85,7 +85,7 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLife", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLife", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.ChildLifeA + 20",
         ));
@@ -154,7 +154,7 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
         let mut defs = StatDefinitions::new();
         defs.add("AddedLife", 100).unwrap();
         defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
             1, 
             "+= AddedLife * IncreasedLife / 100.0"
         ));
@@ -162,7 +162,7 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeB", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLifeB", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.TotalLife + 20",
         ));
@@ -170,7 +170,7 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeA", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLifeA", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.ChildLifeB + 20",
         ));
@@ -178,7 +178,7 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
     }
     {
         let mut defs = StatDefinitions::new();
-        defs.set("ChildLife", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("ChildLife", bevy_gauge::prelude::ExpressionPart::new(
             1,
             "+= parent.ChildLifeA + 20",
         ));
@@ -266,7 +266,7 @@ fn bench_simple_evaluation(c: &mut Criterion) {
         let mut defs = StatDefinitions::new();
         defs.add("AddedLife", 100).unwrap();
         defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_guage::prelude::ExpressionPart::new(
+        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
             1, 
             "+= AddedLife * IncreasedLife / 100.0"
         ));
