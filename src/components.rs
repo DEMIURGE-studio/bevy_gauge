@@ -8,86 +8,105 @@ use crate::prelude::*;
 
 use super::serialization::ExprWrapper;
 
-/// Problems: 
-/// Memoization - Evaluating the same stat when none of its parent stats have changed is somewhat
-///     problematic. In theory, the child values have not changed so we could just store the eval
-///     and return that when re-evaluating stats that have already been evaluated.
-///     - How do we know if a stat needs to be reevaluated? Each stat would have to store a hashset
-///         of all of the stat values it contributes to. When it's updated, the Stats hashmap is
-///         traversed with every newly dirtied value marked.
-///     - When updating StatComponents, we only need to change the value of the component if the
-///         underlying stat was dirtied. 
-/// StatComponent updates. Currently stat components act as a read-only window into a stats evaluated
-///     value, however what if we could make changes the other way? For instance, updating the Life
-///     components 'current' field updates the "Life.current" value in the Stats component.
-/// StatEffects - Can we generalize things like buffs, debuffs, equipment, talents into a generalized
-///     "Stat effect"?
-///     Maybe there's an InstantStatEffect and a StatEffect
-///         InstantStatEffects only apply to the base and modify it in some instant way
-///         StatEffects can add expressions
-///     The expectation being that InstantStatEffects are fire-and-forget while StatEffects are usually
-///         tracked somehow in order to be removable at a later interval. An instant effect will usually
-///         apply to something like current life or a resource that the player gets and loses through
-///         play - mana, power charges, etc. Stat effects are used for changes that can be added and 
-///         reverted as the user chooses. For instance equipping and removing a piece of armor, or 
-///         activating and de-activating a buff.
+/// Open problems:
+/// - Stat components: Stat components are components that are built and updated based
+/// on the owning entities StatContextRefs. Right now I use somewhat complex Fields 
+/// trait that lets a components fields be accessed via strings. This is great in some
+/// cases but limited in others. It may be the case that I just want to implement
+/// From<&StatContextRefs> for a component and have some helper functions that 
+/// automatically create, add, and update components based on the From
 /// 
-/// Right now we're trying to imagine how mantras will work. It's clear that sometimes we want the
-/// characters stats and sometimes we want the mantras stats. Take Nesh Ti for example:
-///     - Max 3 charges
-///     - Uses all charges
-///     - Heal 200 * charges used
-///     - Remove all scorch from yourself
-///     - +1 charge when you enter a new area
+/// StatComponent could require From<&StatContextRefs>, and would still have the 
+/// is_valid and update functions. 
 /// 
-/// So the mantras stats might look something like {
-///     "MaxCharges": 3,
-///     "CurrentCharges": 3,
-///     "SelfHeal<OnActivate>": "+= 200 * self.CurrentCharges",
-///     "StatEffect<OnActivate>": (
-///         "parent.Scorch = 0",
-///     ),
-///     "StatEffect<OnPostActivate>": (
-///         "self.CurrentCharges = 0",
-///     )
-/// }
-/// 
-/// Ok so I support stuff like 
-/// {
-///     SelfExplosionEffect<OnBlock>: {
-///         damage: formula,
-///         radius: formula,
+/// Ergonomics 1:
+/// stat_component!(
+///     SelfExplosionEffect<T> {
+///         pub radius: "SelfExplosionEffect<T>.radius"
+///         pub damage: Damage {
+///             min: "SelfExplosionEffect<T>.damage.min",
+///             max: "SelfExplosionEffect<T>.damage.max"
+///         }
 ///     }
+/// )
+/// Thoughts? Soooo much needless repetition. Why are we here? Just to suffer?
+/// 
+/// 
+/// 
+/// - Write-back components: While some components may want to derive their values 
+/// from StatDefinitions, others may want to write their values to StatDefinitions.
+/// For instance, it may be important for your Stats to be aware of a characters
+/// current life. However it doesn't make much sense to have "CurrentLife" as a 
+/// typical stat since it's value may be constantly changing and its value isnt 
+/// derived from any expression. So you could have a stat component definition that
+/// looks like this:
+/// 
+/// struct Life {
+///     max: "Life.max",
+///     current: WriteBack
 /// }
 /// 
-/// but can we go further?
-/// {
-///     SelfExplosionEffect<OnBlock>: {
-///         damage: {
-///             min: formula,
-///             max: formula,
-///         },
-///         radius: formula,
-///     }
-/// }
 /// 
-/// It could be cool... but it's so fucking hard to code.
-/// Maybe we just hold back on it until a usecase becomes
-/// more clear?
 /// 
-/// Another day another problem. the Worm in Achra is a god that has
-/// an ability: "Damage = Stacks of Corrosion on the Target". This is not
-/// something the current stat system was necessarily designed for. So
-/// how can we support it?
+/// - Selective updates: When stat definitions change, we should only update
+/// components when values relevant to that component are changed. This is complicated
+/// with the introduction of StatContextRefs, which allow stat values to be derived 
+/// from arbitrary entities in the context tree.
 /// 
-/// Damage as an expression: Instead of dealing damage as an f32 sent to
-/// the target, maybe damage can be an expression evaluated with a special
-/// context for the target.
+/// Lets say we have the following structure:
+/// StatEntityA
+///     StatEntityB
+///     StatEntityC
 /// 
-/// So when we deal damage we can deal it as an expression that is evaluated 
-/// against a special temporary context that includes the target entity and
-/// its subcontexts, so we could have something like "Total += target.Corrosion"
-/// as the expression
+/// If StatEntityA's definitions are updated, any definitions in StatEntityB or C that
+/// depend on StatEntityA should also be updated. This is simple to do generally; We
+/// just touch the StatDefinitions of StatEntity B and C so that they are caught by
+/// change detection. 
+/// 
+/// Lets say StatEntityA's Strength is updated. StatEntityB has an expression that
+/// relies on "parent.Strength". StatEntityA has to send a list of updated stats to
+/// StatEntityB and C. StatEntityB and C will have an update registry that will
+/// selectively update specific stats. So the selective entity will match 
+/// "parent.Strength" to an array of effected stats. Then each changed stat is iterated
+/// over, matched to an array of effected stats, and each effected stat is 
+/// recalculated. 
+/// 
+/// Concepts:
+///     StatDefinitions - The collection of expressions that are used to calculate
+///         a stats value.
+///     Stat components - Components that derive their values from StatDefinitions
+///     StatUpdateRegistry - Component that maps qualified stats to dependent stats.
+///         Take the stat definition "Strength = parent.Strength + self.Willpower"
+///         The StatUpdateRegistry would map "parent.Strength" -> "Strength" and
+///         "self.Willpower" -> "Strength"
+///     
+///         KEY MISSING CONCEPT - This will cause a cascade of unnecessary calculations.
+///         If parent.Strength updates, that changes self.Strength. What if something
+///         relies on self.Strength? Well then, we'll recalculate self.Strength, which
+///         will recalculate parent.Strength and so on. This is not desirable.
+///             - We could maintain a hashmap of already-calculated stats
+///             - We could prune the update-tree so that only the highest level stats
+///                 are updated. But... idk
+/// 
+/// 
+/// ACTION ITEMS:
+/// - It would be nice to be able to bake expression parts into a single expression, 
+/// as benchmarks show this is about 2x as fast to evaluate.
+///     This makes it hard to do "clamping" actions
+/// - Can we automatically derive the ordering of expression parts without losing
+/// anything? Automatically deriving them would be more elegant as we could get rid of
+/// the entire concept of expression collisions
+///     For example, most of the time evaluation should happen in the order "x - * /"
+///     but are there exceptions? If not, I can just order my statements based on the
+///     operator.
+///     Right now I can clamp with a "Total = value" which could be useful for 
+///     CI style interactions. This makes more sense in a stepwise part-evaluation
+///     style system. In the baked version you might see total life calculation like
+///     so: "Total = (Base + AddedLife) * (IncreasedLife)" where we might want to
+///     see something like "Total = clamp((Base + AddedLife) * (IncreasedLife), 1, 1)"
+///     
+///     Okay so MAYBE we can auto-derive it, we just need a smarter way to parse
+///     values from expression parts into the baked expression strings.
 
 // =======================================================
 // 1. StatError

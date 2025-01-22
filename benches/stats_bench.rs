@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bevy_gauge::prelude::{
-    Expression, HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions
+    Expression, ExpressionPart, HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions
 };
 
 pub fn build<'a>(
@@ -358,6 +358,115 @@ fn bench_definitions_removal(c: &mut Criterion) {
     group.finish();
 }
 
+
+fn bench_multi_step_calculation(c: &mut Criterion) {
+    let mut world = World::default();
+
+    let e0 = world.spawn_empty().id();
+
+    // (2) Insert definitions
+    {
+        let mut defs = StatDefinitions::new();
+        defs.add("Step1", 10).unwrap();
+        defs.add("Step2", 10).unwrap();
+        defs.add("Step3", 10).unwrap();
+        defs.add("Step4", 10).unwrap();
+        defs.add("Step5", 10).unwrap();
+        defs.add("Step6", 10).unwrap();
+        defs.set("TotalVal", Expression {
+            base: 10.0,
+            parts: vec![
+                ExpressionPart::new(0, "*= self.Step1"),
+                ExpressionPart::new(0, "*= self.Step2"),
+                ExpressionPart::new(0, "*= self.Step3"),
+                ExpressionPart::new(0, "*= self.Step4"),
+                ExpressionPart::new(0, "*= self.Step5"),
+                ExpressionPart::new(0, "*= self.Step6"),
+            ]
+        });
+        world.entity_mut(e0).insert(defs);
+    }
+
+    // (3) Insert StatContext
+    {
+        let mut ctx = StatContext::default();
+        ctx.insert("self", e0);
+        world.entity_mut(e0).insert(ctx);
+    }
+
+    // (5) Build QueryStates & retrieve definitions
+    let mut defs_query = world.query::<&StatDefinitions>();
+    let mut ctx_query  = world.query::<&StatContext>();
+    let e0_defs = defs_query.get(&world, e0).unwrap();
+
+    // Build the ephemeral context for E3 once
+    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
+
+    let mut group = c.benchmark_group("multi_step_eval");    
+    group.bench_function("calculate 10,000 multi-step evals", |b| {
+        b.iter(|| {
+            for _ in 0..10_000 {
+                let val = e0_defs.get("TotalVal", &ctx_refs).unwrap();
+                black_box(val);
+            }
+        });
+    });
+    
+    group.finish();
+}
+
+
+fn bench_single_step_calculation(c: &mut Criterion) {
+    let mut world = World::default();
+
+    let e0 = world.spawn_empty().id();
+
+    // (2) Insert definitions
+    {
+        let mut defs = StatDefinitions::new();
+        defs.add("Step1", 10).unwrap();
+        defs.add("Step2", 10).unwrap();
+        defs.add("Step3", 10).unwrap();
+        defs.add("Step4", 10).unwrap();
+        defs.add("Step5", 10).unwrap();
+        defs.add("Step6", 10).unwrap();
+        defs.set("TotalVal", Expression {
+            base: 10.0,
+            parts: vec![
+                ExpressionPart::new(0, "*= self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6"),
+            ]
+        });
+        world.entity_mut(e0).insert(defs);
+    }
+
+    // (3) Insert StatContext
+    {
+        let mut ctx = StatContext::default();
+        ctx.insert("self", e0);
+        world.entity_mut(e0).insert(ctx);
+    }
+
+    // (5) Build QueryStates & retrieve definitions
+    let mut defs_query = world.query::<&StatDefinitions>();
+    let mut ctx_query  = world.query::<&StatContext>();
+    let e0_defs = defs_query.get(&world, e0).unwrap();
+
+    // Build the ephemeral context for E3 once
+    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
+
+    let mut group = c.benchmark_group("single_step_evals");    
+    group.bench_function("calculate 10,000 single-step evals", |b| {
+        b.iter(|| {
+            for _ in 0..10_000 {
+                let val = e0_defs.get("TotalVal", &ctx_refs).unwrap();
+                black_box(val);
+            }
+        });
+    });
+    
+    group.finish();
+}
+
 /// Group all benchmarks together.
 criterion_group!(
     benches,
@@ -367,5 +476,7 @@ criterion_group!(
     bench_simple_evaluation,
     bench_definitions_insertion,
     bench_definitions_removal,
+    bench_multi_step_calculation,
+    bench_single_step_calculation,
 );
 criterion_main!(benches);
