@@ -4,6 +4,7 @@ use bevy::app::App;
 pub mod app_extension;
 pub mod components;
 pub mod eval_context;
+pub mod expression_part;
 pub mod prelude;
 pub mod requirements;
 pub mod schedule;
