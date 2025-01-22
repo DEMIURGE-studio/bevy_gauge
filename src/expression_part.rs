@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 use evalexpr::{DefaultNumericTypes, Node};
 
 pub trait ExpressionBuilder {
-    pub fn build(&self) -> Node<DefaultNumericTypes>;
+    fn build(&self) -> Node<DefaultNumericTypes>;
 }
 
 pub struct DefaultExpressionBuilder {
-    
+
 }
 
 pub trait StatConfig {
