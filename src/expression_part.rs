@@ -2,20 +2,9 @@ use std::marker::PhantomData;
 
 use evalexpr::{DefaultNumericTypes, Node};
 
-pub trait ExpressionBuilder {
-    fn build(&self) -> Node<DefaultNumericTypes>;
-}
-
-pub struct DefaultExpressionBuilder {
-
-}
-
 pub trait StatConfig {
     /// Allows user defined sort criteria.
     fn get_idx(part: &str) -> usize;
-
-    /// Informs how an expression string is mutated by an expression part string.
-    fn mutate(expr_str: &mut String, expr_part: &str);
 }
 
 pub struct DefaultStatConfig;
@@ -32,24 +21,17 @@ impl StatConfig for DefaultStatConfig {
         //  ... 
         //  "clamp" => { ... }
         // }
-        todo!()
-    }
-    
-    fn mutate(expr_str: &mut String, expr_part: &str) {
-        // Combine expr parts with the expression
-        // Allows user defined rules
-        // For instance, take "Total = (B) * (C + D)"
-        // If we add "+ A", and we know that "+" goes in our first block
-        // we would output "Total = (A + B) * (C + D)"
-        // Applying a "clamp(E, F)" rule would look like so:
-        // "Total = clamp((A + B) * (C + D), E, F)"
-        // and say we also apply a "clamp(G, H)", we can wrap again:
-        // "Total = clamp(clamp((A + B) * (C + D), E, F), G, H)"
-
-        // Do a similar split and match as above. If it's a +, find the first
-        // top level open paranthesis and throw it in there. If it's *,
-        // it should find the second top-level open parenthesis and throw
-        todo!()
+        if part.starts_with("+") || part.starts_with("-") {
+            0
+        } else if part.starts_with("*") {
+            1
+        } else if part.starts_with("/") {
+            2
+        } else if part.starts_with("clamp") {
+            3
+        } else {
+            panic!();
+        }
     }
 }
 
@@ -64,51 +46,186 @@ pub struct Expression<T: StatConfig> {
     _pd: PhantomData<T>,
 }
 
-/// It would be nice to be able to configure a StatConfig without having
-/// to supply one every time. 
 impl<T: StatConfig> Expression<T> {
+    pub fn new() -> Self {
+        Expression {
+            expr: evalexpr::build_operator_tree("0").unwrap(),
+            parts: Vec::new(),
+            _pd: PhantomData,
+        }
+    }
+
     pub fn add_part(&mut self, part: &str) {
         let value = T::get_idx(part);
 
-        // Get the idx of each part. Use this to sort the new part into the
-        // expression. Make sure that the expression part is not already present.
-        // If it is, increase the stacks and move on.
-        for p in self.parts.iter_mut() {
+        // If this part is already present, just increase stacks & return
+        for p in &mut self.parts {
             if p.expr == part {
                 p.stacks += 1;
+                self.compile();
                 return;
             }
         }
 
+        // Insert in ascending order of precedence
+        let mut idx = self.parts.len();
+        for (i, p) in self.parts.iter().enumerate() {
+            let list_value = T::get_idx(&p.expr);
+            if list_value > value {
+                idx = i;
+                break;
+            }
+        }
+
+        self.parts.insert(idx, ExpressionPart { stacks: 1, expr: part.to_string() });
         self.compile();
     }
 
     pub fn remove_part(&mut self, part: &str) {
-        for p in self.parts.iter_mut() {
-            if p.expr == part {
+        if let Some(pos) = self.parts.iter().position(|p| p.expr == part) {
+            let p = &mut self.parts[pos];
+            if p.stacks > 0 {
                 p.stacks -= 1;
             }
-
             if p.stacks == 0 {
-                // remove me
+                self.parts.remove(pos);
             }
+            self.compile();
         }
-        self.compile();
     }
 
     fn build_expr_string(&self) -> String {
-        let mut expr = "Total = ()".to_string();
-
-        for part in self.parts.iter() {
-            T::mutate(&mut expr, &part.expr);
+        let mut current_expr = String::new();
+    
+        for part in &self.parts {
+            let trimmed = part.expr.trim();
+    
+            if trimmed.starts_with('+') {
+                // e.g. "+ self.AddedLife"
+                let operand = trimmed[1..].trim(); // everything after '+'
+                if current_expr.is_empty() {
+                    // First operator is '+': just use the operand
+                    current_expr = operand.to_string();
+                } else {
+                    current_expr = format!("({} + {})", current_expr, operand);
+                }
+            } else if trimmed.starts_with('-') {
+                // e.g. "- self.SomeValue"
+                let operand = trimmed[1..].trim();
+                if current_expr.is_empty() {
+                    // First operator is '-': use (0 - operand)
+                    current_expr = format!("(0 - {})", operand);
+                } else {
+                    current_expr = format!("({} - {})", current_expr, operand);
+                }
+            } else if trimmed.starts_with('*') {
+                // e.g. "* self.Multiplier"
+                let operand = trimmed[1..].trim();
+                if current_expr.is_empty() {
+                    // No more "0 * operand", just operand.
+                    current_expr = operand.to_string();
+                } else {
+                    current_expr = format!("({} * {})", current_expr, operand);
+                }
+            } else if trimmed.starts_with('/') {
+                // e.g. "/ self.Divisor"
+                let operand = trimmed[1..].trim();
+                if current_expr.is_empty() {
+                    // No more "0 / operand", just operand.
+                    current_expr = operand.to_string();
+                } else {
+                    // If the user typed "/ X + Y", we might enclose them: (current / (X + Y))
+                    current_expr = format!("({} / ({}))", current_expr, operand);
+                }
+            } else if let Some(args) = trimmed.strip_prefix("clamp(").and_then(|s| s.strip_suffix(')')) {
+                // e.g. "clamp(1, 10)" => clamp(current_expr, 1, 10)
+                current_expr = format!("clamp({}, {})", current_expr, args);
+            } else {
+                panic!("Unknown or unexpected part format: `{}`", trimmed);
+            }
         }
-
-        return expr;
+    
+        // If no parts were added at all, default to 0
+        if current_expr.is_empty() {
+            "Total = 0".to_string()
+        } else {
+            format!("Total = {}", current_expr)
+        }
     }
+     
 
     pub fn compile(&mut self) {
         let expr = self.build_expr_string();
 
         self.expr = evalexpr::build_operator_tree(&expr).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_add() {
+        // Create an Expression that uses DefaultStatConfig
+        let mut expr = Expression::<DefaultStatConfig>::new();
+
+        // Add a part: "+ self.AddedLife"
+        expr.add_part("+ self.AddedLife");
+
+        // Check that the built expression string is as expected
+        let built = expr.build_expr_string();
+        assert_eq!(built, "Total = self.AddedLife");
+
+        // Also, you could check the compiled node by evaluating it, 
+        // but you'd need to define variables in evalexpr context, etc.
+        // For instance:
+        //
+        // use evalexpr::*;
+        // let mut context = HashMapContext::new();
+        // context.set_value("self.AddedLife".into(), 100.into()).unwrap();
+        // let eval_result = expr.expr.eval_with_context(&context);
+        // assert_eq!(eval_result.unwrap(), Value::from(100));
+    }
+
+    #[test]
+    fn test_plus_then_multiply() {
+        let mut expr = Expression::<DefaultStatConfig>::new();
+
+        expr.add_part("* self.Multiplier");
+        expr.add_part("+ self.Base");
+
+        let built = expr.build_expr_string();
+        // Because of our code, we expect something like:
+        // "Total = (self.Base * self.Multiplier)"
+        // (since the first operator is '+', we get "self.Base", 
+        //  then the second operator is '*', we get "(self.Base * self.Multiplier)")
+        assert_eq!(built, "Total = (self.Base * self.Multiplier)");
+    }
+
+    #[test]
+    fn test_clamp() {
+        let mut expr = Expression::<DefaultStatConfig>::new();
+
+        expr.add_part("clamp(1, 10)");
+        expr.add_part("+ Added");
+
+        let built = expr.build_expr_string();
+        // Because we have no prior +/-, the code replaces current_expr with clamp(0, 1, 10)
+        assert_eq!(built, "Total = clamp(Added, 1, 10)");
+    }
+
+    #[test]
+    fn test_complex_case() {
+        let mut expr = Expression::<DefaultStatConfig>::new();
+
+        expr.add_part("+ self.AddedLife");
+        expr.add_part("+ (self.TotalStrength / 5)");
+        expr.add_part("clamp(1, 100)");
+        expr.add_part("* self.IncreasedLife");
+
+        let built = expr.build_expr_string();
+        assert_eq!(built, "Total = clamp(((self.AddedLife + (self.TotalStrength / 5)) * self.IncreasedLife), 1, 100)");
     }
 }
