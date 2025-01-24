@@ -1,14 +1,19 @@
 use bevy::prelude::*;
+use bevy_gauge::prelude::{HardMap, StatContextType};
 use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+// Your new simplified stats + expression system:
 use bevy_gauge::prelude::{
-    Expression, ExpressionPart, HardMap, StatContext, StatContextRefs, StatContextType, StatDefinitions
+    Stats, StatType, StatContext, StatContextRefs, 
+    // If needed:
+    Expression
 };
 
 pub fn build<'a>(
     entity: Entity,
     world: &'a World,
-    defs_query: &QueryState<&StatDefinitions>,
+    defs_query: &QueryState<&Stats>,
     ctx_query: &QueryState<&StatContext>,
 ) -> StatContextRefs<'a> {
     // Create a HardMap with default NoContext in each slot
@@ -46,7 +51,8 @@ pub fn build<'a>(
     StatContextRefs::SubContext(Box::new(hard_map))
 }
 
-/// A benchmark that tests a deep hierarchy of parent contexts, and **evaluates** `ChildLife` on E3 10,000 times.
+/// 1) A benchmark that tests a deep hierarchy of parent contexts, and
+/// **evaluates** `ChildLife` on E3 10,000 times.
 fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     let mut world = World::default();
 
@@ -56,43 +62,47 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     let e2 = world.spawn_empty().id();
     let e3 = world.spawn_empty().id();
 
-    // (2) Insert definitions
+    // (2) Insert Stats
     {
-        let mut defs = StatDefinitions::new();
-        defs.add("AddedLife", 100).unwrap();
-        defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
-            1, 
-            "+= AddedLife * IncreasedLife / 100.0"
-        ));
-        world.entity_mut(e0).insert(defs);
+        let mut stats = Stats::new();
+        stats.set("AddedLife", StatType::Literal(100.0));
+        stats.set("IncreasedLife", StatType::Literal(50.0));
+        // Expression: "Total = AddedLife * IncreasedLife / 100.0"
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = AddedLife * IncreasedLife / 100.0"
+        ).unwrap());
+        stats.set("TotalLife", StatType::Expression(expr));
+        world.entity_mut(e0).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeB", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.TotalLife + 20",
-        ));
-        world.entity_mut(e1).insert(defs);
+        let mut stats = Stats::new();
+        // "Total = parent.TotalLife + 20"
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.TotalLife + 20"
+        ).unwrap());
+        stats.set("ChildLifeB", StatType::Expression(expr));
+        world.entity_mut(e1).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeA", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.ChildLifeB + 20",
-        ));
-        world.entity_mut(e2).insert(defs);
+        let mut stats = Stats::new();
+        // "Total = parent.ChildLifeB + 20"
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.ChildLifeB + 20"
+        ).unwrap());
+        stats.set("ChildLifeA", StatType::Expression(expr));
+        world.entity_mut(e2).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLife", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.ChildLifeA + 20",
-        ));
-        world.entity_mut(e3).insert(defs);
+        let mut stats = Stats::new();
+        // "Total = parent.ChildLifeA + 20"
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.ChildLifeA + 20"
+        ).unwrap());
+        stats.set("ChildLife", StatType::Expression(expr));
+        world.entity_mut(e3).insert(stats);
     }
 
-    // (3) Insert StatContext
+    // (3) Insert StatContext for each
     {
         let mut ctx = StatContext::default();
         ctx.insert("self", e0);
@@ -117,20 +127,21 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
         world.entity_mut(e3).insert(ctx);
     }
 
-    // (5) Build QueryStates & retrieve definitions
-    let mut defs_query = world.query::<&StatDefinitions>();
-    let mut ctx_query  = world.query::<&StatContext>();
-    let e3_defs = defs_query.get(&world, e3).unwrap();
+    // (4) Build QueryStates to retrieve data
+    let mut stats_query = world.query::<&Stats>();
+    let mut ctx_query = world.query::<&StatContext>();
 
-    // Build the ephemeral context for E3 once
-    let ctx_refs = build(e3, &world, &defs_query, &ctx_query);
+    // Grab E3's stats for repeated evaluation
+    let e3_stats = stats_query.get(&world, e3).unwrap();
+    // Build ephemeral context once
+    let ctx_refs = build(e3, &world, &stats_query, &ctx_query);
 
     // Evaluate "ChildLife" 10,000 times
     let mut group = c.benchmark_group("deep_hierarchy_eval");
     group.bench_function("evaluate E3.ChildLife x10000", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
-                let val = e3_defs.get("ChildLife", &ctx_refs).unwrap();
+                let val = e3_stats.get("ChildLife", &ctx_refs).unwrap();
                 black_box(val);
             }
         });
@@ -138,54 +149,54 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
-/// A benchmark that tests the *cost of building* the ephemeral context 10,000 times
-/// for the same deep hierarchy.
+/// 2) A benchmark that tests the *cost of building* the ephemeral context
+/// 10,000 times for the same deep hierarchy.
 fn bench_deep_hierarchy_build(c: &mut Criterion) {
     let mut world = World::default();
 
-    // Same 4-entity chain
+    // Reuse the same 4-entity chain
     let e0 = world.spawn_empty().id();
     let e1 = world.spawn_empty().id();
     let e2 = world.spawn_empty().id();
     let e3 = world.spawn_empty().id();
 
-    // Insert definitions
+    // Insert stats (same as above)
     {
-        let mut defs = StatDefinitions::new();
-        defs.add("AddedLife", 100).unwrap();
-        defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
-            1, 
-            "+= AddedLife * IncreasedLife / 100.0"
-        ));
-        world.entity_mut(e0).insert(defs);
+        let mut stats = Stats::new();
+        stats.set("AddedLife", StatType::Literal(100.0));
+        stats.set("IncreasedLife", StatType::Literal(50.0));
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = AddedLife * IncreasedLife / 100.0"
+        ).unwrap());
+        stats.set("TotalLife", StatType::Expression(expr));
+        world.entity_mut(e0).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeB", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.TotalLife + 20",
-        ));
-        world.entity_mut(e1).insert(defs);
+        let mut stats = Stats::new();
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.TotalLife + 20"
+        ).unwrap());
+        stats.set("ChildLifeB", StatType::Expression(expr));
+        world.entity_mut(e1).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLifeA", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.ChildLifeB + 20",
-        ));
-        world.entity_mut(e2).insert(defs);
+        let mut stats = Stats::new();
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.ChildLifeB + 20"
+        ).unwrap());
+        stats.set("ChildLifeA", StatType::Expression(expr));
+        world.entity_mut(e2).insert(stats);
     }
     {
-        let mut defs = StatDefinitions::new();
-        defs.set("ChildLife", bevy_gauge::prelude::ExpressionPart::new(
-            1,
-            "+= parent.ChildLifeA + 20",
-        ));
-        world.entity_mut(e3).insert(defs);
+        let mut stats = Stats::new();
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = parent.ChildLifeA + 20"
+        ).unwrap());
+        stats.set("ChildLife", StatType::Expression(expr));
+        world.entity_mut(e3).insert(stats);
     }
 
-    // Insert StatContext
+    // Insert StatContext (same pattern)
     {
         let mut ctx = StatContext::default();
         ctx.insert("self", e0);
@@ -210,44 +221,41 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
         world.entity_mut(e3).insert(ctx);
     }
 
-    let mut defs_query = world.query::<&StatDefinitions>();
-    let mut ctx_query  = world.query::<&StatContext>();
+    let mut stats_query = world.query::<&Stats>();
+    let mut ctx_query = world.query::<&StatContext>();
 
-    // Rebuild ephemeral context 10,000 times
+    // Benchmark building ephemeral context 10,000 times
     let mut group = c.benchmark_group("deep_hierarchy_build");
     group.bench_function("build E3 context x10,000", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
-                let ctx_refs = build(e3, &world, &defs_query, &ctx_query);
+                let ctx_refs = build(e3, &world, &stats_query, &ctx_query);
                 black_box(ctx_refs);
             }
         });
     });
     group.finish();
 }
-/// A simple component that holds a single f32 for ECS iteration test.
+
+/// 3) A simple component that holds a single f32 for ECS iteration test.
 #[derive(Component)]
 pub struct SimpleValue(pub f32);
 
-/// A benchmark that spawns 10,000 entities, each with a simple f32 component,
-/// and then iterates over them to measure the overhead of a basic ECS query.
+/// Benchmarks iterating over 10,000 entities, each with a `SimpleValue`.
 fn bench_ecs_value_iteration(c: &mut Criterion) {
     let mut world = World::default();
 
-    // 1) Spawn 10,000 entities with a SimpleValue
+    // Spawn 10,000 entities
     for i in 0..10_000 {
         world.spawn(SimpleValue(i as f32));
     }
 
-    // 2) Prepare a QueryState to iterate over &SimpleValue
     let mut query = world.query::<&SimpleValue>();
 
-    // 3) Benchmark iterating over all 10,000
     let mut group = c.benchmark_group("ecs_value_iteration");
     group.bench_function("iterate 10k entities", |b| {
         b.iter(|| {
             for val in query.iter(&world) {
-                // Just read the f32
                 black_box(val.0);
             }
         });
@@ -255,45 +263,39 @@ fn bench_ecs_value_iteration(c: &mut Criterion) {
     group.finish();
 }
 
-/// A benchmark that tests a simple context, and **evaluates** `TotalLife` on E3 10,000 times.
+/// 4) A benchmark that tests a simple context, and **evaluates** `TotalLife` 10,000 times.
 fn bench_simple_evaluation(c: &mut Criterion) {
     let mut world = World::default();
 
     let e0 = world.spawn_empty().id();
 
-    // (2) Insert definitions
     {
-        let mut defs = StatDefinitions::new();
-        defs.add("AddedLife", 100).unwrap();
-        defs.add("IncreasedLife", 50).unwrap();
-        defs.set("TotalLife", bevy_gauge::prelude::ExpressionPart::new(
-            1, 
-            "+= AddedLife * IncreasedLife / 100.0"
-        ));
-        world.entity_mut(e0).insert(defs);
+        let mut stats = Stats::new();
+        stats.set("AddedLife", StatType::Literal(100.0));
+        stats.set("IncreasedLife", StatType::Literal(50.0));
+        let expr = Expression(evalexpr::build_operator_tree(
+            "Total = AddedLife + IncreasedLife"
+        ).unwrap());
+        stats.set("TotalLife", StatType::Expression(expr));
+        world.entity_mut(e0).insert(stats);
     }
 
-    // (3) Insert StatContext
     {
         let mut ctx = StatContext::default();
         ctx.insert("self", e0);
         world.entity_mut(e0).insert(ctx);
     }
 
-    // (5) Build QueryStates & retrieve definitions
-    let mut defs_query = world.query::<&StatDefinitions>();
-    let mut ctx_query  = world.query::<&StatContext>();
-    let e0_defs = defs_query.get(&world, e0).unwrap();
+    let mut stats_query = world.query::<&Stats>();
+    let mut ctx_query = world.query::<&StatContext>();
+    let e0_stats = stats_query.get(&world, e0).unwrap();
+    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
 
-    // Build the ephemeral context for E3 once
-    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
-
-    // Evaluate "ChildLife" 10,000 times
-    let mut group = c.benchmark_group("deep_hierarchy_eval");
+    let mut group = c.benchmark_group("simple_eval");
     group.bench_function("evaluate E0.TotalLife x10000", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
-                let val = e0_defs.get("TotalLife", &ctx_refs).unwrap();
+                let val = e0_stats.get("TotalLife", &ctx_refs).unwrap();
                 black_box(val);
             }
         });
@@ -301,173 +303,147 @@ fn bench_simple_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmarks inserting 1,000 key/value pairs into a StatDefinitions,
-/// using a pre-built array of keys (so the allocation for each key isn’t repeated).
+/// 5) Benchmarks inserting 1,000 key/value pairs into `Stats`.
 fn bench_definitions_insertion(c: &mut Criterion) {
-    // Pre-build a vector of 1,000 keys.
+    // Pre-build a vector of 1,000 keys
     let keys: Vec<String> = (0..1000)
         .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
         .collect();
-        
-    let mut group = c.benchmark_group("stat_definitions_insertion");
-    
+
+    let mut group = c.benchmark_group("stats_insertion");
     group.bench_function("insert 1000 keys", |b| {
         b.iter(|| {
-            // Create a new StatDefinitions instance
-            let mut defs = StatDefinitions::new();
-            // Insert each key from our pre-built vector.
+            let mut stats = Stats::new();
             for (i, key) in keys.iter().enumerate() {
-                defs.set(key, Expression::from_float(i as f32));
+                stats.set(key, StatType::Literal(i as f32));
             }
-            black_box(defs);
+            black_box(stats);
         });
     });
-    
     group.finish();
 }
 
-/// Benchmarks removing 1,000 key/value pairs from a StatDefinitions,
-/// using a pre-built array of keys.
+/// 6) Benchmarks removing 1,000 key/value pairs from `Stats`.
 fn bench_definitions_removal(c: &mut Criterion) {
-    // Pre-build a vector of 1,000 keys.
     let keys: Vec<String> = (0..1000)
         .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
         .collect();
-    
-    let mut group = c.benchmark_group("stat_definitions_removal");
-    
+
+    let mut group = c.benchmark_group("stats_removal");
     group.bench_function("remove 1000 keys", |b| {
         b.iter(|| {
-            // Create a new StatDefinitions and insert 1,000 key/value pairs.
-            let mut defs = StatDefinitions::new();
+            // Insert 1,000 key/value pairs
+            let mut stats = Stats::new();
             for (i, key) in keys.iter().enumerate() {
-                defs.set(key, Expression::from_float(i as f32));
+                stats.set(key, StatType::Literal(i as f32));
             }
-            
-            // Now, remove the key/value pairs.
-            // (Here, we assume that your StatDefinitions internally wraps a HashMap
-            // that is publicly accessible as `defs.0`. Adjust if needed.)
-            for (i, key) in keys.iter().enumerate() {
-                let _ = defs.subtract(key, Expression::from_float(i as f32));
+            // Now remove them
+            for key in &keys {
+                // Here we just call `remove()`. If you want to replicate the old
+                // "subtract" logic, you can do it differently.
+                let _ = stats.remove(key);
             }
-            
-            black_box(defs);
+            black_box(stats);
         });
     });
-    
     group.finish();
 }
 
-
+/// 7) Benchmarks a "multi-step" calculation using a single expression
+/// referencing multiple stat values.
 fn bench_multi_step_calculation(c: &mut Criterion) {
     let mut world = World::default();
-
     let e0 = world.spawn_empty().id();
 
-    // (2) Insert definitions
     {
-        let mut defs = StatDefinitions::new();
-        defs.add("Step1", 10).unwrap();
-        defs.add("Step2", 10).unwrap();
-        defs.add("Step3", 10).unwrap();
-        defs.add("Step4", 10).unwrap();
-        defs.add("Step5", 10).unwrap();
-        defs.add("Step6", 10).unwrap();
-        defs.set("TotalVal", Expression {
-            base: 10.0,
-            parts: vec![
-                ExpressionPart::new(0, "*= self.Step1"),
-                ExpressionPart::new(0, "*= self.Step2"),
-                ExpressionPart::new(0, "*= self.Step3"),
-                ExpressionPart::new(0, "*= self.Step4"),
-                ExpressionPart::new(0, "*= self.Step5"),
-                ExpressionPart::new(0, "*= self.Step6"),
-            ]
-        });
-        world.entity_mut(e0).insert(defs);
+        let mut stats = Stats::new();
+        // Insert multiple base values
+        stats.set("Step1", StatType::Literal(10.0));
+        stats.set("Step2", StatType::Literal(10.0));
+        stats.set("Step3", StatType::Literal(10.0));
+        stats.set("Step4", StatType::Literal(10.0));
+        stats.set("Step5", StatType::Literal(10.0));
+        stats.set("Step6", StatType::Literal(10.0));
+
+        // Single expression referencing all steps:
+        // "Total = 10 + self.Step1 + self.Step2 + self.Step3 + self.Step4 + self.Step5 + self.Step6"
+        let expr_str = "Total = 10 + self.Step1 + self.Step2 + self.Step3 + self.Step4 + self.Step5 + self.Step6";
+        let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
+        stats.set("TotalVal", StatType::Expression(expr));
+
+        world.entity_mut(e0).insert(stats);
     }
 
-    // (3) Insert StatContext
     {
         let mut ctx = StatContext::default();
         ctx.insert("self", e0);
         world.entity_mut(e0).insert(ctx);
     }
 
-    // (5) Build QueryStates & retrieve definitions
-    let mut defs_query = world.query::<&StatDefinitions>();
-    let mut ctx_query  = world.query::<&StatContext>();
-    let e0_defs = defs_query.get(&world, e0).unwrap();
+    let mut stats_query = world.query::<&Stats>();
+    let mut ctx_query = world.query::<&StatContext>();
+    let e0_stats = stats_query.get(&world, e0).unwrap();
+    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
 
-    // Build the ephemeral context for E3 once
-    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
-
-    let mut group = c.benchmark_group("multi_step_eval");    
+    let mut group = c.benchmark_group("multi_step_eval");
     group.bench_function("calculate 10,000 multi-step evals", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
-                let val = e0_defs.get("TotalVal", &ctx_refs).unwrap();
+                let val = e0_stats.get("TotalVal", &ctx_refs).unwrap();
                 black_box(val);
             }
         });
     });
-    
     group.finish();
 }
 
-
+/// 8) Benchmarks a "single-step" calculation with a single formula referencing multiple stats.
 fn bench_single_step_calculation(c: &mut Criterion) {
     let mut world = World::default();
-
     let e0 = world.spawn_empty().id();
 
-    // (2) Insert definitions
     {
-        let mut defs = StatDefinitions::new();
-        defs.add("Step1", 10).unwrap();
-        defs.add("Step2", 10).unwrap();
-        defs.add("Step3", 10).unwrap();
-        defs.add("Step4", 10).unwrap();
-        defs.add("Step5", 10).unwrap();
-        defs.add("Step6", 10).unwrap();
-        defs.set("TotalVal", Expression {
-            base: 10.0,
-            parts: vec![
-                ExpressionPart::new(0, "*= self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6"),
-            ]
-        });
-        world.entity_mut(e0).insert(defs);
+        let mut stats = Stats::new();
+        stats.set("Step1", StatType::Literal(10.0));
+        stats.set("Step2", StatType::Literal(10.0));
+        stats.set("Step3", StatType::Literal(10.0));
+        stats.set("Step4", StatType::Literal(10.0));
+        stats.set("Step5", StatType::Literal(10.0));
+        stats.set("Step6", StatType::Literal(10.0));
+
+        // Single-step formula: multiply everything in one shot:
+        // "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6"
+        let expr_str = "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6";
+        let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
+        stats.set("TotalVal", StatType::Expression(expr));
+
+        world.entity_mut(e0).insert(stats);
     }
 
-    // (3) Insert StatContext
     {
         let mut ctx = StatContext::default();
         ctx.insert("self", e0);
         world.entity_mut(e0).insert(ctx);
     }
 
-    // (5) Build QueryStates & retrieve definitions
-    let mut defs_query = world.query::<&StatDefinitions>();
-    let mut ctx_query  = world.query::<&StatContext>();
-    let e0_defs = defs_query.get(&world, e0).unwrap();
+    let mut stats_query = world.query::<&Stats>();
+    let mut ctx_query = world.query::<&StatContext>();
+    let e0_stats = stats_query.get(&world, e0).unwrap();
+    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
 
-    // Build the ephemeral context for E3 once
-    let ctx_refs = build(e0, &world, &defs_query, &ctx_query);
-
-    let mut group = c.benchmark_group("single_step_evals");    
+    let mut group = c.benchmark_group("single_step_eval");
     group.bench_function("calculate 10,000 single-step evals", |b| {
         b.iter(|| {
             for _ in 0..10_000 {
-                let val = e0_defs.get("TotalVal", &ctx_refs).unwrap();
+                let val = e0_stats.get("TotalVal", &ctx_refs).unwrap();
                 black_box(val);
             }
         });
     });
-    
     group.finish();
 }
 
-/// Group all benchmarks together.
+/// Finally, group all benchmarks.
 criterion_group!(
     benches,
     bench_deep_hierarchy_evaluation,

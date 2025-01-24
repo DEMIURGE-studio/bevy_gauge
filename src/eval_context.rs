@@ -5,7 +5,7 @@ use crate::prelude::*;
 
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
-    Definitions(&'a StatDefinitions),
+    Definitions(&'a Stats),
     SubContext(Box<HardMap<'a>>),
 }
 
@@ -69,7 +69,7 @@ impl<'a> StatContextRefs<'a> {
     /// and storing them in a HardMap instead of a HashMap.
     pub fn build(
         entity: Entity,
-        defs_query: &'a Query<'_, '_, &StatDefinitions>,
+        defs_query: &'a Query<'_, '_, &Stats>,
         ctx_query: &'a Query<'_, '_, &StatContext>,
     ) -> StatContextRefs<'a> {
         // Create a HardMap with default NoContext in each slot
@@ -231,7 +231,7 @@ impl StatContextType {
 
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
-    definitions: Query<'w, 's, &'static StatDefinitions>,
+    definitions: Query<'w, 's, &'static Stats>,
     contexts: Query<'w, 's, &'static StatContext>,
 }
 

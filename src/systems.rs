@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use super::prelude::*;
 
 pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
-    mut stats_query: Query<Entity, (Changed<StatDefinitions>, Without<T>)>,
+    mut stats_query: Query<Entity, (Changed<Stats>, Without<T>)>,
     stat_accessor: StatAccessor,
     mut commands: Commands,
 ) {
@@ -15,7 +15,7 @@ pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
 }
 
 pub(crate) fn update_stat_component_system<T: StatDerived + Component>(
-    mut stats_query: Query<(Entity, &mut T), Changed<StatDefinitions>>,
+    mut stats_query: Query<(Entity, &mut T), Changed<Stats>>,
     stat_accessor: StatAccessor,
     mut commands: Commands,
 ) {

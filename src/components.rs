@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use bevy::prelude::*;
 use bevy_utils::HashMap;
 use evalexpr::{
@@ -87,26 +89,6 @@ use super::serialization::ExprWrapper;
 ///             - We could maintain a hashmap of already-calculated stats
 ///             - We could prune the update-tree so that only the highest level stats
 ///                 are updated. But... idk
-/// 
-/// 
-/// ACTION ITEMS:
-/// - It would be nice to be able to bake expression parts into a single expression, 
-/// as benchmarks show this is about 2x as fast to evaluate.
-///     This makes it hard to do "clamping" actions
-/// - Can we automatically derive the ordering of expression parts without losing
-/// anything? Automatically deriving them would be more elegant as we could get rid of
-/// the entire concept of expression collisions
-///     For example, most of the time evaluation should happen in the order "x - * /"
-///     but are there exceptions? If not, I can just order my statements based on the
-///     operator.
-///     Right now I can clamp with a "Total = value" which could be useful for 
-///     CI style interactions. This makes more sense in a stepwise part-evaluation
-///     style system. In the baked version you might see total life calculation like
-///     so: "Total = (Base + AddedLife) * (IncreasedLife)" where we might want to
-///     see something like "Total = clamp((Base + AddedLife) * (IncreasedLife), 1, 1)"
-///     
-///     Okay so MAYBE we can auto-derive it, we just need a smarter way to parse
-///     values from expression parts into the baked expression strings.
 
 // =======================================================
 // 1. StatError
@@ -122,246 +104,195 @@ pub enum StatError {
 // 2. Expression & ExpressionPart
 // =======================================================
 
-#[derive(Debug, Clone, Default)]
-pub struct Expression {
-    /// The “base” numeric value for simple stats (parts = empty) 
-    /// or the starting point for more advanced stats (parts != empty).
-    pub base: f32,
-
-    /// Additional expression parts (like `+ 2 * parent.Strength`).
-    pub parts: Vec<ExpressionPart>,
+#[derive(Debug, Clone)]
+pub enum StatType {
+    Literal(f32),
+    Expression(Expression),
 }
 
-impl Expression {
-    /// Construct a plain numeric expression with no additional parts
-    pub fn from_float(value: f32) -> Self {
-        Self {
-            base: value,
-            parts: vec![],
+impl StatType {
+    pub fn from_float(val: f32) -> StatType {
+        StatType::Literal(val)
+    }
+
+    pub fn add(&mut self, val: f32) {
+        match self {
+            StatType::Literal(mut current_val) => {
+                current_val += val;
+            },
+            StatType::Expression(_) => { },
         }
     }
 
-    /// Merge two expressions by “adding” them.
-    ///
-    /// - Add both `base` values
-    /// - Merge expression parts if they share the same priority & identical node
-    pub fn add(&self, other: &Expression) -> Result<Expression, StatError> {
-        // Start by cloning `self`
-        let mut merged = self.clone();
-
-        // Add the base
-        merged.base += other.base;
-
-        // Merge the parts from `other`
-        for part2 in &other.parts {
-            // Look for an existing part with the same priority
-            if let Some(existing_part) = merged
-                .parts
-                .iter_mut()
-                .find(|p| p.priority == part2.priority)
-            {
-                // If it’s exactly the same expression string/Node, stack them
-                if existing_part.expr == part2.expr {
-                    existing_part.stacks += part2.stacks;
-                } else {
-                    // conflict => different expression at the same priority
-                    return Err(StatError::BadOpp(format!(
-                        "Conflict detected for priority {} with different expressions.",
-                        part2.priority
-                    )));
-                }
-            } else {
-                // If we don’t have an existing part at this priority, just push it
-                merged.parts.push(part2.clone());
-            }
+    pub fn subtract(&mut self, val: f32) {
+        match self {
+            StatType::Literal(mut current_val) => {
+                current_val -= val;
+            },
+            StatType::Expression(_) => { },
         }
-
-        // Sort by priority ascending
-        merged.parts.sort_by_key(|p| p.priority);
-        Ok(merged)
-    }
-
-    /// Merge two expressions by “subtracting” the other.
-    pub fn remove(&self, other: &Expression) -> Result<Expression, StatError> {
-        // Start by cloning `self`
-        let mut merged = self.clone();
-
-        // Subtract the base
-        merged.base -= other.base;
-
-        // Remove the parts from `other`
-        for part2 in &other.parts {
-            if let Some(existing_part) = merged
-                .parts
-                .iter_mut()
-                .find(|p| p.priority == part2.priority)
-            {
-                if existing_part.expr == part2.expr {
-                    existing_part.stacks -= part2.stacks;
-                    // If stacks <= 0, remove that part
-                    if existing_part.stacks <= 0 {
-                        merged.parts.retain(|p| p.priority != part2.priority);
-                    }
-                } else {
-                    return Err(StatError::BadOpp(format!(
-                        "Conflict detected for priority {} with different expressions.",
-                        part2.priority
-                    )));
-                }
-            } else {
-                return Err(StatError::BadOpp(format!(
-                    "Attempting to subtract a non-existent expression with priority {}.",
-                    part2.priority
-                )));
-            }
-        }
-
-        Ok(merged)
     }
 
     /// Evaluate this expression into a final f32, given a stat context.
     pub fn evaluate(&self, eval_context: &StatContextRefs) -> f32 {
+        if let StatType::Literal(val) = self {
+            return *val;
+        }
+
+        let StatType::Expression(expr)= self else {
+            return 0.0;
+        };
+
         // Start from base
-        let mut current_value = self.base;
+        let mut current_value = 0.0;
         let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
 
-        for part in self.parts.iter() {
-            // Build a local evalexpr context for each part
-            context.clear();
+        context.set_value("Total".to_string(), EvalValue::from_float(current_value as f64)).unwrap();
 
-            context.set_value("Total".to_string(), EvalValue::from_float(current_value as f64)).unwrap();
+        // Fill that context with variable identifiers
+        for var_name in expr.iter_variable_identifiers() {
+            // Skip total
+            if var_name == "Total" { continue; }
 
-            // Fill that context with variable identifiers
-            for var_name in part.expr.iter_variable_identifiers() {
-                // Skip total
-                if var_name == "Total" { continue; }
-
-                let val = eval_context.get(var_name).unwrap_or(0.0);
-                context
-                    .set_value(var_name.to_string(), EvalValue::from_float(val as f64))
-                    .unwrap();
-            }
-            
-            // Evaluate. We just unwrap because:
-            //  1. Eval should not fail
-            //  2. get_value("Total") should never fail because we inserted Total into the context just above this
-            //  3. because stat expressions all return number values, as_number should never fail
-            part.expr.eval_with_context_mut(&mut context).unwrap();
-            current_value = (context.get_value("Total").unwrap().as_number().unwrap()) as f32;
+            let val = eval_context.get(var_name).unwrap_or(0.0);
+            context
+                .set_value(var_name.to_string(), EvalValue::from_float(val as f64))
+                .unwrap();
         }
+        
+        // Evaluate. We just unwrap because:
+        //  1. Eval should not fail
+        //  2. get_value("Total") should never fail because we inserted Total into the context just above this
+        //  3. because stat expressions all return number values, as_number should never fail
+        expr.eval_with_context_mut(&mut context).unwrap();
+        current_value = (context.get_value("Total").unwrap().as_number().unwrap()) as f32;
 
         current_value
     }
+
+    pub fn from_expression(value: Expression) -> Self {
+        StatType::Expression(value)
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct ExpressionPart {
-    pub priority: i32,
-    pub stacks: i32,
-    pub expr: Node<DefaultNumericTypes>,
+impl Default for StatType {
+    fn default() -> Self {
+        Self::Literal(0.0)
+    }
 }
 
-impl ExpressionPart {
-    pub fn new(priority: i32, expr: &str) -> Self {
-        Self {
-            priority,
-            stacks: 1,
-            expr: ExprWrapper::from(expr).into(),
-        }
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct Expression(pub Node<DefaultNumericTypes>);
+
+impl Default for Expression {
+    fn default() -> Self {
+        Self(evalexpr::build_operator_tree("Total = 0").unwrap())
     }
 }
 
 #[derive(Component, Debug, Clone)]
-#[require(StatContext)]
-pub struct StatDefinitions(HashMap<String, Expression>);
+pub struct Stats(pub HashMap<String, StatType>);
 
-impl StatDefinitions {
+impl Stats {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
-
-    /// Core getter method that accepts &str.
-    pub(crate) fn get_str(&self, stat: &str, eval_context: &StatContextRefs) -> Result<f32, StatError> {
+    
+    /// Get the value of a stat by name, evaluating it if necessary.
+    pub fn get_str(
+        &self,
+        stat: &str,
+        eval_context: &StatContextRefs,
+    ) -> Result<f32, StatError> {
         match self.0.get(stat) {
-            Some(stat_value) => Ok(stat_value.evaluate(eval_context)),
+            Some(stat_type) => Ok(stat_type.evaluate(eval_context)),
             None => Err(StatError::NotFound(stat.to_string())),
         }
     }
 
-    /// Helper getter method that accepts any AsStr implementor.
-    pub fn get<S: AsStr>(&self, stat: S, eval_context: &StatContextRefs) -> Result<f32, StatError> {
-        self.get_str(stat.to_str(), eval_context)
+    /// Get the value of a stat by name, evaluating it if necessary.
+    pub fn get<S: AsRef<str>>(
+        &self,
+        stat: S,
+        eval_context: &StatContextRefs,
+    ) -> Result<f32, StatError> {
+        return self.get_str(stat.as_ref(), eval_context);
     }
 
-    /// Adds a value to a specific stat.
-    pub fn add<S: AsStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
-    where
-        V: Into<Expression>,
-    {
-        let stat_name = stat.to_str();
-        let stat_value = value.into();
-        let current = self.0.get(stat_name).cloned().unwrap_or_default();
-        let new_value = current.add(&stat_value)?;
-        self.0.insert(stat_name.to_string(), new_value);
+    /// Add a new `StatType` or update an existing one with additional value.
+    pub fn add<S: AsRef<str>, V: Into<f32>>(&mut self, stat: S, value: V) -> Result<(), StatError> {
+        let stat_name = stat.as_ref();
+        let current = self.0.entry(stat_name.to_string()).or_insert_with(|| StatType::Literal(0.0));
+        current.add(value.into());
         Ok(())
     }
 
-    /// Subtracts a value from a specific stat.
-    pub fn subtract<S: AsStr, V>(&mut self, stat: S, value: V) -> Result<(), StatError>
-    where
-        V: Into<Expression>,
-    {
-        let stat_name = stat.to_str();
-        let stat_value = value.into();
-        let current = self.0.get(stat_name).cloned().unwrap_or_default();
-        let new_value = current.remove(&stat_value)?;
-        self.0.insert(stat_name.to_string(), new_value);
-        Ok(())
-    }
-
-    /// Adds all stats from `GrantsStats` into `HasStats`.
-    pub fn add_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
-        for (stat, stat_val) in &stats.0.0 {
-            self.add(stat, stat_val.clone())?;
+    /// Subtract a value from an existing `StatType`.
+    pub fn subtract<S: AsRef<str>, V: Into<f32>>(&mut self, stat: S, value: V) -> Result<(), StatError> {
+        let stat_name = stat.as_ref();
+        let current = self.0.get_mut(stat_name);
+        if let Some(current_stat) = current {
+            current_stat.subtract(value.into());
+            Ok(())
+        } else {
+            Err(StatError::NotFound(stat_name.to_string()))
         }
-        Ok(())
     }
 
-    /// Subtracts all stats from `GrantsStats` into `HasStats`.
-    pub fn remove_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
-        for (stat, stat_val) in &stats.0.0 {
-            self.subtract(stat, stat_val.clone())?;
-        }
-        Ok(())
-    }
-
-    pub fn set<S: AsStr, V>(&mut self, stat: S, value: V) -> &mut Self
-    where
-        V: Into<Expression>,
-    {
-        let stat_name = stat.to_str();
-        self.0.insert(stat_name.to_string(), value.into());
+    /// Set a stat to a specific `StatType`.
+    pub fn set<S: AsRef<str>, T: Into<StatType> + Debug>(&mut self, stat: S, stat_type: T) -> &mut Self {
+        println!("{:#?}", stat_type);
+        self.0.insert(stat.as_ref().to_string(), stat_type.into());
         self
+    }
+
+    /// Remove a stat by name.
+    pub fn remove<S: AsRef<str>>(&mut self, stat: S) -> Result<(), StatError> {
+        if self.0.remove(stat.as_ref()).is_some() {
+            Ok(())
+        } else {
+            Err(StatError::NotFound(stat.as_ref().to_string()))
+        }
+    }
+
+    /// Add all stats from another `StatDefinitions`.
+    pub fn add_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
+        for (stat, stat_type) in &stats.0.0 {
+            if let StatType::Literal(val) = stat_type {
+                self.add(stat, *val)?;
+            } else {
+                self.set(stat, stat_type.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all stats from another `StatDefinitions`.
+    pub fn remove_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
+        for (stat, _) in &stats.0.0 {
+            self.remove(stat)?;
+        }
+        Ok(())
     }
 }
 
-impl From<HashMap<String, Expression>> for StatDefinitions {
-    fn from(value: HashMap<String, Expression>) -> Self {
-        return StatDefinitions(value);
+impl From<HashMap<String, StatType>> for Stats {
+    fn from(value: HashMap<String, StatType>) -> Self {
+        Self(value)
     }
 }
 
 #[derive(Component, Debug, Deserialize, Clone, Deref, DerefMut)]
-pub struct GrantsStats(StatDefinitions);
+pub struct GrantsStats(Stats);
 
 impl GrantsStats {
     pub fn new() -> Self {
-        Self(StatDefinitions::new())
+        Self(Stats::new())
     }
 }
 
-impl From<StatDefinitions> for GrantsStats {
-    fn from(value: StatDefinitions) -> Self {
+impl From<Stats> for GrantsStats {
+    fn from(value: Stats) -> Self {
         Self(value)
     }
 }
@@ -371,25 +302,25 @@ fn update_stats(
     mut commands: Commands,
 ) {
     for entity in stat_entity_query.iter() {
-        commands.entity(entity).touch::<StatDefinitions>();
+        commands.entity(entity).touch::<Stats>();
     }
 }
 
 /// This works for "parent" context updates but other contexts will need bespoke updating systems
 fn update_parent_stat_definitions(
-    stat_entity_query: Query<&Children, Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
+    stat_entity_query: Query<&Children, Or<(Changed<Stats>, Changed<StatContext>)>>,
     mut commands: Commands,
 ) {
     for children in stat_entity_query.iter() {
         for child in children.iter() {
-            commands.entity(*child).touch::<StatDefinitions>();
+            commands.entity(*child).touch::<Stats>();
         }
     }
 }
 
 fn update_parent_context(
     mut stat_entity_query: Query<(&Parent, &mut StatContext), Changed<Parent>>,
-    parent_query: Query<Entity, With<StatDefinitions>>,
+    parent_query: Query<Entity, With<Stats>>,
 ) {
     for (parent, mut stat_context) in stat_entity_query.iter_mut() {
         if parent_query.contains(parent.get()) {
