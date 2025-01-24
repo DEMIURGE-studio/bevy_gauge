@@ -8,8 +8,6 @@ use evalexpr::{
 use serde::Deserialize;
 use crate::prelude::*;
 
-use super::serialization::ExprWrapper;
-
 /// Open problems:
 /// - Stat components: Stat components are components that are built and updated based
 /// on the owning entities StatContextRefs. Right now I use somewhat complex Fields 
@@ -117,8 +115,8 @@ impl StatType {
 
     pub fn add(&mut self, val: f32) {
         match self {
-            StatType::Literal(mut current_val) => {
-                current_val += val;
+            StatType::Literal(ref mut current_val) => {
+                *current_val += val;
             },
             StatType::Expression(_) => { },
         }
@@ -126,8 +124,8 @@ impl StatType {
 
     pub fn subtract(&mut self, val: f32) {
         match self {
-            StatType::Literal(mut current_val) => {
-                current_val -= val;
+            StatType::Literal(ref mut current_val) => {
+                *current_val -= val;
             },
             StatType::Expression(_) => { },
         }
@@ -191,6 +189,7 @@ impl Default for Expression {
 }
 
 #[derive(Component, Debug, Clone)]
+#[require(StatContext)]
 pub struct Stats(pub HashMap<String, StatType>);
 
 impl Stats {
@@ -219,20 +218,35 @@ impl Stats {
         return self.get_str(stat.as_ref(), eval_context);
     }
 
+    pub fn get_literal<S: AsRef<str>>(
+        &self,
+        stat: S,
+    ) -> Result<f32, StatError> {
+        let value = self.0.get(stat.as_ref());
+        match value {
+            Some(value) => match value {
+                StatType::Literal(val) => return Ok(*val),
+                StatType::Expression(expression) => return Err(StatError::BadOpp("Expression found".to_string())),
+            },
+            None => return Err(StatError::BadOpp("Literal not found".to_string())),
+        }
+
+    }
+
     /// Add a new `StatType` or update an existing one with additional value.
-    pub fn add<S: AsRef<str>, V: Into<f32>>(&mut self, stat: S, value: V) -> Result<(), StatError> {
+    pub fn add<S: AsRef<str>, V: AsF32>(&mut self, stat: S, value: V) -> Result<(), StatError> {
         let stat_name = stat.as_ref();
         let current = self.0.entry(stat_name.to_string()).or_insert_with(|| StatType::Literal(0.0));
-        current.add(value.into());
+        current.add(value.to_f32());
         Ok(())
     }
 
     /// Subtract a value from an existing `StatType`.
-    pub fn subtract<S: AsRef<str>, V: Into<f32>>(&mut self, stat: S, value: V) -> Result<(), StatError> {
+    pub fn subtract<S: AsRef<str>, V: AsF32>(&mut self, stat: S, value: V) -> Result<(), StatError> {
         let stat_name = stat.as_ref();
         let current = self.0.get_mut(stat_name);
         if let Some(current_stat) = current {
-            current_stat.subtract(value.into());
+            current_stat.subtract(value.to_f32());
             Ok(())
         } else {
             Err(StatError::NotFound(stat_name.to_string()))
@@ -241,7 +255,6 @@ impl Stats {
 
     /// Set a stat to a specific `StatType`.
     pub fn set<S: AsRef<str>, T: Into<StatType> + Debug>(&mut self, stat: S, stat_type: T) -> &mut Self {
-        println!("{:#?}", stat_type);
         self.0.insert(stat.as_ref().to_string(), stat_type.into());
         self
     }
@@ -256,8 +269,8 @@ impl Stats {
     }
 
     /// Add all stats from another `StatDefinitions`.
-    pub fn add_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
-        for (stat, stat_type) in &stats.0.0 {
+    pub fn add_stats(&mut self, stats: &Stats) -> Result<(), StatError> {
+        for (stat, stat_type) in &stats.0 {
             if let StatType::Literal(val) = stat_type {
                 self.add(stat, *val)?;
             } else {
@@ -268,8 +281,8 @@ impl Stats {
     }
 
     /// Remove all stats from another `StatDefinitions`.
-    pub fn remove_stats(&mut self, stats: &GrantsStats) -> Result<(), StatError> {
-        for (stat, _) in &stats.0.0 {
+    pub fn remove_stats(&mut self, stats: &Stats) -> Result<(), StatError> {
+        for (stat, _) in &stats.0 {
             self.remove(stat)?;
         }
         Ok(())

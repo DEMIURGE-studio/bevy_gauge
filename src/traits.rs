@@ -5,31 +5,19 @@ pub trait Named: Sized {
     fn to_string() -> String { Self::NAME.to_string() }
 }
 
-pub trait AsStr {
-    fn to_str(&self) -> &str;
+pub trait AsF32 {
+    fn to_f32(&self) -> f32;
 }
 
-impl<T: Named> AsStr for T {
-    fn to_str(&self) -> &str {
-        Self::NAME
+impl AsF32 for f32 {
+    fn to_f32(&self) -> f32 {
+        *self
     }
 }
 
-impl AsStr for String {
-    fn to_str(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl AsStr for &String {
-    fn to_str(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl AsStr for &str {
-    fn to_str(&self) -> &str {
-        self
+impl AsF32 for i32 {
+    fn to_f32(&self) -> f32 {
+        *self as f32
     }
 }
 
