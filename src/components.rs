@@ -8,69 +8,6 @@ use evalexpr::{
 use serde::Deserialize;
 use crate::prelude::*;
 
-/// Open problems:
-/// - Stat components: Stat components are components that are built and updated based
-/// on the owning entities StatContextRefs. Right now I use somewhat complex Fields 
-/// trait that lets a components fields be accessed via strings. This is great in some
-/// cases but limited in others. It may be the case that I just want to implement
-/// From<&StatContextRefs> for a component and have some helper functions that 
-/// automatically create, add, and update components based on the From
-/// 
-/// StatComponent could require From<&StatContextRefs>, and would still have the 
-/// is_valid and update functions. 
-/// 
-/// Ergonomics 1:
-/// stat_component!(
-///     SelfExplosionEffect<T> {
-///         pub radius: "SelfExplosionEffect<T>.radius"
-///         pub damage: Damage {
-///             min: "SelfExplosionEffect<T>.damage.min",
-///             max: "SelfExplosionEffect<T>.damage.max"
-///         }
-///     }
-/// )
-/// Thoughts? Soooo much needless repetition. Why are we here? Just to suffer?
-/// 
-/// 
-/// 
-/// - Write-back components: While some components may want to derive their values 
-/// from StatDefinitions, others may want to write their values to StatDefinitions.
-/// For instance, it may be important for your Stats to be aware of a characters
-/// current life. However it doesn't make much sense to have "CurrentLife" as a 
-/// typical stat since it's value may be constantly changing and its value isnt 
-/// derived from any expression. So you could have a stat component definition that
-/// looks like this:
-/// 
-/// struct Life {
-///     max: "Life.max",
-///     current: WriteBack
-/// }
-/// 
-/// 
-/// 
-/// - Selective updates: When stat definitions change, we should only update
-/// components when values relevant to that component are changed. This is complicated
-/// with the introduction of StatContextRefs, which allow stat values to be derived 
-/// from arbitrary entities in the context tree.
-/// 
-/// Lets say we have the following structure:
-/// StatEntityA
-///     StatEntityB
-///     StatEntityC
-/// 
-/// If StatEntityA's definitions are updated, any definitions in StatEntityB or C that
-/// depend on StatEntityA should also be updated. This is simple to do generally; We
-/// just touch the StatDefinitions of StatEntity B and C so that they are caught by
-/// change detection. 
-/// 
-/// Lets say StatEntityA's Strength is updated. StatEntityB has an expression that
-/// relies on "parent.Strength". StatEntityA has to send a list of updated stats to
-/// StatEntityB and C. StatEntityB and C will have an update registry that will
-/// selectively update specific stats. So the selective entity will match 
-/// "parent.Strength" to an array of effected stats. Then each changed stat is iterated
-/// over, matched to an array of effected stats, and each effected stat is 
-/// recalculated. 
-/// 
 /// Concepts:
 ///     StatDefinitions - The collection of expressions that are used to calculate
 ///         a stats value.
