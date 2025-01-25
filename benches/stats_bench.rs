@@ -443,7 +443,7 @@ fn bench_single_step_calculation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Finally, group all benchmarks.
+// Finally, group all benchmarks.
 criterion_group!(
     benches,
     bench_deep_hierarchy_evaluation,
