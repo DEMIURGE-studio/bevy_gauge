@@ -30,6 +30,10 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
                 let value = stats.get(Self::NAME).unwrap_or(0.0);
                 return Self(value);
             }
+            
+            fn should_update(&self, stats: &StatContextRefs) -> bool {
+                true
+            }
         
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
                 let value = stats.get(Self::NAME).unwrap_or(0.0);
@@ -338,6 +342,8 @@ fn expand_trait_impls_for_variant(
     // If you want to handle multiple type params, you'll need more robust string building.
     let path_prefix_str = format!("{}<{}>", struct_ident, variant_ident);
 
+    let should_update_body = collect_should_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
+
     // Build the body of `update_from_stats` (only for derived fields).
     let update_body = collect_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
 
@@ -352,6 +358,9 @@ fn expand_trait_impls_for_variant(
                 let mut s = Self::default();
                 s.update_from_stats(stats);
                 s
+            }
+            fn should_update(&self, stats: &StatContextRefs) -> bool {
+                #should_update_body
             }
             fn update_from_stats(&mut self, stats: &StatContextRefs) {
                 #update_body
@@ -450,6 +459,36 @@ fn collect_update_lines_with_prefix(
     quote! { #(#lines)* }
 }
 
+fn collect_should_update_lines_with_prefix(
+    fields: &[ParsedField],
+    prefix: &str,
+    self_expr: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let mut lines = Vec::new();
+
+    for pf in fields {
+        match pf {
+            ParsedField::Derived { name } => {
+                let path_str = format!("{}.{}", prefix, name);
+                lines.push(quote! {
+                    #self_expr.#name != stats.get(#path_str).unwrap_or(0.0)
+                });
+            },
+            ParsedField::WriteBack { .. } => {
+                // skip in update
+            },
+            ParsedField::Nested { name, fields, .. } => {
+                let new_prefix = format!("{}.{}", prefix, name);
+                let new_self = quote!( #self_expr.#name );
+                let nested_code = collect_should_update_lines_with_prefix(fields, &new_prefix, new_self);
+                lines.push(nested_code);
+            }
+        }
+    }
+
+    quote! { #(#lines) || * }
+}
+
 /// Recursively build statements for `write_back` that do:
 /// `stats.set("Prefix.name", self.name)` for writeback fields.
 fn collect_writeback_lines_with_prefix(
@@ -528,6 +567,7 @@ fn expand_trait_impls_for_no_variant(
     // So the path string becomes just `"Simple"` or whatever the name is.
     let path_prefix_str = struct_ident.to_string();
 
+    let should_update_body = collect_should_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
     let update_body = collect_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
     let writeback_body = collect_writeback_lines_with_prefix(fields, &path_prefix_str, quote!(self));
     let is_valid_body = collect_is_valid_lines_with_prefix(fields, &path_prefix_str, quote!(self));
@@ -538,6 +578,9 @@ fn expand_trait_impls_for_no_variant(
                 let mut s = Self::default();
                 s.update_from_stats(stats);
                 s
+            }
+            fn should_update(&self, stats: &StatContextRefs) -> bool {
+                #should_update_body
             }
             fn update_from_stats(&mut self, stats: &StatContextRefs) {
                 #update_body

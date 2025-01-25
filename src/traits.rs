@@ -23,15 +23,11 @@ impl AsF32 for i32 {
     }
 }
 
-pub trait Fields {
-    const FIELDS: &'static [&'static str];
-
-    fn set(&mut self, field: &str, value: f32);
-}
-
 /// Requires a corresponding stat_component_system.
 pub trait StatDerived {
     fn from_stats(stats: &StatContextRefs) -> Self;
+
+    fn should_update(&self, stats: &StatContextRefs) -> bool;
 
     fn update_from_stats(&mut self, stats: &StatContextRefs);
 
