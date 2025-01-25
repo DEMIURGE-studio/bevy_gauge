@@ -24,6 +24,29 @@ use crate::prelude::*;
 ///             - We could maintain a hashmap of already-calculated stats
 ///             - We could prune the update-tree so that only the highest level stats
 ///                 are updated. But... idk
+/// 
+/// TODO
+/// 1. We have ".." and "WriteBack". This is an ugly parlance. Anyway we could
+/// enable a "..WriteBack" that updates both ways. This could lets us get a little
+/// more freaky with stat effects. HOWEVER, this could be messy if we try to write
+/// to the same stat both ways in a single frame. What is the source of truth? Can
+/// we fix this via ordering somehow?
+/// 
+/// 2. We need to work on stat components. Without "..WriteBack", stat effects are
+/// going to be more focused on calculating effects at runtine. One of the original
+/// cases for StatEffects was the Worm prayer. The Worm prayers damage is calculated
+/// at runtime because it requires target stat access.
+/// 
+/// Maybe instead of ".." and "WriteBack" we can have a string option like 
+/// 
+/// stat_component!(
+///     WormPrayer {
+///         damage: "target.Corrosion"
+///     }
+/// )
+/// 
+/// If we can figure out how the damage gets applied that would be cool. That would
+/// solve it.
 
 // =======================================================
 // 1. StatError

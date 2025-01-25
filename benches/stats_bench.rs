@@ -1,6 +1,5 @@
 use bevy::prelude::*;
-use bevy_gauge::prelude::{HardMap, StatContextType};
-use bevy_utils::HashMap;
+use bevy_gauge::prelude::HardMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 // Your new simplified stats + expression system:
@@ -21,7 +20,7 @@ pub fn build<'a>(
 
     // If the entity itself has definitions, store them under the "This" slot
     if let Ok(defs) = defs_query.get_manual(world, entity) {
-        hard_map.set(StatContextType::This, StatContextRefs::Definitions(defs));
+        hard_map.set("self", StatContextRefs::Definitions(defs));
     }
 
     // If the entity has a StatContext, build subcontexts for each known key
@@ -35,15 +34,7 @@ pub fn build<'a>(
             let child_src = build(*child_entity, world, defs_query, ctx_query);
 
             // Match the child key to one of our 3 slots
-            match key.as_str() {
-                "self"   => hard_map.set(StatContextType::This, child_src),
-                "parent" => hard_map.set(StatContextType::Parent, child_src),
-                "target" => hard_map.set(StatContextType::Target, child_src),
-                // If you have more “hard-coded” slots, handle them here
-                _ => {
-                    // Or ignore unknown keys
-                }
-            }
+            hard_map.set(key, child_src);
         }
     }
 

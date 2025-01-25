@@ -14,36 +14,38 @@ pub enum StatContextRefs<'a> {
 // ---------------------------------------------------------------------
 #[derive(Debug)]
 pub struct HardMap<'a> {
-    refs: [Option<StatContextRefs<'a>>; 3],
+    this: Option<StatContextRefs<'a>>,
+    parent: Option<StatContextRefs<'a>>,
+    target: Option<StatContextRefs<'a>>,
 }
 
 impl<'a> HardMap<'a> {
     pub fn new() -> Self {
         Self {
-            refs: [
-                None,
-                None,
-                None,
-            ]
+            this: None,
+            parent: None,
+            target: None,
         }
     }
 
-    pub fn set(&mut self, key: StatContextType, val: StatContextRefs<'a>) {
-        self.refs[key.idx()] = Some(val);
-    }
-
-    pub fn get(&self, key: StatContextType) -> &Option<StatContextRefs<'a>> {
-        &self.refs[key.idx()]
-    }
-
-    /// A helper to pick the correct slot from a string:
-    pub fn get_by_str(&self, key: &str) -> Option<&StatContextRefs<'a>> {
+    pub fn set(&mut self, key: &str, val: StatContextRefs<'a>) {
         match key {
-            "self"   => self.get(StatContextType::This).as_ref(),
-            "parent" => self.get(StatContextType::Parent).as_ref(),
-            "target" => self.get(StatContextType::Target).as_ref(),
-            _        => None,
+            "self"   => self.this = Some(val),
+            "parent" => self.parent = Some(val),
+            "target" => self.target = Some(val),
+            _        => (),
         }
+    }
+
+    pub fn get(&self, key: &str) -> &Option<StatContextRefs<'a>> {
+        let result = match key {
+            "self"   => &self.this,
+            "parent" => &self.parent,
+            "target" => &self.target,
+            _        => &None,
+        };
+
+        return result;
     }
 }
 
@@ -77,7 +79,7 @@ impl<'a> StatContextRefs<'a> {
 
         // If the entity itself has definitions, store them under the "This" slot
         if let Ok(defs) = defs_query.get(entity) {
-            hard_map.set(StatContextType::This, StatContextRefs::Definitions(defs));
+            hard_map.set("self", StatContextRefs::Definitions(defs));
         }
 
         // If the entity has a StatContext, build subcontexts for each known key
@@ -91,15 +93,7 @@ impl<'a> StatContextRefs<'a> {
                 let child_src = Self::build(*child_entity, defs_query, ctx_query);
 
                 // Match the child key to one of our 3 slots
-                match key.as_str() {
-                    "self"   => hard_map.set(StatContextType::This, child_src),
-                    "parent" => hard_map.set(StatContextType::Parent, child_src),
-                    "target" => hard_map.set(StatContextType::Target, child_src),
-                    // If you have more “hard-coded” slots, handle them here
-                    _ => {
-                        // Or ignore unknown keys
-                    }
-                }
+                hard_map.set(key, child_src);
             }
         }
 
@@ -137,7 +131,7 @@ impl<'a> StatContextRefs<'a> {
                 // If the "head" starts uppercase, treat the entire string as a single stat in "self"
                 if Self::is_stat_name_segment(head) {
                     let joined = parts.join(".");
-                    if let Some(StatContextRefs::Definitions(defs)) = hard_map.get(StatContextType::This) {
+                    if let Some(StatContextRefs::Definitions(defs)) = hard_map.get("self") {
                         return defs.get_str(&joined, self);
                     } else {
                         return Err(StatError::NotFound(
@@ -157,7 +151,7 @@ impl<'a> StatContextRefs<'a> {
                 let tail = &parts[1..];
 
                 // Look up the subcontext for `head` in the HardMap
-                match hard_map.get_by_str(head) {
+                match hard_map.get(head) {
                     Some(StatContextRefs::Definitions(defs)) => {
                         // e.g. "parent.Strength" => tail has 1 item = "Strength"
                         if tail.len() == 1 {
@@ -178,7 +172,7 @@ impl<'a> StatContextRefs<'a> {
                         if Self::is_stat_name_segment(head2) {
                             // e.g. "parent.parent.Life" => entire remainder is "Life"
                             let joined = tail.join(".");
-                            if let Some(StatContextRefs::Definitions(defs)) = child_map.get(StatContextType::This) {
+                            if let Some(StatContextRefs::Definitions(defs)) = child_map.get("self") {
                                 return defs.get_str(&joined, self);
                             } else {
                                 return Err(StatError::NotFound(format!(
@@ -188,7 +182,7 @@ impl<'a> StatContextRefs<'a> {
                             }
                         } else {
                             // Recursively get from the child's subcontext
-                            match child_map.get_by_str(head2) {
+                            match child_map.get(head2) {
                                 Some(child_src) => child_src.get_parts(tail2),
                                 None => Err(StatError::NotFound(format!(
                                     "No subcontext for '{head2}'"
@@ -213,19 +207,6 @@ impl<'a> StatContextRefs<'a> {
             .next()
             .map(char::is_uppercase)
             .unwrap_or(false)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum StatContextType {
-    This   = 0,
-    Parent = 1,
-    Target = 2,
-}
-
-impl StatContextType {
-    pub fn idx(&self) -> usize {
-        *self as usize
     }
 }
 
