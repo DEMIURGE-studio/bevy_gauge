@@ -1,10 +1,9 @@
-use std::path;
-
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::token::{Brace, Paren, Semi};
-use syn::{braced, parenthesized, parse_macro_input, token, Attribute, Ident, Token, Visibility};
+use syn::{parse_macro_input, Attribute, Ident, Token, Visibility};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 
 #[proc_macro_derive(Named)]
 pub fn derive_named(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -46,61 +45,6 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
     TokenStream::from(expanded).into()
 }
 
-use syn::{
-    punctuated::Punctuated, 
-    FieldsNamed, ItemStruct,
-};
-
-/// Our input to the `complex_stat_derived!` macro looks like:
-///
-///  #[derive(Component, Default)]
-///  struct SelfExplosionEffect<T> {
-///      pub area: f32,
-///      pub damage: f32,
-///      _pd: PhantomData<T>,
-///  };
-/// 
-///  (OnBlock, OnAttack)
-///
-/// Or (optionally) we can omit the parenthesized list entirely if we have no “cue” types.
-struct ComplexStatInput {
-    item_struct: ItemStruct,
-    _semi_token: Token![;],
-
-    /// Optional list of “cue” idents from a parenthesized block
-    optional_generic_idents: Option<Punctuated<Ident, Token![,]>>,
-}
-
-/// Implement `Parse` so `syn` can parse our macro input.
-impl Parse for ComplexStatInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // 1) Parse the struct definition (including attributes, generics, fields, etc.)
-        let item_struct: ItemStruct = input.parse()?;
-
-        // 2) Expect a semicolon after the struct
-        let _semi_token: Token![;] = input.parse()?;
-
-        // 3) Check if we have an opening parenthesis for the cue list
-        let optional_generic_idents = if input.peek(token::Paren) {
-            // If we see `(`, parse the parenthesized list of generic types, e.g. `(OnBlock, OnAttack)`
-            let content;
-            syn::parenthesized!(content in input);
-            let generic_idents: Punctuated<Ident, Token![,]> =
-                content.parse_terminated(Ident::parse, Token![,])?;
-            Some(generic_idents)
-        } else {
-            // No parenthesized list found
-            None
-        };
-
-        Ok(Self {
-            item_struct,
-            _semi_token,
-            optional_generic_idents,
-        })
-    }
-}
-
 #[proc_macro]
 pub fn stat_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as StatStructInput);
@@ -117,12 +61,12 @@ struct StatStructInput {
     attrs: Vec<Attribute>,
 
     vis: Visibility,
-    struct_token: Token![struct],
+    _struct_token: Token![struct],
     ident: Ident,
     generics: syn::Generics,
-    brace_token: Brace,
+    _brace_token: Brace,
     fields: Punctuated<StatField, Token![,]>,
-    semi_token: Option<Semi>,
+    _semi_token: Option<Semi>,
 
     /// e.g. `(OnBlock, OnMeditate)`
     variants: Option<Punctuated<Ident, Token![,]>>,
@@ -141,19 +85,19 @@ struct StatStructInput {
 enum StatField {
     Derived {
         name: Ident,
-        colon_token: Token![:],
-        dots_token: Token![..],
+        _colon_token: Token![:],
+        _dots_token: Token![..],
     },
     WriteBack {
         name: Ident,
-        colon_token: Token![:],
-        writeback_ident: Ident,
+        _colon_token: Token![:],
+        _writeback_ident: Ident,
     },
     Nested {
         name: Ident,
-        colon_token: Token![:],
+        _colon_token: Token![:],
         type_name: Ident,
-        brace_token: Brace,
+        _brace_token: Brace,
         nested_fields: Punctuated<StatField, Token![,]>,
     },
 }
@@ -208,12 +152,12 @@ impl Parse for StatStructInput {
         Ok(StatStructInput {
             attrs,
             vis,
-            struct_token,
+            _struct_token: struct_token,
             ident,
             generics,
-            brace_token,
+            _brace_token: brace_token,
             fields,
-            semi_token,
+            _semi_token: semi_token,
             variants,
         })
     }
@@ -228,16 +172,16 @@ impl Parse for StatField {
             let dots_token: Token![..] = input.parse()?;
             Ok(StatField::Derived {
                 name,
-                colon_token,
-                dots_token,
+                _colon_token: colon_token,
+                _dots_token: dots_token,
             })
         } else if input.peek(Ident) {
             let ident2: Ident = input.parse()?;
             if ident2 == "WriteBack" {
                 Ok(StatField::WriteBack {
                     name,
-                    colon_token,
-                    writeback_ident: ident2,
+                    _colon_token: colon_token,
+                    _writeback_ident: ident2,
                 })
             } else {
                 // nested
@@ -246,9 +190,9 @@ impl Parse for StatField {
                 let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
                 Ok(StatField::Nested {
                     name,
-                    colon_token,
+                    _colon_token: colon_token,
                     type_name: ident2,
-                    brace_token,
+                    _brace_token: brace_token,
                     nested_fields,
                 })
             }
@@ -282,7 +226,6 @@ impl StatStructInput {
             for v in variant_idents {
                 let impls = expand_trait_impls_for_variant(
                     &self.ident,
-                    &self.generics,
                     v,
                     &parsed_fields,
                 );
@@ -348,7 +291,7 @@ fn expand_single_struct_def(
         quote! {}
     };
 
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let (impl_generics, _, where_clause) = generics.split_for_impl();
 
     Ok(quote! {
         // user-supplied attributes, if any
@@ -370,7 +313,6 @@ fn expand_single_struct_def(
 /// - `impl WriteBack for Generic<OnBlock> { ... }`
 fn expand_trait_impls_for_variant(
     struct_ident: &Ident,
-    generics: &syn::Generics,
     variant_ident: &Ident,
     fields: &[ParsedField],
 ) -> proc_macro2::TokenStream {
