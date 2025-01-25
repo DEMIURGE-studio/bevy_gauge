@@ -6,4 +6,4 @@ pub use super::schedule::*;
 pub use super::traits::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;
-pub use stat_macros::complex_stat_derived;
+pub use stat_macros::stat_component;

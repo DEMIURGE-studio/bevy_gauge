@@ -1,3 +1,5 @@
+use stat_macros::stat_component;
+
 use super::prelude::*;
 
 pub trait Named: Sized {
@@ -35,3 +37,43 @@ pub trait StatDerived {
 
     fn is_valid(stats: &StatContextRefs) -> bool;
 }
+
+pub trait WriteBack {
+    fn write_back(&self, stats: &mut Stats);
+}
+
+stat_component!(
+    pub struct Simple {
+        max: ..,
+        current: WriteBack,
+    };
+); 
+
+#[derive(Debug, Default)]
+struct Damage {
+    max: f32,
+    min: f32,
+}
+
+stat_component!(
+    pub struct Depth {
+        damage: Damage {
+            max: ..,
+            min: ..,
+        }
+    }
+);
+
+#[derive(Default)]
+pub struct OnBlock;
+
+#[derive(Default)]
+pub struct OnMeditate;
+
+stat_component!(
+    pub struct Generic<T> {
+        max: ..,
+        current: WriteBack,
+    };
+    (OnBlock, OnMeditate)
+);

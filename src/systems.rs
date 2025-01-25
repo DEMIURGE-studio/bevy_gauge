@@ -27,3 +27,11 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component>(
         }
     }
 }
+
+pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
+    mut stats_query: Query<(&mut Stats, &T), Changed<T>>,
+) {
+    for (mut stat_component, writeback) in stats_query.iter_mut() {
+        writeback.write_back(&mut stat_component);
+    }
+}
