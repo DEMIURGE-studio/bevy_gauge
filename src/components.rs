@@ -226,7 +226,7 @@ impl Stats {
         match value {
             Some(value) => match value {
                 StatType::Literal(val) => return Ok(*val),
-                StatType::Expression(expression) => return Err(StatError::BadOpp("Expression found".to_string())),
+                StatType::Expression(_) => return Err(StatError::BadOpp("Expression found".to_string())),
             },
             None => return Err(StatError::BadOpp("Literal not found".to_string())),
         }
