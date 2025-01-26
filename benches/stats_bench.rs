@@ -340,54 +340,6 @@ fn bench_definitions_removal(c: &mut Criterion) {
     group.finish();
 }
 
-/// 7) Benchmarks a "multi-step" calculation using a single expression
-/// referencing multiple stat values.
-fn bench_multi_step_calculation(c: &mut Criterion) {
-    let mut world = World::default();
-    let e0 = world.spawn_empty().id();
-
-    {
-        let mut stats = Stats::new();
-        // Insert multiple base values
-        stats.set("Step1", StatType::Literal(10.0));
-        stats.set("Step2", StatType::Literal(10.0));
-        stats.set("Step3", StatType::Literal(10.0));
-        stats.set("Step4", StatType::Literal(10.0));
-        stats.set("Step5", StatType::Literal(10.0));
-        stats.set("Step6", StatType::Literal(10.0));
-
-        // Single expression referencing all steps:
-        // "Total = 10 + self.Step1 + self.Step2 + self.Step3 + self.Step4 + self.Step5 + self.Step6"
-        let expr_str = "Total = 10 + self.Step1 + self.Step2 + self.Step3 + self.Step4 + self.Step5 + self.Step6";
-        let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
-        stats.set("TotalVal", StatType::Expression(expr));
-
-        world.entity_mut(e0).insert(stats);
-    }
-
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e0);
-        world.entity_mut(e0).insert(ctx);
-    }
-
-    let mut stats_query = world.query::<&Stats>();
-    let mut ctx_query = world.query::<&StatContext>();
-    let e0_stats = stats_query.get(&world, e0).unwrap();
-    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
-
-    let mut group = c.benchmark_group("multi_step_eval");
-    group.bench_function("calculate 10,000 multi-step evals", |b| {
-        b.iter(|| {
-            for _ in 0..10_000 {
-                let val = e0_stats.get("TotalVal", &ctx_refs).unwrap();
-                black_box(val);
-            }
-        });
-    });
-    group.finish();
-}
-
 /// 8) Benchmarks a "single-step" calculation with a single formula referencing multiple stats.
 fn bench_single_step_calculation(c: &mut Criterion) {
     let mut world = World::default();
@@ -434,6 +386,20 @@ fn bench_single_step_calculation(c: &mut Criterion) {
     group.finish();
 }
 
+fn compile_expressions(c: &mut Criterion) {
+    // Pre-build a vector of 1,000 keys
+    let mut group = c.benchmark_group("stat_compilation");
+    group.bench_function("Compile 1000 expressions", |b| {
+        b.iter(|| {
+            for _ in 0..1000 {
+                let expr_str = "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6";
+                let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
+            }
+        });
+    });
+    group.finish();
+}
+
 // Finally, group all benchmarks.
 criterion_group!(
     benches,
@@ -443,7 +409,7 @@ criterion_group!(
     bench_simple_evaluation,
     bench_definitions_insertion,
     bench_definitions_removal,
-    bench_multi_step_calculation,
     bench_single_step_calculation,
+    compile_expressions,
 );
 criterion_main!(benches);

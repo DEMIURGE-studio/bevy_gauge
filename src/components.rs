@@ -32,7 +32,7 @@ use crate::prelude::*;
 /// to the same stat both ways in a single frame. What is the source of truth? Can
 /// we fix this via ordering somehow?
 /// 
-/// 2. We need to work on stat components. Without "..WriteBack", stat effects are
+/// 2. We need to work on stat effects. Without "..WriteBack", stat effects are
 /// going to be more focused on calculating effects at runtine. One of the original
 /// cases for StatEffects was the Worm prayer. The Worm prayers damage is calculated
 /// at runtime because it requires target stat access.
@@ -47,6 +47,9 @@ use crate::prelude::*;
 /// 
 /// If we can figure out how the damage gets applied that would be cool. That would
 /// solve it.
+/// 
+/// OR are stat effects just a collection of stats that change the value of stat
+/// literals?
 
 // =======================================================
 // 1. StatError
@@ -102,10 +105,7 @@ impl StatType {
         };
 
         // Start from base
-        let mut current_value = 0.0;
         let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
-
-        context.set_value("Total".to_string(), EvalValue::from_float(current_value as f64)).unwrap();
 
         // Fill that context with variable identifiers
         for var_name in expr.iter_variable_identifiers() {
@@ -120,10 +120,10 @@ impl StatType {
         
         // Evaluate. We just unwrap because:
         //  1. Eval should not fail
-        //  2. get_value("Total") should never fail because we inserted Total into the context just above this
+        //  2. get_value("Total") should never fail
         //  3. because stat expressions all return number values, as_number should never fail
         expr.eval_with_context_mut(&mut context).unwrap();
-        current_value = (context.get_value("Total").unwrap().as_number().unwrap()) as f32;
+        let current_value = (context.get_value("Total").unwrap().as_number().unwrap()) as f32;
 
         current_value
     }
