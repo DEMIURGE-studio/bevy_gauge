@@ -49,7 +49,6 @@ impl<'a> HardMap<'a> {
     }
 }
 
-
 // Placeholder for your real StatContext
 #[derive(Component, Default)]
 pub struct StatContext {

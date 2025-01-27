@@ -120,7 +120,7 @@ fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
 
     // (4) Build QueryStates to retrieve data
     let mut stats_query = world.query::<&Stats>();
-    let mut ctx_query = world.query::<&StatContext>();
+    let ctx_query = world.query::<&StatContext>();
 
     // Grab E3's stats for repeated evaluation
     let e3_stats = stats_query.get(&world, e3).unwrap();
@@ -212,8 +212,8 @@ fn bench_deep_hierarchy_build(c: &mut Criterion) {
         world.entity_mut(e3).insert(ctx);
     }
 
-    let mut stats_query = world.query::<&Stats>();
-    let mut ctx_query = world.query::<&StatContext>();
+    let stats_query = world.query::<&Stats>();
+    let ctx_query = world.query::<&StatContext>();
 
     // Benchmark building ephemeral context 10,000 times
     let mut group = c.benchmark_group("deep_hierarchy_build");
@@ -278,7 +278,7 @@ fn bench_simple_evaluation(c: &mut Criterion) {
     }
 
     let mut stats_query = world.query::<&Stats>();
-    let mut ctx_query = world.query::<&StatContext>();
+    let ctx_query = world.query::<&StatContext>();
     let e0_stats = stats_query.get(&world, e0).unwrap();
     let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
 
@@ -370,7 +370,7 @@ fn bench_single_step_calculation(c: &mut Criterion) {
     }
 
     let mut stats_query = world.query::<&Stats>();
-    let mut ctx_query = world.query::<&StatContext>();
+    let ctx_query = world.query::<&StatContext>();
     let e0_stats = stats_query.get(&world, e0).unwrap();
     let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
 
@@ -387,13 +387,12 @@ fn bench_single_step_calculation(c: &mut Criterion) {
 }
 
 fn compile_expressions(c: &mut Criterion) {
-    // Pre-build a vector of 1,000 keys
     let mut group = c.benchmark_group("stat_compilation");
     group.bench_function("Compile 1000 expressions", |b| {
         b.iter(|| {
             for _ in 0..1000 {
                 let expr_str = "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6";
-                let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
+                let _ = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
             }
         });
     });
