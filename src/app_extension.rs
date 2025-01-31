@@ -13,13 +13,13 @@ pub trait StatsAppExtension {
 
 impl StatsAppExtension for App {
     fn add_stat_component<T: StatDerived + Component>(&mut self) -> &mut Self {
-        self.add_systems(SideEffectsUpdate, add_stat_component_system::<T>);
-        self.add_systems(SideEffectsUpdate, update_stat_component_system::<T>);
+        self.add_systems(Update, add_stat_component_system::<T>);
+        self.add_systems(StatComponentWrite, update_stat_component_system::<T>);
         self
     }
 
     fn add_writeback_component<T: WriteBack + Component>(&mut self) -> &mut Self {
-        self.add_systems(SideEffectsUpdate, update_writeback_value_system::<T>);
+        self.add_systems(StatsWrite, update_writeback_value_system::<T>);
         self
     }
 

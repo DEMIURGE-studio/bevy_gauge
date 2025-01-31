@@ -25,35 +25,44 @@ use bevy_ecs::schedule::ScheduleLabel;
 /// 
 /// Gotta think on it.
 pub fn plugin(app: &mut App) {
+
     app.init_schedule(StatsReady)
         .world_mut()
         .resource_mut::<MainScheduleOrder>()
         .insert_before(Update, StatsReady);
 
-    app.init_schedule(SideEffectsUpdate)
+    app.init_schedule(StatsWrite)
         .world_mut()
         .resource_mut::<MainScheduleOrder>()
-        .insert_before(StatsReady, SideEffectsUpdate);
-
-    app.init_schedule(CompositeStatsUpdate)
-        .world_mut()
-        .resource_mut::<MainScheduleOrder>()
-        .insert_before(SideEffectsUpdate, CompositeStatsUpdate);
+        .insert_before(StatsReady, StatsWrite);
 
     app.init_schedule(StatsUpdate)
         .world_mut()
         .resource_mut::<MainScheduleOrder>()
-        .insert_before(CompositeStatsUpdate, StatsUpdate);
+        .insert_before(StatsWrite, StatsUpdate);
+
+    app.init_schedule(StatComponentWrite)
+        .world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_before(StatsUpdate, StatComponentWrite);
+    
+    app.init_schedule(StatComponentUpdate)
+        .world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_before(StatComponentWrite, StatComponentUpdate);
 }
+
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StatComponentUpdate;
+
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct StatComponentWrite;
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StatsUpdate;
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CompositeStatsUpdate;
-
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct SideEffectsUpdate;
+pub(crate) struct StatsWrite;
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StatsReady;
