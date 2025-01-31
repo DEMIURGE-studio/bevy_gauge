@@ -97,6 +97,12 @@ enum StatField {
         _colon_token: Token![:],
         _writeback_ident: Ident,
     },
+    DerivedWriteBack {
+        name: Ident,
+        _colon_token: Token![:],
+        _dots_token: Token![..],
+        _writeback_ident: Ident,
+    },
     Nested {
         name: Ident,
         _colon_token: Token![:],
@@ -114,12 +120,14 @@ enum StatField {
 enum ParsedField {
     Derived { name: Ident },
     WriteBack { name: Ident },
+    DerivedWriteBack { name: Ident },  // new
     Nested { 
         name: Ident,
         type_name: Ident,
         fields: Vec<ParsedField>
     },
 }
+
 // ---------------------------------------------------------------------
 // 2) Parsing
 // ---------------------------------------------------------------------
@@ -172,37 +180,58 @@ impl Parse for StatField {
         let name: Ident = input.parse()?;
         let colon_token: Token![:] = input.parse()?;
 
+        // Check if next token is `..`
         if input.peek(Token![..]) {
             let dots_token: Token![..] = input.parse()?;
-            Ok(StatField::Derived {
+
+            // Now see if the user wrote `..WriteBack` or just `..`
+            if input.peek(Ident) {
+                let maybe_wb: Ident = input.parse()?;
+                if maybe_wb == "WriteBack" {
+                    // => DerivedWriteBack
+                    return Ok(StatField::DerivedWriteBack {
+                        name,
+                        _colon_token: colon_token,
+                        _dots_token: dots_token,
+                        _writeback_ident: maybe_wb,
+                    });
+                } else {
+                    return Err(input.error("expected `WriteBack` after `..`"));
+                }
+            }
+
+            // If there's no `Ident` after `..`, then it's the normal Derived
+            return Ok(StatField::Derived {
                 name,
                 _colon_token: colon_token,
                 _dots_token: dots_token,
-            })
-        } else if input.peek(Ident) {
+            });
+        }
+        else if input.peek(Ident) {
+            // Possibly "WriteBack" or "TypeName { ... }" (Nested)
             let ident2: Ident = input.parse()?;
             if ident2 == "WriteBack" {
-                Ok(StatField::WriteBack {
+                return Ok(StatField::WriteBack {
                     name,
                     _colon_token: colon_token,
                     _writeback_ident: ident2,
-                })
+                });
             } else {
                 // nested
                 let content;
                 let brace_token = syn::braced!(content in input);
                 let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
-                Ok(StatField::Nested {
+                return Ok(StatField::Nested {
                     name,
                     _colon_token: colon_token,
                     type_name: ident2,
                     _brace_token: brace_token,
                     nested_fields,
-                })
+                });
             }
-        } else {
-            Err(input.error("expected `..` or `WriteBack` or `TypeName { ... }`"))
         }
+
+        Err(input.error("expected `..`, `..WriteBack`, `WriteBack`, or `TypeName { ... }`"))
     }
 }
 
@@ -280,6 +309,9 @@ fn expand_single_struct_def(
             ParsedField::Nested { name, type_name, .. } => {
                 quote! { pub #name: #type_name }
             }
+            ParsedField::DerivedWriteBack { name } => {
+                quote! { pub #name: f32}
+            },
         }
     });
 
@@ -412,6 +444,9 @@ fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<V
         let pf = match f {
             StatField::Derived { name, .. } => ParsedField::Derived { name: name.clone() },
             StatField::WriteBack { name, .. } => ParsedField::WriteBack { name: name.clone() },
+            StatField::DerivedWriteBack { name, .. } => ParsedField::DerivedWriteBack {
+                name: name.clone(),
+            },
             StatField::Nested { name, type_name, nested_fields, .. } => {
                 let sub = parse_fields_list(nested_fields)?;
                 ParsedField::Nested {
@@ -432,7 +467,7 @@ fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<V
 fn collect_update_lines_with_prefix(
     fields: &[ParsedField],
     prefix: &str,
-    self_expr: proc_macro2::TokenStream,
+    self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
@@ -443,10 +478,17 @@ fn collect_update_lines_with_prefix(
                 lines.push(quote! {
                     #self_expr.#name = stats.get(#path_str).unwrap_or(0.0);
                 });
-            },
+            }
+            ParsedField::DerivedWriteBack { name } => {
+                // same as Derived
+                let path_str = format!("{}.{}", prefix, name);
+                lines.push(quote! {
+                    #self_expr.#name = stats.get(#path_str).unwrap_or(0.0);
+                });
+            }
             ParsedField::WriteBack { .. } => {
-                // skip in update
-            },
+                // skip
+            }
             ParsedField::Nested { name, fields, .. } => {
                 let new_prefix = format!("{}.{}", prefix, name);
                 let new_self = quote!( #self_expr.#name );
@@ -462,7 +504,7 @@ fn collect_update_lines_with_prefix(
 fn collect_should_update_lines_with_prefix(
     fields: &[ParsedField],
     prefix: &str,
-    self_expr: proc_macro2::TokenStream,
+    self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
@@ -473,20 +515,26 @@ fn collect_should_update_lines_with_prefix(
                 lines.push(quote! {
                     #self_expr.#name != stats.get(#path_str).unwrap_or(0.0)
                 });
-            },
-            ParsedField::WriteBack { .. } => {
-                // skip in update
-            },
+            }
+            ParsedField::DerivedWriteBack { name } => {
+                // same as Derived
+                let path_str = format!("{}.{}", prefix, name);
+                lines.push(quote! {
+                    #self_expr.#name != stats.get(#path_str).unwrap_or(0.0)
+                });
+            }
+            ParsedField::WriteBack { .. } => { /* skip in check? or you can do something if you want */ }
             ParsedField::Nested { name, fields, .. } => {
                 let new_prefix = format!("{}.{}", prefix, name);
-                let new_self = quote!( #self_expr.#name );
-                let nested_code = collect_should_update_lines_with_prefix(fields, &new_prefix, new_self);
+                let nested_code = collect_should_update_lines_with_prefix(fields, &new_prefix, 
+                    quote!(#self_expr.#name));
                 lines.push(nested_code);
             }
         }
     }
 
-    quote! { #(#lines) || * }
+    // Combine them with OR:
+    quote! { #(#lines)||* }
 }
 
 /// Recursively build statements for `write_back` that do:
@@ -494,25 +542,32 @@ fn collect_should_update_lines_with_prefix(
 fn collect_writeback_lines_with_prefix(
     fields: &[ParsedField],
     prefix: &str,
-    self_expr: proc_macro2::TokenStream,
+    self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
     for pf in fields {
         match pf {
-            ParsedField::Derived { .. } => {
-                // skip
-            },
             ParsedField::WriteBack { name } => {
                 let path_str = format!("{}.{}", prefix, name);
                 lines.push(quote! {
                     let _ = stats.set(#path_str, #self_expr.#name);
                 });
-            },
+            }
+            ParsedField::DerivedWriteBack { name } => {
+                // same as WriteBack
+                let path_str = format!("{}.{}", prefix, name);
+                lines.push(quote! {
+                    let _ = stats.set(#path_str, #self_expr.#name);
+                });
+            }
+            ParsedField::Derived { .. } => {
+                // skip
+            }
             ParsedField::Nested { name, fields, .. } => {
                 let new_prefix = format!("{}.{}", prefix, name);
-                let new_self = quote!( #self_expr.#name );
-                let nested_code = collect_writeback_lines_with_prefix(fields, &new_prefix, new_self);
+                let nested_code = collect_writeback_lines_with_prefix(fields, &new_prefix, 
+                    quote!(#self_expr.#name));
                 lines.push(nested_code);
             }
         }
@@ -521,14 +576,12 @@ fn collect_writeback_lines_with_prefix(
     quote! { #(#lines)* }
 }
 
-
 fn collect_is_valid_lines_with_prefix(
     fields: &[ParsedField],
     prefix: &str,
-    self_expr: proc_macro2::TokenStream,
+    self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
-
     for pf in fields {
         match pf {
             ParsedField::Derived { name } => {
@@ -536,23 +589,30 @@ fn collect_is_valid_lines_with_prefix(
                 lines.push(quote! {
                     stats.get(#path_str).is_ok()
                 });
-            },
+            }
+            ParsedField::DerivedWriteBack { name } => {
+                // same as Derived or WriteBack
+                let path_str = format!("{}.{}", prefix, name);
+                lines.push(quote! {
+                    stats.get(#path_str).is_ok()
+                });
+            }
             ParsedField::WriteBack { name } => {
                 let path_str = format!("{}.{}", prefix, name);
                 lines.push(quote! {
                     stats.get(#path_str).is_ok()
                 });
-            },
+            }
             ParsedField::Nested { name, fields, .. } => {
                 let new_prefix = format!("{}.{}", prefix, name);
-                let new_self = quote!( #self_expr.#name );
-                let nested_code = collect_is_valid_lines_with_prefix(fields, &new_prefix, new_self);
+                let nested_code = collect_is_valid_lines_with_prefix(fields, &new_prefix,
+                    quote!(#self_expr.#name));
                 lines.push(nested_code);
             }
         }
     }
-
-    quote! { #(#lines) || * }
+    // Combine them with OR or AND, depending on your desired semantics
+    quote! { #(#lines)||* }
 }
 
 fn expand_trait_impls_for_no_variant(

@@ -41,7 +41,7 @@ pub trait WriteBack {
 stat_component!(
     pub struct Simple {
         max: ..,
-        current: WriteBack,
+        current: ..WriteBack,
     };
 ); 
 
