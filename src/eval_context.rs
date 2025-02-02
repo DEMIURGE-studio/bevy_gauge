@@ -214,7 +214,21 @@ impl StatAccessor<'_, '_> {
         StatContextRefs::build(entity, &self.definitions, &self.contexts)
     }
 
-    pub fn apply_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
+    pub fn apply_effect(&mut self, entity: Entity, effect: &StatEffect) {
+        let stat_context = self.build(entity);
+
+        let effect = effect.build_instant(&stat_context);
+
+        let Ok(mut stats) = self.definitions.get_mut(entity) else {
+            return;
+        };
+
+        for (stat, value) in effect.effects.iter() {
+            let _ = stats.add(stat, *value);
+        }
+    }
+
+    pub fn apply_simple_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
         let Ok(mut stats) = self.definitions.get_mut(entity) else {
             return;
         };

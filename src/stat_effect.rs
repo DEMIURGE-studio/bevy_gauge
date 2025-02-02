@@ -3,11 +3,11 @@ use bevy_utils::HashMap;
 use crate::prelude::*;
 
 #[derive(Component)]
-pub struct StatEffectTemplate {
+pub struct StatEffect {
     effects: HashMap<String, StatType>,
 }
 
-impl StatEffectTemplate {
+impl StatEffect {
     pub fn new() -> Self {
         Self {
             effects: HashMap::new(),

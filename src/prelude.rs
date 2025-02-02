@@ -3,6 +3,7 @@ pub use super::components::*;
 pub use super::eval_context::*;
 pub use super::requirements::*;
 pub use super::schedule::*;
+pub use super::stat_effect::*;
 pub use super::traits::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;
