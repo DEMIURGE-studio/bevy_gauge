@@ -1,4 +1,4 @@
-use bevy_ecs::{component::Component, entity::Entity, system::Resource};
+use bevy_ecs::component::Component;
 use bevy_utils::HashMap;
 use crate::prelude::*;
 
@@ -79,9 +79,4 @@ impl StatEffectInstance {
             let _ = stats.add(stat, -value);
         }
     }
-}
-
-#[derive(Resource)]
-pub struct DeferredStatChanges<'a> {
-    pub change: HashMap<Entity, InstantStatEffectInstance::<'a>>
 }
