@@ -1,4 +1,4 @@
-use bevy_ecs::component::Component;
+use bevy_ecs::{component::Component, entity::Entity, system::Resource};
 use bevy_utils::HashMap;
 use crate::prelude::*;
 
@@ -34,7 +34,7 @@ impl StatEffectTemplate {
 }
 
 pub struct InstantStatEffectInstance<'a> {
-    effects: HashMap<&'a str, f32>,
+    pub effects: HashMap<&'a str, f32>,
 }
 
 impl<'a> InstantStatEffectInstance<'a> {
@@ -79,4 +79,9 @@ impl StatEffectInstance {
             let _ = stats.add(stat, -value);
         }
     }
+}
+
+#[derive(Resource)]
+pub struct DeferredStatChanges<'a> {
+    pub change: HashMap<Entity, InstantStatEffectInstance::<'a>>
 }
