@@ -8,49 +8,6 @@ use evalexpr::{
 use serde::Deserialize;
 use crate::prelude::*;
 
-/// Concepts:
-///     StatDefinitions - The collection of expressions that are used to calculate
-///         a stats value.
-///     Stat components - Components that derive their values from StatDefinitions
-///     StatUpdateRegistry - Component that maps qualified stats to dependent stats.
-///         Take the stat definition "Strength = parent.Strength + self.Willpower"
-///         The StatUpdateRegistry would map "parent.Strength" -> "Strength" and
-///         "self.Willpower" -> "Strength"
-///     
-///         KEY MISSING CONCEPT - This will cause a cascade of unnecessary calculations.
-///         If parent.Strength updates, that changes self.Strength. What if something
-///         relies on self.Strength? Well then, we'll recalculate self.Strength, which
-///         will recalculate parent.Strength and so on. This is not desirable.
-///             - We could maintain a hashmap of already-calculated stats
-///             - We could prune the update-tree so that only the highest level stats
-///                 are updated. But... idk
-/// 
-/// TODO
-/// 1. We have ".." and "WriteBack". This is an ugly parlance. Anyway we could
-/// enable a "..WriteBack" that updates both ways. This could lets us get a little
-/// more freaky with stat effects. HOWEVER, this could be messy if we try to write
-/// to the same stat both ways in a single frame. What is the source of truth? Can
-/// we fix this via ordering somehow?
-/// 
-/// 2. We need to work on stat effects. Without "..WriteBack", stat effects are
-/// going to be more focused on calculating effects at runtine. One of the original
-/// cases for StatEffects was the Worm prayer. The Worm prayers damage is calculated
-/// at runtime because it requires target stat access.
-/// 
-/// Maybe instead of ".." and "WriteBack" we can have a string option like 
-/// 
-/// stat_component!(
-///     WormPrayer {
-///         damage: "target.Corrosion"
-///     }
-/// )
-/// 
-/// If we can figure out how the damage gets applied that would be cool. That would
-/// solve it.
-/// 
-/// OR are stat effects just a collection of stats that change the value of stat
-/// literals?
-
 // =======================================================
 // 1. StatError
 // =======================================================
