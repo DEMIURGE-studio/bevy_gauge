@@ -9,9 +9,6 @@ pub enum StatContextRefs<'a> {
     SubContext(Box<HardMap<'a>>),
 }
 
-// ---------------------------------------------------------------------
-// 2) The "hard" map with three possible slots
-// ---------------------------------------------------------------------
 #[derive(Debug)]
 pub struct HardMap<'a> {
     this: Option<StatContextRefs<'a>>,
@@ -62,9 +59,6 @@ impl StatContext {
     pub fn trigger_change_detection(&mut self) {}
 }
 
-// ---------------------------------------------------------------------
-// 4) Implementation of `StatContextRefs`
-// ---------------------------------------------------------------------
 impl<'a> StatContextRefs<'a> {
     /// Build a StatContextRefs by scanning an entity's definitions/context
     /// and storing them in a HardMap instead of a HashMap.

@@ -13,8 +13,8 @@ pub trait StatsAppExtension {
 
 impl StatsAppExtension for App {
     fn add_stat_component<T: StatDerived + Component>(&mut self) -> &mut Self {
-        self.add_systems(Update, add_stat_component_system::<T>);
-        self.add_systems(StatComponentWrite, update_stat_component_system::<T>);
+        self.add_systems(AddStatComponent, add_stat_component_system::<T>);
+        self.add_systems(StatComponentUpdate, update_stat_component_system::<T>);
         self
     }
 

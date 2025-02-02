@@ -312,7 +312,7 @@ fn update_self_context(
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(StatsUpdate, (
+    app.add_systems(StatComponentUpdate, (
         update_stats,
         update_parent_stat_definitions,
         update_parent_context,
