@@ -219,16 +219,10 @@ impl StatAccessor<'_, '_> {
 
         let effect = effect.build_instant(&stat_context);
 
-        let Ok(mut stats) = self.definitions.get_mut(entity) else {
-            return;
-        };
-
-        for (stat, value) in effect.effects.iter() {
-            let _ = stats.add(stat, *value);
-        }
+        self.apply_instant_effect(entity, &effect);
     }
 
-    pub fn apply_simple_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
+    pub fn apply_instant_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
         let Ok(mut stats) = self.definitions.get_mut(entity) else {
             return;
         };
