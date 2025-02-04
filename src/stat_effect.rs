@@ -144,6 +144,11 @@ impl PersistentStatEffects {
 /// 
 /// 4. Create add/remove conditions, that allow effects to be added or removed to entities based on
 /// proximity, team, some event firing, etc.
+/// 
+/// OR OR OR What if instead of trying to maintain arbitrary collections of
+/// effects, we use the stat effect system to maintain a stat effect on the
+/// stat effect entity in question. This could include some kind of registry
+/// function.
 
 
 pub trait PersistentStatEffect {
@@ -159,4 +164,3 @@ pub trait StatEffectRequirement {
 pub trait StatEffectCondition {
 
 }
-
