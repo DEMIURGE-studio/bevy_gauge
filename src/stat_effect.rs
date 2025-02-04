@@ -144,6 +144,19 @@ impl PersistentStatEffects {
 /// 
 /// 4. Create add/remove conditions, that allow effects to be added or removed to entities based on
 /// proximity, team, some event firing, etc.
-pub trait PersistentStatEffects2 {
+
+
+pub trait PersistentStatEffect {
 
 }
+
+/// Defines requirements for a stat effect to be initially applied
+pub trait StatEffectRequirement {
+
+}
+
+/// Defines conditions for removing or deactivating a stat effect
+pub trait StatEffectCondition {
+
+}
+
