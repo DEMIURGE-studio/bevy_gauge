@@ -30,8 +30,6 @@ use bevy_utils::HashMap;
 /// 
 /// An EffectEntityId component that contains the generated key string?
 /// 
-/// OR OR OR What if all EffectEntities were stored in a collection behind the
-/// "EffectEntity" key on the hashmap?
 
 pub struct EffectEntityId(pub String);
 
@@ -51,3 +49,26 @@ impl Component for EffectEntityId {
 
 #[derive(Component)]
 pub struct EffectEntities(pub HashMap<String, Entity>);
+
+fn test() {
+    let a = [
+        ("AddedLife", 10.0),
+        ("EffectEntity", (
+            ("OnHit", 0.0),
+            ("Explosion", 3.0),
+        )),
+        ("EffectEntity", (
+            ("OnBlock", 0.0),
+            ("Heal", 10.0)
+        )),
+    ];
+
+    /// Unpacking a
+    /// Check AddedLife. Add the AddedLife (10.0) to the Stats
+    /// Check EffectEntity. Create an entity with the relevant components. Added to stats under "a-EffectEntity-0"
+    /// Check EffectEntity. Do the same. Added to stats under "a-EffectEntity-1"
+    /// 
+    /// When removing the stat stick, we remove the "a-EffectEntity-0" and "a-EffectEntity-1" from Stats and destroy the entities
+    /// On being destroyed, the stat effect entity will use hooks to remove itself from the EffectEntities vec
+    /// On being created the stat effect entity will use hooks to add itself to the EffectEntities vec
+}
