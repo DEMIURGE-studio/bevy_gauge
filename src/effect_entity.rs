@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_ecs::component::StorageType;
-use bevy_utils::HashMap;
+use bevy_utils::{HashMap, HashSet};
 
 /// I want to support doing stuff like 
 /// "EffectEntity": {
@@ -31,35 +31,41 @@ use bevy_utils::HashMap;
 /// An EffectEntityId component that contains the generated key string?
 /// 
 
-pub struct EffectEntityId(pub String);
+pub struct EffectEntity;
 
 // When an effect entity is destroyed it should automatically be removed from the EffectEntities list
-impl Component for EffectEntityId {
+impl Component for EffectEntity {
     const STORAGE_TYPE: StorageType = StorageType::Table;
 
     fn register_component_hooks(hooks: &mut bevy_ecs::component::ComponentHooks) {
-        hooks.on_remove(|mut world, targeted_entity, _component_id| {
-            let effect_entity_id = world.get::<EffectEntityId>(targeted_entity).unwrap().0.clone();
+        hooks.on_add(|mut world, targeted_entity, _component_id| {
             let effect_entity_parent = world.get::<Parent>(targeted_entity).unwrap().get();
             let mut effect_entities = world.get_mut::<EffectEntities>(effect_entity_parent).unwrap();
-            effect_entities.0.remove(&effect_entity_id);
+            effect_entities.0.insert(targeted_entity);
+        });
+        hooks.on_remove(|mut world, targeted_entity, _component_id| {
+            let effect_entity_parent = world.get::<Parent>(targeted_entity).unwrap().get();
+            let mut effect_entities = world.get_mut::<EffectEntities>(effect_entity_parent).unwrap();
+            effect_entities.0.remove(&targeted_entity);
         });
     }
 }
 
 #[derive(Component)]
-pub struct EffectEntities(pub HashMap<String, Entity>);
+pub struct EffectEntities(pub HashSet<Entity>);
 
 fn test() {
     let a = [
         ("AddedLife", 10.0),
-        ("EffectEntity", (
+        ("Entity", (
             ("OnHit", 0.0),
             ("Explosion", 3.0),
+            ("EffectEntity"),
         )),
-        ("EffectEntity", (
+        ("Entity", (
             ("OnBlock", 0.0),
-            ("Heal", 10.0)
+            ("Heal", 10.0),
+            ("EffectEntity"),
         )),
     ];
 
@@ -71,4 +77,10 @@ fn test() {
     /// When removing the stat stick, we remove the "a-EffectEntity-0" and "a-EffectEntity-1" from Stats and destroy the entities
     /// On being destroyed, the stat effect entity will use hooks to remove itself from the EffectEntities vec
     /// On being created the stat effect entity will use hooks to add itself to the EffectEntities vec
+    /// 
+    /// Scrap "EffectEntity," now we just have "Entity." When an Entity entry is passed it will be built and added
+    /// with a naming convention like "a-Entity-0" or "a-Entity-1"
+    /// The name is just so that when the stat is removed later, the entity can be destroyed.
+    /// 
+    /// Is this satifying? Does this mean that removing stats will require a "commands"?
 }
