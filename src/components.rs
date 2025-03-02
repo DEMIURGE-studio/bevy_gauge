@@ -268,11 +268,25 @@ fn update_self_context(
     }
 }
 
+// TODO This does not take into account if the root changes. So if the root ever changes without the parent changing, this will break. This could happen if an item is traded theoretically.
+fn update_root_context(
+    mut changed_parent_query: Query<(Entity, &mut StatContext), Changed<Parent>>,
+    parent_query: Query<&Parent>,
+) {
+    for (entity, mut stat_context) in changed_parent_query.iter_mut() {
+        let root = parent_query.root_ancestor(entity);
+        println!("Root entity: {}", root);
+        
+        stat_context.insert("root", root);
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(StatComponentUpdate, (
         update_stats,
         update_parent_stat_definitions,
         update_parent_context,
         update_self_context,
+        update_root_context,
     ));
 }

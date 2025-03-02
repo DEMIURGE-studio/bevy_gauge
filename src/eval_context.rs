@@ -13,6 +13,7 @@ pub enum StatContextRefs<'a> {
 pub struct HardMap<'a> {
     this: Option<StatContextRefs<'a>>,
     parent: Option<StatContextRefs<'a>>,
+    root: Option<StatContextRefs<'a>>,
     target: Option<StatContextRefs<'a>>,
 }
 
@@ -21,6 +22,7 @@ impl<'a> HardMap<'a> {
         Self {
             this: None,
             parent: None,
+            root: None,
             target: None,
         }
     }
@@ -29,6 +31,7 @@ impl<'a> HardMap<'a> {
         match key {
             "self"   => self.this = Some(val),
             "parent" => self.parent = Some(val),
+            "root" => self.root = Some(val),
             "target" => self.target = Some(val),
             _        => (),
         }
@@ -38,6 +41,7 @@ impl<'a> HardMap<'a> {
         let result = match key {
             "self"   => &self.this,
             "parent" => &self.parent,
+            "root" => &self.root,
             "target" => &self.target,
             _        => &None,
         };
