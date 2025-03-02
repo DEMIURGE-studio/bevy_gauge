@@ -88,7 +88,6 @@ impl<T: Component> Clone for DirtyFetch<'_, T> {
     }
 }
 
-#[cfg(debug_assertions)]
 impl<T> DebugCheckedUnwrap for Option<T> {
     type Item = T;
 
