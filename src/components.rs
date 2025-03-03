@@ -238,12 +238,13 @@ fn update_stats(
 
 /// This works for "parent" context updates but other contexts will need bespoke updating systems
 fn update_parent_stat_definitions(
-    stat_entity_query: Query<&Children, Or<(Changed<Stats>, Changed<StatContext>)>>,
+    stat_entity_query: Query<Entity, Or<(Changed<Stats>, Changed<StatContext>)>>,
+    children_query: Query<&Children>,
     mut commands: Commands,
 ) {
-    for children in stat_entity_query.iter() {
-        for child in children.iter() {
-            commands.entity(*child).touch::<Stats>();
+    for entity in stat_entity_query.iter() {
+        for child in children_query.iter_descendants(entity) {
+            commands.entity(child).touch::<Stats>();
         }
     }
 }
@@ -282,7 +283,7 @@ fn update_root_context(
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(StatComponentUpdate, (
+    app.add_systems(AddStatComponent, (
         update_stats,
         update_parent_stat_definitions,
         update_parent_context,
