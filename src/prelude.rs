@@ -9,3 +9,4 @@ pub use super::traits::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;
 pub use stat_macros::stat_component;
+pub use crate::simple_generic_stat;

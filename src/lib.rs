@@ -5,6 +5,7 @@ pub mod app_extension;
 pub mod components;
 pub mod dirty;
 pub mod eval_context;
+pub mod macros;
 pub mod prelude;
 pub mod requirements;
 pub mod schedule;
