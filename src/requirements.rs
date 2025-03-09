@@ -20,12 +20,11 @@ impl StatRequirement {
             let var_value = stats.get(var).unwrap_or(0.0);
             let _ = context.set_value(var.into(), EvalValue::from_float(var_value as f64));
         }
-        let Ok(result) = self.0.eval_boolean_with_context(&context) else {
-            let err = self.0.eval_boolean_with_context(&context).err().unwrap();
-            println!("{:#?}", err);
-            return false;
-        };
-        result
+        match self.0.eval_boolean_with_context(&context) {
+            Ok(result) => return result,
+            Err(err) => println!("{:#?}", err),
+        }
+        false
     }
 }
 
@@ -50,7 +49,6 @@ impl StatRequirements {
     }
 
     /// Returns true if all constraints hold.
-    /// If a stat is missing => treat it as 0.0.
     pub fn met(&self, stats: &StatContextRefs) -> bool {
         for req in self.0.iter() {
             if !req.met(stats) {
