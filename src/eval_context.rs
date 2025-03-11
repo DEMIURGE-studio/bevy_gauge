@@ -4,12 +4,6 @@ use bevy_utils::HashMap;
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
 #[derive(Debug)]
-pub enum StatContextRefs<'a> {
-    Definitions(&'a Stats),
-    SubContext(Box<HardMap<'a>>),
-}
-
-#[derive(Debug)]
 pub struct HardMap<'a> {
     this: Option<StatContextRefs<'a>>,
     parent: Option<StatContextRefs<'a>>,
@@ -50,7 +44,6 @@ impl<'a> HardMap<'a> {
     }
 }
 
-// Placeholder for your real StatContext
 #[derive(Component, Default)]
 pub struct StatContext {
     pub sources: HashMap<String, Entity>,
@@ -61,6 +54,12 @@ impl StatContext {
         self.sources.insert(context.to_string(), entity);
     }
     pub fn trigger_change_detection(&mut self) {}
+}
+
+#[derive(Debug)]
+pub enum StatContextRefs<'a> {
+    Definitions(&'a Stats),
+    SubContext(Box<HardMap<'a>>),
 }
 
 impl<'a> StatContextRefs<'a> {
@@ -216,6 +215,18 @@ pub struct StatAccessor<'w, 's> {
 impl StatAccessor<'_, '_> {
     pub fn build(&self, entity: Entity) -> StatContextRefs {
         StatContextRefs::build(entity, &self.definitions, &self.contexts)
+    }
+    
+    pub fn build_with_target(&self, entity: Entity, target: Entity) -> StatContextRefs {
+        let target_context = StatContextRefs::build(entity, &self.definitions, &self.contexts);
+        let mut value = StatContextRefs::build(target, &self.definitions, &self.contexts);
+    
+        // Match by reference, so `value` is not consumed
+        if let StatContextRefs::SubContext(ref mut hard_map) = value {
+            hard_map.set("target", target_context);
+        }
+    
+        value
     }
 
     pub fn apply_effect(&mut self, entity: Entity, effect: &StatEffect) {

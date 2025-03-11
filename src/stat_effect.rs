@@ -4,7 +4,7 @@ use crate::prelude::*;
 
 #[derive(Component, Clone)]
 pub struct StatEffect {
-    effects: HashMap<String, StatType>,
+    pub effects: HashMap<String, StatType>,
 }
 
 impl StatEffect {
