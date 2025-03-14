@@ -213,7 +213,7 @@ impl From<HashMap<String, StatType>> for Stats {
 }
 
 #[derive(Component, Debug, Deserialize, Clone, Deref, DerefMut)]
-pub struct GrantsStats(Stats);
+pub struct GrantsStats(pub Stats);
 
 impl GrantsStats {
     pub fn new() -> Self {
