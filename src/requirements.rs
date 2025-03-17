@@ -37,7 +37,7 @@ impl From<String> for StatRequirement {
 
 impl From<&str> for StatRequirement {
     fn from(value: &str) -> Self {
-        let expr = evalexpr::build_operator_tree(value).unwrap();
+        let expr = evalexpr::build_operator_tree(&value).unwrap();
         Self(expr)
     }
 }
