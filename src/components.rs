@@ -5,7 +5,6 @@ use bevy_utils::HashMap;
 use evalexpr::{
     Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
 };
-use serde::Deserialize;
 use crate::prelude::*;
 
 // =======================================================
@@ -105,7 +104,7 @@ impl Default for Expression {
     }
 }
 
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Deref, DerefMut)]
 #[require(StatContext)]
 pub struct Stats(pub HashMap<String, StatType>);
 
@@ -203,27 +202,6 @@ impl Stats {
             self.remove(stat)?;
         }
         Ok(())
-    }
-}
-
-impl From<HashMap<String, StatType>> for Stats {
-    fn from(value: HashMap<String, StatType>) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Component, Debug, Deserialize, Clone, Deref, DerefMut)]
-pub struct GrantsStats(pub Stats);
-
-impl GrantsStats {
-    pub fn new() -> Self {
-        Self(Stats::new())
-    }
-}
-
-impl From<Stats> for GrantsStats {
-    fn from(value: Stats) -> Self {
-        Self(value)
     }
 }
 

@@ -65,3 +65,42 @@ macro_rules! simple_stat {
         }
     };
 }
+
+#[macro_export]
+macro_rules! stats {
+    ( $( $key:expr => $value:expr ),* $(,)? ) => {{
+         // Ensure that you bring the required traits into scope.
+         use $crate::prelude::*;
+         let mut map = ::bevy_utils::HashMap::new();
+         $(
+            map.insert($key.to_string(), $value.into());
+         )*
+         Stats(map)
+    }};
+}
+
+#[macro_export]
+macro_rules! stat_effect {
+    ( $( $key:expr => $value:expr ),* $(,)? ) => {{
+         // Ensure that you bring the required traits into scope.
+         use $crate::prelude::*;
+         let mut map = ::bevy_utils::HashMap::new();
+         $(
+            map.insert($key.to_string(), $value.into());
+         )*
+         StatEffect(Stats(map))
+    }};
+}
+
+#[macro_export]
+macro_rules! requires {
+    ( $( $key:expr ),* $(,)? ) => {{
+         // Ensure that you bring the required traits into scope.
+         use $crate::prelude::*;
+         let mut vals = Vec::new();
+         $(
+            vals.push($key.into());
+         )*
+         StatRequirements(vals)
+    }};
+}

@@ -11,3 +11,6 @@ pub use stat_macros::SimpleStatDerived;
 pub use stat_macros::stat_component;
 pub use crate::simple_generic_stat;
 pub use crate::simple_stat;
+pub use crate::stats;
+pub use crate::stat_effect;
+pub use crate::requires;
