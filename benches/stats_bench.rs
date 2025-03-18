@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_gauge::prelude::HardMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 // Your new simplified stats + expression system:
@@ -15,12 +14,11 @@ pub fn build<'a>(
     defs_query: &QueryState<&Stats>,
     ctx_query: &QueryState<&StatContext>,
 ) -> StatContextRefs<'a> {
-    // Create a HardMap with default NoContext in each slot
-    let mut hard_map = HardMap::new();
+    let mut context_map = HashMap::new();
 
     // If the entity itself has definitions, store them under the "This" slot
     if let Ok(defs) = defs_query.get_manual(world, entity) {
-        hard_map.set("self", StatContextRefs::Definitions(defs));
+        context_map.insert("self", StatContextRefs::Definitions(defs));
     }
 
     // If the entity has a StatContext, build subcontexts for each known key
@@ -34,12 +32,12 @@ pub fn build<'a>(
             let child_src = build(*child_entity, world, defs_query, ctx_query);
 
             // Match the child key to one of our 3 slots
-            hard_map.set(key, child_src);
+            context_map.insert(key, child_src);
         }
     }
 
     // Return a SubContext if we stored anything
-    StatContextRefs::SubContext(Box::new(hard_map))
+    StatContextRefs::SubContext(Box::new(context_map))
 }
 
 /// 1) A benchmark that tests a deep hierarchy of parent contexts, and

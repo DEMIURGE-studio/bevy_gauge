@@ -1,48 +1,7 @@
 use bevy::prelude::*;
 use bevy_ecs::system::SystemParam;
-use bevy_utils::HashMap;
+use bevy_utils::{hashbrown::HashMap, HashMap};
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
-
-#[derive(Debug)]
-pub struct HardMap<'a> {
-    this: Option<StatContextRefs<'a>>,
-    parent: Option<StatContextRefs<'a>>,
-    root: Option<StatContextRefs<'a>>,
-    target: Option<StatContextRefs<'a>>,
-}
-
-impl<'a> HardMap<'a> {
-    pub fn new() -> Self {
-        Self {
-            this: None,
-            parent: None,
-            root: None,
-            target: None,
-        }
-    }
-
-    pub fn set(&mut self, key: &str, val: StatContextRefs<'a>) {
-        match key {
-            "self"   => self.this = Some(val),
-            "parent" => self.parent = Some(val),
-            "root" => self.root = Some(val),
-            "target" => self.target = Some(val),
-            _        => (),
-        }
-    }
-
-    pub fn get(&self, key: &str) -> &Option<StatContextRefs<'a>> {
-        let result = match key {
-            "self"   => &self.this,
-            "parent" => &self.parent,
-            "root" => &self.root,
-            "target" => &self.target,
-            _        => &None,
-        };
-
-        return result;
-    }
-}
 
 #[derive(Component, Default)]
 pub struct StatContext {
@@ -59,23 +18,21 @@ impl StatContext {
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
     Definitions(&'a Stats),
-    SubContext(Box<HardMap<'a>>),
+    SubContext(Box<HashMap<&'a str, &'a StatContextRefs<'a>>>),
 }
 
 impl<'a> StatContextRefs<'a> {
-    /// Build a StatContextRefs by scanning an entity's definitions/context
-    /// and storing them in a HardMap instead of a HashMap.
     pub fn build(
         entity: Entity,
         defs_query: &'a Query<'_, '_, &mut Stats>,
         ctx_query: &'a Query<'_, '_, &StatContext>,
     ) -> StatContextRefs<'a> {
         // Create a HardMap with default NoContext in each slot
-        let mut hard_map = HardMap::new();
+        let mut context_map = HashMap::new();
 
         // If the entity itself has definitions, store them under the "This" slot
         if let Ok(defs) = defs_query.get(entity) {
-            hard_map.set("self", StatContextRefs::Definitions(defs));
+            context_map.insert("self", StatContextRefs::Definitions(defs));
         }
 
         // If the entity has a StatContext, build subcontexts for each known key
@@ -89,12 +46,12 @@ impl<'a> StatContextRefs<'a> {
                 let child_src = Self::build(*child_entity, defs_query, ctx_query);
 
                 // Match the child key to one of our 3 slots
-                hard_map.set(key, child_src);
+                context_map.set(key, child_src);
             }
         }
 
         // Return a SubContext if we stored anything
-        StatContextRefs::SubContext(Box::new(hard_map))
+        StatContextRefs::SubContext(Box::new(context_map))
     }
 
     /// Public getter that splits on '.' and calls `get_parts` recursively
@@ -121,77 +78,23 @@ impl<'a> StatContextRefs<'a> {
                 }
             }
 
-            // ================ 2) This is a "branch" that has a HardMap ================
-            StatContextRefs::SubContext(hard_map) => {
+            // ================ 2) This is a "branch" that has a hashmap context ================
+            StatContextRefs::SubContext(context_map) => {
                 let head = parts[0];
-                // If the "head" starts uppercase, treat the entire string as a single stat in "self"
-                if Self::is_stat_name_segment(head) {
-                    let joined = parts.join(".");
-                    if let Some(StatContextRefs::Definitions(defs)) = hard_map.get("self") {
-                        return defs.get_str(&joined, self);
-                    } else {
-                        return Err(StatError::NotFound(
-                            format!("No 'self' definitions to handle stat {:?}", joined)
-                        ));
-                    }
-                }
-
-                // If we only have 1 part and it's lowercase, e.g. "parent", that's incomplete
-                if parts.len() == 1 {
-                    return Err(StatError::NotFound(format!(
-                        "Got a single-lowercase-part {:?}, but no stat name was provided",
-                        head
-                    )));
-                }
-
                 let tail = &parts[1..];
-
-                // Look up the subcontext for `head` in the HardMap
-                match hard_map.get(head) {
-                    Some(StatContextRefs::Definitions(defs)) => {
-                        // e.g. "parent.Strength" => tail has 1 item = "Strength"
-                        if tail.len() == 1 {
-                            defs.get_str(tail[0], self)
-                        } else {
-                            let joined = tail.join(".");
-                            defs.get_str(&joined, self)
-                        }
-                    }
-                    Some(StatContextRefs::SubContext(child_map)) => {
-                        // e.g. "parent.parent.XYZ"
-                        if tail.is_empty() {
-                            return Err(StatError::NotFound("Empty tail".to_string()));
-                        }
-                        let head2 = tail[0];
-                        let tail2 = &tail[1..];
-
-                        if Self::is_stat_name_segment(head2) {
-                            // e.g. "parent.parent.Life" => entire remainder is "Life"
-                            let joined = tail.join(".");
-                            if let Some(StatContextRefs::Definitions(defs)) = child_map.get("self") {
-                                return defs.get_str(&joined, self);
-                            } else {
-                                return Err(StatError::NotFound(format!(
-                                    "No 'self' in subcontext to handle stat: {}",
-                                    joined
-                                )));
-                            }
-                        } else {
-                            // Recursively get from the child's subcontext
-                            match child_map.get(head2) {
-                                Some(child_src) => child_src.get_parts(tail2),
-                                None => Err(StatError::NotFound(format!(
-                                    "No subcontext for '{head2}'"
-                                ))),
-                            }
-                        }
-                    }
-                    _ => {
-                        Err(StatError::NotFound(format!(
-                            "Key '{head}' not found among subcontext"
-                        )))
-                    }
+    
+                // If head is a context key (e.g., "root", "parent", "target", etc.), delegate lookup
+                if let Some(subcontext) = context_map.get(head) {
+                    return subcontext.get_parts(tail);
                 }
+    
+                // If no explicit context, assume it's a stat lookup under "self"
+                if let Some(StatContextRefs::Definitions(defs)) = context_map.get("self") {
+                    let stat_name = parts.join(".");
+                    return defs.get_str(&stat_name, self);
+                }
+    
+                Err(StatError::NotFound(format!("Context '{}' not found", head)))
             }
         }
     }
