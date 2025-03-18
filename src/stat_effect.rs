@@ -4,7 +4,7 @@ use bevy_utils::HashMap;
 use serde::Deserialize;
 use crate::prelude::*;
 
-#[derive(Component, Deserialize, Debug, Clone, Deref, DerefMut)]
+#[derive(Component, Deserialize, Default, Debug, Clone, Deref, DerefMut)]
 pub struct StatEffect(pub Stats);
 
 impl StatEffect {

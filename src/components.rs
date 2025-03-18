@@ -104,7 +104,7 @@ impl Default for Expression {
     }
 }
 
-#[derive(Component, Debug, Clone, Deref, DerefMut)]
+#[derive(Component, Debug, Default, Clone, Deref, DerefMut)]
 #[require(StatContext)]
 pub struct Stats(pub HashMap<String, StatType>);
 
