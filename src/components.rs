@@ -25,6 +25,7 @@ pub enum StatError {
 pub enum StatType {
     Literal(f32),
     Expression(Expression),
+    Taggable(Taggable),
 }
 
 impl StatType {
@@ -38,6 +39,7 @@ impl StatType {
                 *current_val += val;
             },
             StatType::Expression(_) => { },
+            StatType::Taggable(_) => { },
         }
     }
 
@@ -47,6 +49,7 @@ impl StatType {
                 *current_val -= val;
             },
             StatType::Expression(_) => { },
+            StatType::Taggable(_) => { },
         }
     }
 
@@ -86,6 +89,21 @@ impl StatType {
 
     pub fn from_expression(value: Expression) -> Self {
         StatType::Expression(value)
+    }
+    
+    pub fn get_taggable(
+        &self,
+        stat: &str,
+        tag_mask: u32,
+        eval_context: &StatContextRefs,
+    ) -> Result<f32, StatError> {
+        match self.0.get(stat) {
+            Some(StatType::Taggable(taggable)) => {
+                Ok(taggable.query(tag_mask, eval_context))
+            }
+            Some(_) => Err(StatError::BadOpp(format!("Stat '{}' is not taggable", stat))),
+            None => Err(StatError::NotFound(stat.to_string())),
+        }
     }
 }
 
@@ -143,6 +161,7 @@ impl Stats {
             Some(value) => match value {
                 StatType::Literal(val) => return Ok(*val),
                 StatType::Expression(_) => return Err(StatError::BadOpp("Expression found".to_string())),
+                StatType::Taggable(_) => return Err(StatError::BadOpp("Taggable found".to_string())),
             },
             None => return Err(StatError::BadOpp("Literal not found".to_string())),
         }
@@ -269,3 +288,6 @@ pub(crate) fn plugin(app: &mut App) {
         update_root_context,
     ));
 }
+
+#[derive(Debug)]
+pub struct Taggable(pub HashMap<u32, StatType>);

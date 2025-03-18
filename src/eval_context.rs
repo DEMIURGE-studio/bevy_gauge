@@ -99,8 +99,22 @@ impl<'a> StatContextRefs<'a> {
 
     /// Public getter that splits on '.' and calls `get_parts` recursively
     pub fn get(&self, var: &str) -> Result<f32, StatError> {
-        let parts: Vec<&str> = var.split('.').collect();
-        self.get_parts(&parts)
+        self.get_parts(&var.split('.').collect::<Vec<&str>>())
+    }
+
+    pub fn get_taggable(&self, stat_name: &str, tag_mask: u32) -> Result<f32, StatError> {
+        match self {
+            StatContextRefs::Definitions(defs) => defs.get_taggable(stat_name, tag_mask, self),
+            StatContextRefs::SubContext(hard_map) => {
+                if let Some(StatContextRefs::Definitions(defs)) = hard_map.get("self") {
+                    defs.get_taggable(stat_name, tag_mask, self)
+                } else {
+                    Err(StatError::NotFound(format!(
+                        "No 'self' definitions to handle stat '{stat_name}[{tag_mask}]'"
+                    )))
+                }
+            }
+        }
     }
 
     fn get_parts(&self, parts: &[&str]) -> Result<f32, StatError> {
@@ -109,22 +123,34 @@ impl<'a> StatContextRefs<'a> {
         }
 
         match self {
-            // ================ 1) This is a "leaf" that has definitions ================
+            // ================ 1) If this is a Definitions Leaf =================
             StatContextRefs::Definitions(defs) => {
                 if parts.len() == 1 {
-                    // e.g. "Life"
-                    defs.get_str(parts[0], self)
+                    let key = parts[0];
+
+                    // Handle Taggable Queries (e.g., "Damage[fire, spell]")
+                    if let Some((stat_name, tag_mask)) = parse_tagged_stat(key) {
+                        return defs.get_taggable(stat_name, tag_mask, self);
+                    }
+
+                    return defs.get_str(key, self);
                 } else {
-                    // e.g. "Life.max" => let definitions parse the dot
                     let joined = parts.join(".");
-                    defs.get_str(&joined, self)
+                    return defs.get_str(&joined, self);
                 }
             }
 
-            // ================ 2) This is a "branch" that has a HardMap ================
+            // ================ 2) If this is a Branch with Contexts ================
             StatContextRefs::SubContext(hard_map) => {
                 let head = parts[0];
-                // If the "head" starts uppercase, treat the entire string as a single stat in "self"
+                let tail = &parts[1..];
+
+                // If this matches a context key (self, target, parent, root)
+                if let Some(Some(subcontext)) = hard_map.get(head).map(|x| x.as_ref()) {
+                    return subcontext.get_parts(tail);
+                }
+
+                // If the head is uppercase, assume it's a stat in "self"
                 if Self::is_stat_name_segment(head) {
                     let joined = parts.join(".");
                     if let Some(StatContextRefs::Definitions(defs)) = hard_map.get("self") {
@@ -136,7 +162,7 @@ impl<'a> StatContextRefs<'a> {
                     }
                 }
 
-                // If we only have 1 part and it's lowercase, e.g. "parent", that's incomplete
+                // If parts.len() == 1, it's an incomplete path like "parent" without a stat name
                 if parts.len() == 1 {
                     return Err(StatError::NotFound(format!(
                         "Got a single-lowercase-part {:?}, but no stat name was provided",
@@ -144,54 +170,7 @@ impl<'a> StatContextRefs<'a> {
                     )));
                 }
 
-                let tail = &parts[1..];
-
-                // Look up the subcontext for `head` in the HardMap
-                match hard_map.get(head) {
-                    Some(StatContextRefs::Definitions(defs)) => {
-                        // e.g. "parent.Strength" => tail has 1 item = "Strength"
-                        if tail.len() == 1 {
-                            defs.get_str(tail[0], self)
-                        } else {
-                            let joined = tail.join(".");
-                            defs.get_str(&joined, self)
-                        }
-                    }
-                    Some(StatContextRefs::SubContext(child_map)) => {
-                        // e.g. "parent.parent.XYZ"
-                        if tail.is_empty() {
-                            return Err(StatError::NotFound("Empty tail".to_string()));
-                        }
-                        let head2 = tail[0];
-                        let tail2 = &tail[1..];
-
-                        if Self::is_stat_name_segment(head2) {
-                            // e.g. "parent.parent.Life" => entire remainder is "Life"
-                            let joined = tail.join(".");
-                            if let Some(StatContextRefs::Definitions(defs)) = child_map.get("self") {
-                                return defs.get_str(&joined, self);
-                            } else {
-                                return Err(StatError::NotFound(format!(
-                                    "No 'self' in subcontext to handle stat: {}",
-                                    joined
-                                )));
-                            }
-                        } else {
-                            // Recursively get from the child's subcontext
-                            match child_map.get(head2) {
-                                Some(child_src) => child_src.get_parts(tail2),
-                                None => Err(StatError::NotFound(format!(
-                                    "No subcontext for '{head2}'"
-                                ))),
-                            }
-                        }
-                    }
-                    _ => {
-                        Err(StatError::NotFound(format!(
-                            "Key '{head}' not found among subcontext"
-                        )))
-                    }
-                }
+                Err(StatError::NotFound(format!("Key '{}' not found in context", head)))
             }
         }
     }
@@ -245,5 +224,52 @@ impl StatAccessor<'_, '_> {
         for (stat, value) in effect.effects.iter() {
             let _ = stats.add(stat, *value);
         }
+    }
+}
+
+
+// Define tag constants
+const FIRE: u32 = 0b0001;
+const ICE: u32 = 0b0010;
+const SPELL: u32 = 0b0100;
+const ATTACK: u32 = 0b1000;
+
+// Categories
+const ANY_TYPE: u32 = SPELL | ATTACK;
+const ELEMENTAL: u32 = FIRE | ICE;
+
+
+fn parse_tagged_stat(var: &str) -> Option<(&str, u32)> {
+    if let Some(start) = var.find('[') {
+        if let Some(end) = var.find(']') {
+            let base_stat = &var[..start]; // "Damage"
+            let tag_str = &var[start + 1..end]; // "fire, spell"
+
+            let mut tag_mask = 0;
+            for tag in tag_str.split(',').map(|s| s.trim()) {
+                tag_mask |= match_tag(tag);
+            }
+
+            return Some((base_stat, tag_mask));
+        }
+    }
+    None
+}
+
+fn match_tag(var: &str) -> u32 {
+    match var {
+        "fire"          => 0b00000001,
+        "ice"           => 0b00000010,
+        "lightning"     => 0b00000100,
+        "physical"      => 0b00001000,
+        "elemental"     => 0b00000111,
+        "any_damage"    => 0b00001111,
+
+        "spell"         => 0b00010000,
+        "attack"        => 0b00100000,
+        "ranged"        => 0b01000000,
+        "melee"         => 0b10000000,
+        "any_type"      => 0b11110000,
+        _               => 0b00000000,
     }
 }
