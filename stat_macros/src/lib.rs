@@ -657,3 +657,29 @@ fn expand_trait_impls_for_no_variant(
         }
     }
 }
+
+#[proc_macro_derive(EntityStat)]
+pub fn derive_entity_stat(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    let struct_name = &input.ident;
+
+
+    let output = quote! {
+        impl EntityStat for #struct_name
+        {
+            fn get_stat_type(&self) -> &str { stringify!(#struct_name) }
+
+            fn get_min(&self) -> Option<f32> { self.min }
+            fn get_max(&self) -> Option<f32> { self.max }
+            fn get_base_value(&self) -> f32 { self.base_value }
+            fn get_current_value(&self) -> f32 { self.current }
+
+            fn set_base_value(&mut self, value: f32) { self.base_value = value; }
+            fn set_current_value(&mut self, value: f32) { self.current = value; }
+            fn set_min_value(&mut self, value: Option<f32>) { self.min = value; }
+            fn set_max_value(&mut self, value: Option<f32>) { self.max = value; }
+        }
+    };
+
+    output.into()
+}
