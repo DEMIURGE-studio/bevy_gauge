@@ -66,7 +66,7 @@ impl<'a> StatContextRefs<'a> {
         }
 
         match self {
-            // ================ 1) This is a "leaf" that has definitions ================
+            // ================ This is a "leaf" that has definitions ================
             StatContextRefs::Definitions(defs) => {
                 if parts.len() == 1 {
                     // e.g. "Life"
@@ -78,7 +78,7 @@ impl<'a> StatContextRefs<'a> {
                 }
             }
 
-            // ================ 2) This is a "branch" that has a hashmap context ================
+            // ================ This is a "branch" that has a hashmap context ================
             StatContextRefs::SubContext(context_map) => {
                 let head = parts[0];
                 let tail = &parts[1..];
