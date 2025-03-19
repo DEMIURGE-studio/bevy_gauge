@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_utils::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 // Your new simplified stats + expression system:

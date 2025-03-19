@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_ecs::system::SystemParam;
-use bevy_utils::{hashbrown::HashMap, HashMap};
+use bevy_utils::hashbrown::HashMap;
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
 #[derive(Component, Default)]
@@ -18,7 +18,7 @@ impl StatContext {
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
     Definitions(&'a Stats),
-    SubContext(Box<HashMap<&'a str, &'a StatContextRefs<'a>>>),
+    SubContext(Box<HashMap<&'a str, StatContextRefs<'a>>>),
 }
 
 impl<'a> StatContextRefs<'a> {
@@ -46,7 +46,7 @@ impl<'a> StatContextRefs<'a> {
                 let child_src = Self::build(*child_entity, defs_query, ctx_query);
 
                 // Match the child key to one of our 3 slots
-                context_map.set(key, child_src);
+                context_map.insert(key, child_src);
             }
         }
 
@@ -98,15 +98,6 @@ impl<'a> StatContextRefs<'a> {
             }
         }
     }
-
-    /// E.g. "Life", "Juice" start uppercase => treat them as a top-level stat name
-    fn is_stat_name_segment(segment: &str) -> bool {
-        segment
-            .chars()
-            .next()
-            .map(char::is_uppercase)
-            .unwrap_or(false)
-    }
 }
 
 #[derive(SystemParam)]
@@ -125,19 +116,20 @@ impl StatAccessor<'_, '_> {
         let mut value = StatContextRefs::build(target, &self.definitions, &self.contexts);
     
         // Match by reference, so `value` is not consumed
-        if let StatContextRefs::SubContext(ref mut hard_map) = value {
-            hard_map.set("target", target_context);
+        if let StatContextRefs::SubContext(ref mut hash_map) = value {
+            hash_map.insert("target", target_context);
         }
     
         value
     }
 
-    pub fn apply_effect(&mut self, entity: Entity, effect: &StatEffect) {
-        let stat_context = self.build(entity);
+    pub fn apply_effect(&mut self, entity: Entity, stat_effect: &StatEffect) {
+        let effect_instance = {
+            let stat_context = self.build(entity);
+            stat_effect.build_instant(&stat_context)
+        };
 
-        let effect = effect.build_instant(&stat_context);
-
-        self.apply_instant_effect(entity, &effect);
+        self.apply_instant_effect(entity, &effect_instance);
     }
 
     pub fn apply_instant_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
