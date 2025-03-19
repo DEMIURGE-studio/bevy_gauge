@@ -1,5 +1,5 @@
 use bevy::prelude::{Deref, DerefMut};
-use bevy_ecs::{component::Component, entity::Entity};
+use bevy_ecs::component::Component;
 use bevy_utils::HashMap;
 use serde::Deserialize;
 use crate::prelude::*;
@@ -76,33 +76,5 @@ impl StatEffectInstance {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, -value);
         }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum StatEffectId {
-    Entity(Entity),
-    String(String),
-    UID(u64),
-}
-
-#[derive(Component, Clone)]
-pub struct PersistentStatEffects {
-    pub effects: HashMap<StatEffectId, StatEffect>,
-}
-
-impl PersistentStatEffects {
-    pub fn new() -> Self {
-        Self { effects: HashMap::new() }
-    }
-
-    pub fn try_add_persistent_effect(&mut self, id: StatEffectId, stat_effect: &StatEffect, target: Entity, stat_accessor: &mut StatAccessor) {
-        if self.effects.contains_key(&id) {
-            return;
-        }
-
-        stat_accessor.apply_effect(target, stat_effect);
-
-        self.effects.insert(id, stat_effect.clone());
     }
 }
