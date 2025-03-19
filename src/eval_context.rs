@@ -123,13 +123,13 @@ impl StatAccessor<'_, '_> {
         value
     }
 
-    pub fn apply_effect(&mut self, entity: Entity, stat_effect: &StatEffect) {
+    pub fn apply_effect(&mut self, origin: Entity, target: Entity, stat_effect: &StatEffect) {
         let effect_instance = {
-            let stat_context = self.build(entity);
+            let stat_context = self.build(origin);
             stat_effect.build_instant(&stat_context)
         };
 
-        self.apply_instant_effect(entity, &effect_instance);
+        self.apply_instant_effect(target, &effect_instance);
     }
 
     pub fn apply_instant_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
