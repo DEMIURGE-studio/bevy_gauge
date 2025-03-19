@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-
 use bevy::prelude::*;
 use bevy_utils::HashMap;
 use evalexpr::{
@@ -254,7 +253,6 @@ fn update_root_context(
 ) {
     for (entity, mut stat_context) in changed_parent_query.iter_mut() {
         let root = parent_query.root_ancestor(entity);
-        println!("Root entity: {}", root);
         
         stat_context.insert("root", root);
     }

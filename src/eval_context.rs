@@ -3,7 +3,7 @@ use bevy_ecs::system::SystemParam;
 use bevy_utils::hashbrown::HashMap;
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Reflect)]
 pub struct StatContext {
     pub sources: HashMap<String, Entity>,
 }

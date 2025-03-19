@@ -18,5 +18,6 @@ pub fn plugin(app: &mut App) {
     app.add_plugins((
         schedule::plugin,
         components::plugin,
-    ));
+    ))
+    .register_type::<prelude::StatContext>();
 }
