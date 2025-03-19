@@ -121,47 +121,46 @@ impl<'a> StatContextRefs<'a> {
         if parts.is_empty() {
             return Err(StatError::NotFound("Empty stat identifier".to_string()));
         }
-
+    
         match self {
             // ================ 1) If this is a Definitions Leaf =================
             StatContextRefs::Definitions(defs) => {
                 if parts.len() == 1 {
                     let key = parts[0];
-
+    
                     // Handle Taggable Queries (e.g., "Damage[fire, spell]")
                     if let Some((stat_name, tag_mask)) = parse_tagged_stat(key) {
                         return defs.get_taggable(stat_name, tag_mask, self);
                     }
-
+    
                     return defs.get_str(key, self);
                 } else {
                     let joined = parts.join(".");
                     return defs.get_str(&joined, self);
                 }
             }
-
+    
             // ================ 2) If this is a Branch with Contexts ================
             StatContextRefs::SubContext(hard_map) => {
                 let head = parts[0];
                 let tail = &parts[1..];
-
-                // If this matches a context key (self, target, parent, root)
-                if let Some(Some(subcontext)) = hard_map.get(head).map(|x| x.as_ref()) {
+    
+                if let Some(subcontext) = hard_map.get(head) {
                     return subcontext.get_parts(tail);
                 }
-
+    
                 // If the head is uppercase, assume it's a stat in "self"
                 if Self::is_stat_name_segment(head) {
                     let joined = parts.join(".");
-                    if let Some(StatContextRefs::Definitions(defs)) = hard_map.get("self") {
-                        return defs.get_str(&joined, self);
+                    if let Some(subcontext) = hard_map.get("self") {
+                        return subcontext.get_parts(&[&joined]);
                     } else {
                         return Err(StatError::NotFound(
                             format!("No 'self' definitions to handle stat {:?}", joined)
                         ));
                     }
                 }
-
+    
                 // If parts.len() == 1, it's an incomplete path like "parent" without a stat name
                 if parts.len() == 1 {
                     return Err(StatError::NotFound(format!(
@@ -169,11 +168,11 @@ impl<'a> StatContextRefs<'a> {
                         head
                     )));
                 }
-
+    
                 Err(StatError::NotFound(format!("Key '{}' not found in context", head)))
             }
         }
-    }
+    }    
 
     /// E.g. "Life", "Juice" start uppercase => treat them as a top-level stat name
     fn is_stat_name_segment(segment: &str) -> bool {
@@ -227,23 +226,13 @@ impl StatAccessor<'_, '_> {
     }
 }
 
-
-// Define tag constants
-const FIRE: u32 = 0b0001;
-const ICE: u32 = 0b0010;
-const SPELL: u32 = 0b0100;
-const ATTACK: u32 = 0b1000;
-
-// Categories
-const ANY_TYPE: u32 = SPELL | ATTACK;
-const ELEMENTAL: u32 = FIRE | ICE;
-
-
 fn parse_tagged_stat(var: &str) -> Option<(&str, u32)> {
     if let Some(start) = var.find('[') {
         if let Some(end) = var.find(']') {
             let base_stat = &var[..start]; // "Damage"
             let tag_str = &var[start + 1..end]; // "fire, spell"
+
+            println!("Parsing stat: {} with tags: {}", base_stat, tag_str);
 
             let mut tag_mask = 0;
             for tag in tag_str.split(',').map(|s| s.trim()) {

@@ -90,21 +90,6 @@ impl StatType {
     pub fn from_expression(value: Expression) -> Self {
         StatType::Expression(value)
     }
-    
-    pub fn get_taggable(
-        &self,
-        stat: &str,
-        tag_mask: u32,
-        eval_context: &StatContextRefs,
-    ) -> Result<f32, StatError> {
-        match self.0.get(stat) {
-            Some(StatType::Taggable(taggable)) => {
-                Ok(taggable.query(tag_mask, eval_context))
-            }
-            Some(_) => Err(StatError::BadOpp(format!("Stat '{}' is not taggable", stat))),
-            None => Err(StatError::NotFound(stat.to_string())),
-        }
-    }
 }
 
 impl Default for StatType {
@@ -166,6 +151,22 @@ impl Stats {
             None => return Err(StatError::BadOpp("Literal not found".to_string())),
         }
 
+    }
+
+    /// Get the value of a taggable stat by name and tag bitmask.
+    pub fn get_taggable(
+        &self,
+        stat: &str,
+        tag_mask: u32,
+        eval_context: &StatContextRefs,
+    ) -> Result<f32, StatError> {
+        match self.0.get(stat) {
+            Some(StatType::Taggable(taggable)) => {
+                Ok(taggable.query(tag_mask, eval_context))
+            }
+            Some(_) => Err(StatError::BadOpp(format!("Stat '{}' is not taggable", stat))),
+            None => Err(StatError::NotFound(format!("Stat '{}' not found", stat))),
+        }
     }
 
     /// Add a new `StatType` or update an existing one with additional value.
@@ -289,5 +290,16 @@ pub(crate) fn plugin(app: &mut App) {
     ));
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Taggable(pub HashMap<u32, StatType>);
+
+impl Taggable {
+    /// Query the taggable stats by filtering values that match the tag bitmask.
+    pub fn query(&self, tag_mask: u32, eval_context: &StatContextRefs) -> f32 {
+        self.0
+            .iter()
+            .filter(|(tags, _)| (*tags & tag_mask) == tag_mask) // Ensure all requested bits exist in the stored key
+            .map(|(_, stat_type)| stat_type.evaluate(eval_context)) // Evaluate the stat if needed
+            .sum()
+    }
+}

@@ -69,15 +69,31 @@ macro_rules! simple_stat {
 #[macro_export]
 macro_rules! stats {
     ( $( $key:expr => $value:expr ),* $(,)? ) => {{
-         // Ensure that you bring the required traits into scope.
          use $crate::prelude::*;
+         use $crate::{parse_tagged_stat, match_tag};
          let mut map = ::bevy_utils::HashMap::new();
+         
          $(
-            map.insert($key.to_string(), $value.into());
+            if let Some((base_stat, tag_mask)) = parse_tagged_stat($key) {
+                // Check if the base_stat already exists and is a Taggable
+                let stat_entry = map.entry(base_stat.to_string()).or_insert_with(|| StatType::Taggable(Taggable(::bevy_utils::HashMap::new())));
+                
+                // If it's a Taggable, insert the tag-masked value
+                if let StatType::Taggable(ref mut taggable) = stat_entry {
+                    taggable.0.insert(tag_mask, $value.into());
+                } else {
+                    panic!("Attempted to insert taggable stat '{}' into non-taggable entry!", base_stat);
+                }
+            } else {
+                // Normal stat insertion (for non-taggable values)
+                map.insert($key.to_string(), $value.into());
+            }
          )*
+
          Stats(map)
     }};
 }
+
 
 #[macro_export]
 macro_rules! stat_effect {
