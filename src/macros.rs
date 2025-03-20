@@ -36,7 +36,7 @@ macro_rules! simple_generic_stat {
 #[macro_export]
 macro_rules! simple_stat {
     ($struct_name:ident) => {
-        impl StatDerived for $struct_name {
+        impl bevy_gauge::prelude::StatDerived for $struct_name {
             fn from_stats(stats: &bevy_gauge::prelude::StatContextRefs) -> Self {
                 let mut s = Self::default();
                 s.update_from_stats(stats);
