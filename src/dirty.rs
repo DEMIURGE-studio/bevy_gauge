@@ -113,11 +113,11 @@
 //     unsafe fn debug_checked_unwrap(self) -> Self::Item;
 // }
 // 
-// /// SAFETY:
-// /// `fetch` accesses a single component in a readonly way.
-// /// This is sound because `update_component_access` add read access for that component and panics when appropriate.
-// /// `update_component_access` adds a `With` filter for a component.
-// /// This is sound because `matches_component_set` returns whether the set contains that component.
+// SAFETY:
+// `fetch` accesses a single component in a readonly way.
+// This is sound because `update_component_access` add read access for that component and panics when appropriate.
+// `update_component_access` adds a `With` filter for a component.
+// This is sound because `matches_component_set` returns whether the set contains that component.
 // unsafe impl<T: Component> WorldQuery for Dirty<T> {
 //     type Fetch<'w> = DirtyFetch<'w, T>;
 //     type State = ComponentId;
