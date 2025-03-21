@@ -1,6 +1,6 @@
 use std::collections::HashMap;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy_ecs::system::SystemParam;
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
 #[derive(Component, Default, Reflect)]

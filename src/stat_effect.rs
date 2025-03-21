@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use bevy::prelude::{Deref, DerefMut};
-use bevy_ecs::component::Component;
+use bevy::prelude::{Component, Deref, DerefMut};
 use serde::Deserialize;
 use crate::prelude::*;
 

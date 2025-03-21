@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gauge"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["William Carson", "Jesse Rossetti"]
 license = "MIT"
@@ -24,9 +24,13 @@ members = ["bevy_gauge_macros"]
 bevy_gauge_macros = "0.0.1"
 
 # Bevy 1st party
-bevy = { version = "0.16.0-rc.1" }
-bevy_ecs = { version = "0.16.0-rc.1" }
-bevy_utils = { version = "0.16.0-rc.1" }
+bevy = { version = "0.16.0-rc.1", default-features = false, features = [
+    "serialize", 
+    "multi_threaded",
+    "bevy_core_pipeline",
+    "bevy_asset",
+    "bevy_state"
+] }
 
 # Serialization
 ron = "0.8.1"

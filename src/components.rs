@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use bevy::ecs::relationship::Relationship;
 use bevy::prelude::*;
-use bevy_ecs::relationship::Relationship;
 use evalexpr::{
     Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
 };

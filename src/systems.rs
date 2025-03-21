@@ -1,3 +1,4 @@
+use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
 use super::prelude::*;
 
@@ -14,7 +15,7 @@ pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
     }
 }
 
-pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability = bevy_ecs::component::Mutable>>(
+pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability = Mutable>>(
     mut stats_query: Query<(Entity, &mut T)>,
     stat_accessor: StatAccessor,
     mut commands: Commands,

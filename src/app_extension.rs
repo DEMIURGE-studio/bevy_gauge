@@ -1,7 +1,5 @@
-use std::marker::PhantomData;
-
+use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
-use bevy_ecs::component::{ComponentMutability, Mutable};
 use crate::systems::update_writeback_value_system;
 
 use super::{prelude::*, systems::{add_stat_component_system, update_stat_component_system}};
