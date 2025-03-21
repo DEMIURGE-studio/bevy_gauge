@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use bevy::asset::io::memory::Value::Static;
 use bevy::ecs::relationship::Relationship;
 use bevy::prelude::*;
 use evalexpr::build_operator_tree;
@@ -205,6 +204,9 @@ fn create_test_collection() -> StatCollection {
 
     let defense_expr = Expression(build_operator_tree("armor + health * 0.1").unwrap());
     collection.insert("defense".to_string(), StatInstance::from_expression(defense_expr));
+    
+    let defense_bonus_expr = Expression(build_operator_tree("defense + 1").unwrap());
+    collection.insert("defense_bonus".to_string(), StatInstance::from_expression(defense_bonus_expr));
 
     collection
 }
@@ -219,4 +221,5 @@ fn test_literal_values() {
     assert_eq!(collection.get("agility").unwrap(), 30.0);
     assert_eq!(collection.get("damage").unwrap(), 65.0);
     assert_eq!(collection.get("defense").unwrap(), 60.0);
+    assert_eq!(collection.get("defense_bonus").unwrap(), 61.0);
 }
