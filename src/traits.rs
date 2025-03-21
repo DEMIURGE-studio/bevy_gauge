@@ -1,4 +1,4 @@
-use stat_macros::stat_component;
+use bevy_gauge_macros::stat_component;
 
 use super::prelude::*;
 

@@ -1,7 +1,12 @@
 [package]
 name = "bevy_gauge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+authors = ["William Carson", "Jesse Rossetti"]
+license = "MIT"
+repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
+readme = "readme.md"
+keywords = ["modifiers", "bevy", "gameplay", "stats", "abilities"]
 
 [lib]
 name = "bevy_gauge"
@@ -9,9 +14,12 @@ path = "src/lib.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = ["bevy_gauge_macros"]
+
 [dependencies]
 # 1st party
-stat_macros = { path = "./stat_macros" }
+bevy_gauge_macros = { path = "bevy_gauge_macros" }
 
 # Bevy 1st party
 bevy = { version = "0.16.0-rc.1" }
