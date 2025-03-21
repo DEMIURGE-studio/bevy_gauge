@@ -8,6 +8,7 @@ repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
 readme = "readme.md"
 keywords = ["modifiers", "bevy", "gameplay", "stats", "abilities"]
 description = "A crate designed to provide an opinionated solution to handling stats, effects, abilities and tags"
+exclude = ["/bevy_gauge_macros"]
 
 [lib]
 name = "bevy_gauge"
@@ -20,7 +21,7 @@ members = ["bevy_gauge_macros"]
 
 [dependencies]
 # 1st party
-bevy_gauge_macros = { path = "bevy_gauge_macros" }
+bevy_gauge_macros = "0.0.1"
 
 # Bevy 1st party
 bevy = { version = "0.16.0-rc.1" }
