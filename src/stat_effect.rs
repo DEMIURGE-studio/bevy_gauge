@@ -1,15 +1,15 @@
+use std::collections::HashMap;
 use bevy::prelude::{Deref, DerefMut};
 use bevy_ecs::component::Component;
-use bevy_utils::HashMap;
 use serde::Deserialize;
 use crate::prelude::*;
 
-#[derive(Component, Deserialize, Default, Debug, Clone, Deref, DerefMut)]
-pub struct StatEffect(pub Stats);
+#[derive(Component, Default, Debug, Clone, Deref, DerefMut)]
+pub struct StatEffect(pub StatCollection);
 
 impl StatEffect {
     pub fn new() -> Self {
-        Self(Stats::new())
+        Self(StatCollection::new())
     }
 
     pub fn build(&self, stats: &StatContextRefs) -> StatEffectInstance {
@@ -42,13 +42,13 @@ impl<'a> InstantStatEffectInstance<'a> {
         }
     }
 
-    pub fn apply(&self, stats: &mut Stats) {
+    pub fn apply(&self, stats: &mut StatCollection) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, *value);
         }
     }
 
-    pub fn unapply(&self, stats: &mut Stats) {
+    pub fn unapply(&self, stats: &mut StatCollection) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, -value);
         }
@@ -66,13 +66,13 @@ impl StatEffectInstance {
         }
     }
 
-    pub fn apply(&self, stats: &mut Stats) {
+    pub fn apply(&self, stats: &mut StatCollection) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, *value);
         }
     }
 
-    pub fn unapply(&self, stats: &mut Stats) {
+    pub fn unapply(&self, stats: &mut StatCollection) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, -value);
         }

@@ -52,10 +52,7 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
 #[proc_macro]
 pub fn stat_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as StatStructInput);
-    let expanded = match ast.expand() {
-        Ok(ts) => ts,
-        Err(e) => e.to_compile_error(),
-    };
+    let expanded = ast.expand().unwrap_or_else(|e| e.to_compile_error());
     expanded.into()
 }
 

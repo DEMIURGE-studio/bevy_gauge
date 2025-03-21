@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_ecs::system::SystemParam;
-use bevy_utils::hashbrown::HashMap;
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
 #[derive(Component, Default, Reflect)]
@@ -17,14 +17,14 @@ impl StatContext {
 
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
-    Definitions(&'a Stats),
+    Definitions(&'a StatCollection),
     SubContext(Box<HashMap<&'a str, StatContextRefs<'a>>>),
 }
 
 impl<'a> StatContextRefs<'a> {
     pub fn build(
         entity: Entity,
-        defs_query: &'a Query<'_, '_, &mut Stats>,
+        defs_query: &'a Query<'_, '_, &mut StatCollection>,
         ctx_query: &'a Query<'_, '_, &StatContext>,
     ) -> StatContextRefs<'a> {
         // Create a HardMap with default NoContext in each slot
@@ -102,7 +102,7 @@ impl<'a> StatContextRefs<'a> {
 
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
-    definitions: Query<'w, 's, &'static mut Stats>,
+    definitions: Query<'w, 's, &'static mut StatCollection>,
     contexts: Query<'w, 's, &'static StatContext>,
 }
 

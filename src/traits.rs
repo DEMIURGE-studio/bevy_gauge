@@ -35,15 +35,15 @@ pub trait StatDerived {
 }
 
 pub trait WriteBack {
-    fn write_back(&self, stats: &mut Stats);
+    fn write_back(&self, stats: &mut StatCollection);
 }
 
-stat_component!(
-    pub struct Simple {
-        max: ..,
-        current: ..WriteBack,
-    };
-); 
+// stat_component!(
+//     pub struct Simple {
+//         max: ..,
+//         current: ..WriteBack,
+//     };
+// ); 
 
 #[derive(Debug, Default)]
 struct Damage {
@@ -51,14 +51,14 @@ struct Damage {
     min: f32,
 }
 
-stat_component!(
-    pub struct Depth {
-        damage: Damage {
-            max: ..,
-            min: ..,
-        }
-    }
-);
+// stat_component!(
+//     pub struct Depth {
+//         damage: Damage {
+//             max: ..,
+//             min: ..,
+//         }
+//     }
+// );
 
 #[derive(Default)]
 pub struct OnBlock;
@@ -66,10 +66,10 @@ pub struct OnBlock;
 #[derive(Default)]
 pub struct OnMeditate;
 
-stat_component!(
-    pub struct Generic<T> {
-        max: ..,
-        current: WriteBack,
-    };
-    (OnBlock, OnMeditate)
-);
+// stat_component!(
+//     pub struct Generic<T> {
+//         max: ..,
+//         current: WriteBack,
+//     };
+//     (OnBlock, OnMeditate)
+// );

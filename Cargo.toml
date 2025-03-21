@@ -1,7 +1,7 @@
 [package]
 name = "bevy_gauge"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "bevy_gauge"
@@ -14,9 +14,9 @@ path = "src/lib.rs"
 stat_macros = { path = "./stat_macros" }
 
 # Bevy 1st party
-bevy = { version = "0.15.0" }
-bevy_ecs = { version = "0.15.0" }
-bevy_utils = { version = "0.15.0" }
+bevy = { version = "0.16.0-rc.1" }
+bevy_ecs = { version = "0.16.0-rc.1" }
+bevy_utils = { version = "0.16.0-rc.1" }
 
 # Serialization
 ron = "0.8.1"

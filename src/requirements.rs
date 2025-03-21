@@ -42,7 +42,7 @@ impl From<&str> for StatRequirement {
     }
 }
 
-#[derive(Component, Debug, Default, Clone, Deserialize)]
+#[derive(Component, Debug, Default, Clone)]
 #[require(StatContext)]
 pub struct StatRequirements(pub Vec<StatRequirement>);
 

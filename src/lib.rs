@@ -13,6 +13,8 @@ pub mod serialization;
 pub mod stat_effect;
 pub mod systems;
 pub mod traits;
+mod tags;
+mod modifiers;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins((
