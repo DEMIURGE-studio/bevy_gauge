@@ -6,6 +6,7 @@ authors = ["William Carson"]
 license = "MIT"
 repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
 keywords = ["modifiers", "bevy", "gameplay", "stats", "abilities"]
+description = "Macros used for bevy_gauge to facilitate creations of certain component types"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]

@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
 readme = "readme.md"
 keywords = ["modifiers", "bevy", "gameplay", "stats", "abilities"]
+description = "A crate designed to provide an opinionated solution to handling stats, effects, abilities and tags"
 
 [lib]
 name = "bevy_gauge"
