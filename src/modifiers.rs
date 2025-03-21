@@ -1,10 +1,6 @@
-use std::collections::HashSet;
 use bevy::prelude::*;
-use bevy_ecs::component::*;
-use bevy_ecs::prelude::*;
-use bevy_ecs::relationship::RelationshipSourceCollection;
-use bevy_ecs::world::DeferredWorld;
-use crate::tags::StatTag;
+use bevy_ecs::component::StorageType;
+use crate::tags::ValueTag;
 
 
 #[derive(Debug, Clone)]
@@ -14,52 +10,50 @@ pub enum ModifierValue {
     More(f32)
 }
 
+impl Default for ModifierValue {
+    fn default() -> Self {
+        ModifierValue::Flat(0.0)
+    }
+}
 
-#[derive(Clone, Debug)]
-pub struct Modifier {
-    pub tag: StatTag,
+
+/// A definiton of a modifier for construction of the instance
+#[derive(Debug, Clone)]
+pub struct ModifierDefinition {
+    pub tag: ValueTag,
+    pub value: ModifierValue
+}
+
+
+/// Entity only to draw relationship between modifiers nad their collection
+#[derive(Component, Debug)]
+#[relationship(relationship_target = ModifierCollectionRefs)]
+#[require(ModifierInstance)]
+pub struct ModifierEntity {
+    #[relationship] 
+    pub modier_collection_owner: Entity,
+}
+
+
+/// An instance that lives as a component, or rather a single component entity that exists as a child on a tree of a Stat Entity.
+#[derive(Component, Debug, Default)]
+pub struct ModifierInstance {
+    pub tag: ValueTag,
     pub source_context: ModifierContext,
     pub target_context: Option<ModifierContext>,
     pub value: ModifierValue,
 }
 
-impl Component for Modifier {
-    const STORAGE_TYPE: StorageType = StorageType::Table;
-    type Mutability = Mutable;
-
-    fn register_component_hooks(hooks: &mut ComponentHooks) {
-        hooks.on_remove(on_modifier_remove);
-        hooks.on_add(on_modifier_add);
-    }
-}
-
-fn on_modifier_remove(mut world: DeferredWorld, hook_context: HookContext){
-    for ancestor in world.query_filtered::<&ChildOf, ()>().iter_ancestors(hook_context.entity) {
-        if let Some(mut root) = world.get_mut::<ModifierCollectionRefs>(ancestor) {
-            root.modifiers.remove(&hook_context.entity);
-        }
-    };
-}
-
-fn on_modifier_add(mut world: DeferredWorld, hook_context: HookContext){
-    for ancestor in world.query_filtered::<&ChildOf, ()>().query(&world).iter_ancestors(hook_context.entity) {
-        if let Some(mut root) = world.get_mut::<ModifierCollectionRefs>(ancestor) {
-            root.modifiers.insert(hook_context.entity);
-        }
-    };
-}
-
-
-#[derive(Debug, Clone)]
+/// Context to provide what stat entity this modifier is applied to
+#[derive(Debug, Clone, Default)]
 pub struct ModifierContext {
-    pub entity: Entity,
+    pub entity: Option<Entity>
 }
 
 
-/// A component on a stat owning entity to keep track of all Modifier Entities affecting this player
-/// 
-/// Attach to an entity with a stat collection
-#[derive(Component, Debug)]
+/// A component on an entity to keep track of all Modifier Entities affecting this entity
+#[derive(Component, Debug, Default)]
+#[relationship_target(relationship = ModifierEntity)]
 pub struct ModifierCollectionRefs {
-    pub modifiers: HashSet<Entity>
+    modifiers: Vec<Entity>
 }
