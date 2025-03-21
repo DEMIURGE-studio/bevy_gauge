@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
+use crate::{prelude::*};
+use crate::value_type::StatError;
 
 #[derive(Component, Default, Reflect)]
 pub struct StatContext {
@@ -70,11 +71,11 @@ impl<'a> StatContextRefs<'a> {
             StatContextRefs::Definitions(defs) => {
                 if parts.len() == 1 {
                     // e.g. "Life"
-                    defs.get_str(parts[0], self)
+                    defs.get_str(parts[0])
                 } else {
                     // e.g. "Life.max" => let definitions parse the dot
                     let joined = parts.join(".");
-                    defs.get_str(&joined, self)
+                    defs.get_str(&joined)
                 }
             }
 
@@ -91,7 +92,7 @@ impl<'a> StatContextRefs<'a> {
                 // If no explicit context, assume it's a stat lookup under "self"
                 if let Some(StatContextRefs::Definitions(defs)) = context_map.get("self") {
                     let stat_name = parts.join(".");
-                    return defs.get_str(&stat_name, self);
+                    return defs.get_str(&stat_name);
                 }
     
                 Err(StatError::NotFound(format!("Context '{}' not found", head)))
@@ -123,22 +124,22 @@ impl StatAccessor<'_, '_> {
         value
     }
 
-    pub fn apply_effect(&mut self, origin: Entity, target: Entity, stat_effect: &StatEffect) {
-        let effect_instance = {
-            let stat_context = self.build(origin);
-            stat_effect.build_instant(&stat_context)
-        };
-
-        self.apply_instant_effect(target, &effect_instance);
-    }
-
-    pub fn apply_instant_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
-        let Ok(mut stats) = self.definitions.get_mut(entity) else {
-            return;
-        };
-
-        for (stat, value) in effect.effects.iter() {
-            let _ = stats.add(stat, *value);
-        }
-    }
+    // pub fn apply_effect(&mut self, origin: Entity, target: Entity, stat_effect: &StatEffect) {
+    //     let effect_instance = {
+    //         let stat_context = self.build(origin);
+    //         stat_effect.build_instant(&stat_context)
+    //     };
+    // 
+    //     self.apply_instant_effect(target, &effect_instance);
+    // }
+    // 
+    // pub fn apply_instant_effect(&mut self, entity: Entity, effect: &InstantStatEffectInstance) {
+    //     let Ok(mut stats) = self.definitions.get_mut(entity) else {
+    //         return;
+    //     };
+    // 
+    //     for (stat, value) in effect.effects.iter() {
+    //         let _ = stats.add(stat, *value);
+    //     }
+    // }
 }

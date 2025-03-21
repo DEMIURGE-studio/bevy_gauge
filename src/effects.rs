@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use crate::modifiers::ModifierDefinition;
-use crate::prelude::ValueType;
 use crate::tags::ValueTag;
-
+use crate::value_type::ValueType;
 
 pub struct EffectDefinition {
     pub ctx: EffectContext,

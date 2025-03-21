@@ -1,5 +1,5 @@
 pub use super::app_extension::*;
-pub use super::components::*;
+pub use super::stats::*;
 pub use super::eval_context::*;
 pub use super::requirements::*;
 pub use super::schedule::*;
