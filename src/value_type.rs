@@ -18,6 +18,9 @@ pub enum ValueType {
     Expression(Expression),
 }
 
+
+
+
 // Need to be able to optionally pass in a stat_collection or value to be added to the evalexpression context
 
 
@@ -37,15 +40,6 @@ impl ValueBounds {
 impl ValueType {
     pub fn from_float(val: f32) -> ValueType {
         ValueType::Literal(val)
-    }
-
-    pub fn add(&mut self, val: f32) {
-        match self {
-            ValueType::Literal(current_val) => {
-                *current_val += val;
-            },
-            ValueType::Expression(_) => { },
-        }
     }
 
 
@@ -138,6 +132,5 @@ impl Default for Expression {
         Self(evalexpr::build_operator_tree("Total = 0").unwrap())
     }
 }
-
 
 
