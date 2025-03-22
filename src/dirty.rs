@@ -1,8 +1,5 @@
-use std::marker::PhantomData;
-use bevy_utils::syncunsafecell::UnsafeCell;
-
-use bevy::ptr::{ThinSlicePtr, UnsafeCellDeref};
-use bevy_ecs::{archetype::Archetype, component::{Component, ComponentId, Components, StorageType, Tick}, entity::Entity, query::*, storage::{ComponentSparseSet, Table, TableRow}, world::{unsafe_world_cell::UnsafeWorldCell, World}};
+use std::{cell::UnsafeCell, marker::PhantomData};
+use bevy::{ecs::{archetype::Archetype, component::{ComponentId, Components, StorageType, Tick}, query::{FilteredAccess, QueryFilter, WorldQuery}, storage::{ComponentSparseSet, Table, TableRow}, world::unsafe_world_cell::UnsafeWorldCell}, prelude::*, ptr::{ThinSlicePtr, UnsafeCellDeref}};
 
 pub(super) union StorageSwitch<C: Component, T: Copy, S: Copy> {
     /// The table variant. Requires the component to be a table component.

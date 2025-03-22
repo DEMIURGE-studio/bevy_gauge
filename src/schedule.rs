@@ -1,5 +1,4 @@
-use bevy::{app::MainScheduleOrder, prelude::*};
-use bevy_ecs::schedule::ScheduleLabel;
+use bevy::{app::MainScheduleOrder, ecs::schedule::ScheduleLabel, prelude::*};
 
 /// Order goes StatsUpdate -> CompositeStatsUpdate -> SideEffectsUpdate
 /// All of this happens in PreUpdate so that by Update stats are ready to be

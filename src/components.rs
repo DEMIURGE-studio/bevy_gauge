@@ -1,10 +1,15 @@
 use std::fmt::Debug;
-use bevy::prelude::*;
-use bevy_utils::HashMap;
+use bevy::{prelude::*, utils::HashMap};
 use evalexpr::{
     Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
 };
 use crate::prelude::*;
+
+/// GOALS: 
+/// - Reorganize into a more sensible structure
+/// - Figure out modifiers / tributaties
+/// - Get rid of unnecessary crates 
+/// - Turn the StatContextRefs tree into a graph
 
 // =======================================================
 // 1. StatError
@@ -91,6 +96,12 @@ impl StatType {
 impl Default for StatType {
     fn default() -> Self {
         Self::Literal(0.0)
+    }
+}
+
+impl From<f32> for StatType {
+    fn from(value: f32) -> Self {
+        Self::Literal(value)
     }
 }
 

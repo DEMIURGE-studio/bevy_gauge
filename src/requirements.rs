@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use serde::Deserialize;
 use crate::prelude::*;
 use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue};
 
@@ -42,7 +41,7 @@ impl From<&str> for StatRequirement {
     }
 }
 
-#[derive(Component, Debug, Default, Clone, Deserialize)]
+#[derive(Component, Debug, Default, Clone)]
 #[require(StatContext)]
 pub struct StatRequirements(pub Vec<StatRequirement>);
 

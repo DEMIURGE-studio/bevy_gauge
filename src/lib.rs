@@ -9,7 +9,6 @@ pub mod macros;
 pub mod prelude;
 pub mod requirements;
 pub mod schedule;
-pub mod serialization;
 pub mod stat_effect;
 pub mod systems;
 pub mod traits;

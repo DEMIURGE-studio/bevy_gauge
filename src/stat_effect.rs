@@ -1,10 +1,7 @@
-use bevy::prelude::{Deref, DerefMut};
-use bevy_ecs::component::Component;
-use bevy_utils::HashMap;
-use serde::Deserialize;
+use bevy::{prelude::*, utils::HashMap};
 use crate::prelude::*;
 
-#[derive(Component, Deserialize, Default, Debug, Clone, Deref, DerefMut)]
+#[derive(Component, Default, Debug, Clone, Deref, DerefMut)]
 pub struct StatEffect(pub Stats);
 
 impl StatEffect {

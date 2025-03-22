@@ -1,6 +1,4 @@
-use bevy::prelude::*;
-use bevy_ecs::system::SystemParam;
-use bevy_utils::hashbrown::HashMap;
+use bevy::{ecs::system::SystemParam, prelude::*, utils::HashMap};
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
 #[derive(Component, Default, Reflect)]
