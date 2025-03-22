@@ -1,6 +1,16 @@
 use bevy::{ecs::system::SystemParam, prelude::*, utils::HashMap};
 use crate::{prelude::*, stat_effect::InstantStatEffectInstance};
 
+pub(crate) fn plugin(app: &mut App) {
+    app.add_systems(AddStatComponent, (
+        update_stats,
+        update_parent_stat_definitions,
+        update_parent_context,
+        update_self_context,
+        update_root_context,
+    ));
+}
+
 #[derive(Component, Default, Reflect)]
 pub struct StatContext {
     pub sources: HashMap<String, Entity>,
@@ -15,14 +25,14 @@ impl StatContext {
 
 #[derive(Debug)]
 pub enum StatContextRefs<'a> {
-    Definitions(&'a Stats),
+    Definitions(&'a StatDefinitions),
     SubContext(Box<HashMap<&'a str, StatContextRefs<'a>>>),
 }
 
 impl<'a> StatContextRefs<'a> {
     pub fn build(
         entity: Entity,
-        defs_query: &'a Query<'_, '_, &mut Stats>,
+        defs_query: &'a Query<'_, '_, &mut StatDefinitions>,
         ctx_query: &'a Query<'_, '_, &StatContext>,
     ) -> StatContextRefs<'a> {
         // Create a HardMap with default NoContext in each slot
@@ -100,7 +110,7 @@ impl<'a> StatContextRefs<'a> {
 
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
-    definitions: Query<'w, 's, &'static mut Stats>,
+    definitions: Query<'w, 's, &'static mut StatDefinitions>,
     contexts: Query<'w, 's, &'static StatContext>,
 }
 
@@ -138,5 +148,59 @@ impl StatAccessor<'_, '_> {
         for (stat, value) in effect.effects.iter() {
             let _ = stats.add(stat, *value);
         }
+    }
+}
+
+fn update_stats(
+    stat_entity_query: Query<Entity, Changed<StatContext>>,
+    mut commands: Commands,
+) {
+    for entity in stat_entity_query.iter() {
+        commands.entity(entity).touch::<StatDefinitions>();
+    }
+}
+
+/// This works for "parent" context updates but other contexts will need bespoke updating systems
+fn update_parent_stat_definitions(
+    stat_entity_query: Query<Entity, Or<(Changed<StatDefinitions>, Changed<StatContext>)>>,
+    children_query: Query<&Children>,
+    mut commands: Commands,
+) {
+    for entity in stat_entity_query.iter() {
+        for child in children_query.iter_descendants(entity) {
+            commands.entity(child).touch::<StatDefinitions>();
+        }
+    }
+}
+
+fn update_parent_context(
+    mut stat_entity_query: Query<(&Parent, &mut StatContext), Changed<Parent>>,
+    parent_query: Query<Entity, With<StatDefinitions>>,
+) {
+    for (parent, mut stat_context) in stat_entity_query.iter_mut() {
+        if parent_query.contains(parent.get()) {
+            stat_context.insert("parent", parent.get());
+        }
+    }
+}
+
+// self context
+fn update_self_context(
+    mut stat_entity_query: Query<(Entity, &mut StatContext), Added<StatContext>>,
+) {
+    for (entity, mut stat_context) in stat_entity_query.iter_mut() {
+        stat_context.insert("self", entity);
+    }
+}
+
+// TODO This does not take into account if the root changes. So if the root ever changes without the parent changing, this will break. This could happen if an item is traded theoretically.
+fn update_root_context(
+    mut changed_parent_query: Query<(Entity, &mut StatContext), Changed<Parent>>,
+    parent_query: Query<&Parent>,
+) {
+    for (entity, mut stat_context) in changed_parent_query.iter_mut() {
+        let root = parent_query.root_ancestor(entity);
+        
+        stat_context.insert("root", root);
     }
 }

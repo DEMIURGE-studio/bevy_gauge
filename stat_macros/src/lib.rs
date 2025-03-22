@@ -403,7 +403,7 @@ fn expand_trait_impls_for_variant(
         }
 
         impl WriteBack for #struct_name_with_variant {
-            fn write_back(&self, stats: &mut Stats) {
+            fn write_back(&self, stats: &mut StatDefinitions) {
                 #wb_body
             }
         }
@@ -651,7 +651,7 @@ fn expand_trait_impls_for_no_variant(
         }
 
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
-            fn write_back(&self, stats: &mut Stats) {
+            fn write_back(&self, stats: &mut StatDefinitions) {
                 #writeback_body
             }
         }

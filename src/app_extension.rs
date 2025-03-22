@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
-
 use bevy::prelude::*;
-use crate::systems::update_writeback_value_system;
-
+use crate::{schedule::StatsWrite, systems::update_writeback_value_system};
 use super::{prelude::*, systems::{add_stat_component_system, update_stat_component_system}};
 
 pub trait StatsAppExtension {

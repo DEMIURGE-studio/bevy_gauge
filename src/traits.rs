@@ -2,11 +2,6 @@ use stat_macros::stat_component;
 
 use super::prelude::*;
 
-pub trait Named: Sized {
-    const NAME: &'static str;
-    fn to_string() -> String { Self::NAME.to_string() }
-}
-
 pub trait AsF32 {
     fn to_f32(&self) -> f32;
 }
@@ -35,7 +30,7 @@ pub trait StatDerived {
 }
 
 pub trait WriteBack {
-    fn write_back(&self, stats: &mut Stats);
+    fn write_back(&self, stats: &mut StatDefinitions);
 }
 
 stat_component!(

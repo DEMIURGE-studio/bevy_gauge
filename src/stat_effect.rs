@@ -2,11 +2,11 @@ use bevy::{prelude::*, utils::HashMap};
 use crate::prelude::*;
 
 #[derive(Component, Default, Debug, Clone, Deref, DerefMut)]
-pub struct StatEffect(pub Stats);
+pub struct StatEffect(pub StatDefinitions);
 
 impl StatEffect {
     pub fn new() -> Self {
-        Self(Stats::new())
+        Self(StatDefinitions::new())
     }
 
     pub fn build(&self, stats: &StatContextRefs) -> StatEffectInstance {
@@ -39,13 +39,13 @@ impl<'a> InstantStatEffectInstance<'a> {
         }
     }
 
-    pub fn apply(&self, stats: &mut Stats) {
+    pub fn apply(&self, stats: &mut StatDefinitions) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, *value);
         }
     }
 
-    pub fn unapply(&self, stats: &mut Stats) {
+    pub fn unapply(&self, stats: &mut StatDefinitions) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, -value);
         }
@@ -63,13 +63,13 @@ impl StatEffectInstance {
         }
     }
 
-    pub fn apply(&self, stats: &mut Stats) {
+    pub fn apply(&self, stats: &mut StatDefinitions) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, *value);
         }
     }
 
-    pub fn unapply(&self, stats: &mut Stats) {
+    pub fn unapply(&self, stats: &mut StatDefinitions) {
         for (stat, value) in self.effects.iter() {
             let _ = stats.add(stat, -value);
         }

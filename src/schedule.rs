@@ -73,15 +73,3 @@ pub(crate) struct StatsWrite;
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StatsReady;
-
-// pub fn debug_dump(app: &mut App) {
-
-//     let add_stat_component = bevy_mod_debugdump::schedule_graph_dot(app, AddStatComponent, &bevy_mod_debugdump::schedule_graph::Settings::default());
-//     let stat_component_update = bevy_mod_debugdump::schedule_graph_dot(app, StatComponentUpdate, &bevy_mod_debugdump::schedule_graph::Settings::default());
-//     let stat_component_write = bevy_mod_debugdump::schedule_graph_dot(app, StatComponentWrite, &bevy_mod_debugdump::schedule_graph::Settings::default());
-//     let stats_update = bevy_mod_debugdump::schedule_graph_dot(app, StatsUpdate, &bevy_mod_debugdump::schedule_graph::Settings::default());
-//     let stats_write = bevy_mod_debugdump::schedule_graph_dot(app, StatsWrite, &bevy_mod_debugdump::schedule_graph::Settings::default());
-//     let stats_ready = bevy_mod_debugdump::schedule_graph_dot(app, StatsReady, &bevy_mod_debugdump::schedule_graph::Settings::default());
-
-//     std::fs::write("stats.dot", stats_ready).expect("Failed to write schedule graph"); // stat_component_update + "\n" + &stat_component_write + "\n" + &stats_update + "\n" + &stats_write + "\n" + &
-// }
