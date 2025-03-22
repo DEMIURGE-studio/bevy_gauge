@@ -24,7 +24,7 @@ members = ["bevy_gauge_macros"]
 bevy_gauge_macros = "0.0.1"
 
 # Bevy 1st party
-bevy = { version = "0.16.0-rc.1", default-features = false, features = [
+bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", default-features = false, features = [
     "serialize", 
     "multi_threaded",
     "bevy_core_pipeline",

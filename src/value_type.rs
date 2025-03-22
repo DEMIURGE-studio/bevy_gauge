@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use bevy::prelude::{Deref, DerefMut};
 use evalexpr::{
     ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
@@ -107,6 +107,16 @@ impl ValueType {
     pub fn from_expression(value: Expression) -> Self {
         ValueType::Expression(value)
     }
+    
+    
+    pub fn extract_dependencies(&self) -> Option<HashSet<String>> {
+        match self {
+            ValueType::Literal(_) => { None }
+            ValueType::Expression(expr) => { Some(expr.extract_dependencies()) }
+        }
+    }
+
+
 }
 
 impl Default for ValueType {
@@ -115,17 +125,20 @@ impl Default for ValueType {
     }
 }
 
-// impl AsF32 for ValueType {
-//     fn to_f32(&self) -> f32 {
-//         match self {
-//             ValueType::Literal(val) => *val,
-//             ValueType::Expression()
-//         }
-//     }
-// }
-
 #[derive(Debug, Clone, Deref, DerefMut)]
 pub struct Expression(pub Node<DefaultNumericTypes>);
+
+impl Expression {
+    pub fn extract_dependencies(&self) -> HashSet<String> {
+        let mut deps = HashSet::new();
+
+        for variable in self.iter_variable_identifiers() {
+            deps.insert(variable.to_string());
+        }
+        deps
+    }
+}
+
 
 impl Default for Expression {
     fn default() -> Self {

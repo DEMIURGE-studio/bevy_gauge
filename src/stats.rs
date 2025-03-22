@@ -70,7 +70,7 @@ impl StatDependencyRegistry {
 
     // Extract dependencies from an expression and register them
     pub fn register_expression(&mut self, stat_name: &str, expression: &Expression) {
-        let deps = extract_dependencies(expression);
+        let deps = expression.extract_dependencies();
         self.register_dependencies(stat_name, deps);
     }
 
@@ -188,14 +188,6 @@ impl StatDependencyRegistry {
 }
 
 
-fn extract_dependencies(expression: &Expression) -> HashSet<String> {
-    let mut deps = HashSet::new();
-    
-    for variable in expression.iter_variable_identifiers() {
-        deps.insert(variable.to_string());
-    }
-    deps
-}
 
 
 #[derive(Debug, Clone, Default)]
@@ -246,7 +238,7 @@ impl StatCollection {
     pub fn insert(&mut self, name: String, instance: StatInstance, registry: &mut StatDependencyRegistry) {
         // If this is an expression, check if all dependencies are available
         if let ValueType::Expression(ref expr) = instance.value {
-            let deps = extract_dependencies(expr);
+            let deps = expr.extract_dependencies();
 
             // Identify missing dependencies
             let missing_deps: HashSet<String> = deps
@@ -261,7 +253,7 @@ impl StatCollection {
             }
 
             // Register the expression with the global registry
-            registry.register_expression(&name, expr);
+            registry.register_expression(&name, &expr);
         }
 
         // Insert the stat
@@ -379,7 +371,7 @@ impl StatCollection {
             if let ValueType::Expression(ref expr) = instance.value {
                 expressions_to_register.push((name.clone(), expr.clone()));
 
-                let deps = extract_dependencies(expr);
+                let deps = expr.extract_dependencies();
 
                 // Identify missing dependencies
                 let missing_deps: HashSet<String> = deps

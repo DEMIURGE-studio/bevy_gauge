@@ -1,23 +1,37 @@
+use std::collections::{HashMap, HashSet};
+use bevy::ecs::entity::hash_map::EntityHashMap;
+use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
+use log::warn;
 use crate::tags::ValueTag;
-
+use crate::value_type::ValueType;
 
 #[derive(Debug, Clone)]
 pub enum ModifierValue {
-    Flat(f32),
-    Increased(f32),
-    More(f32)
+    Flat(ValueType),
+    Increased(ValueType),
+    More(ValueType)
+}
+
+impl ModifierValue {
+    pub fn get_value_type(&self) -> ValueType {
+        match self {
+            ModifierValue::Flat(vt) => {vt.clone()}
+            ModifierValue::Increased(vt) => {vt.clone()}
+            ModifierValue::More(vt) => {vt.clone()}
+        }
+    }
 }
 
 impl Default for ModifierValue {
     fn default() -> Self {
-        ModifierValue::Flat(0.0)
+        ModifierValue::Flat(ValueType::default())
     }
 }
 
 
 /// A definiton of a modifier for construction of the instance
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModifierDefinition {
     pub tag: ValueTag,
     pub value: ModifierValue
@@ -25,22 +39,21 @@ pub struct ModifierDefinition {
 
 
 /// Entity only to draw relationship between modifiers nad their collection
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Deref, DerefMut)]
 #[relationship(relationship_target = ModifierCollectionRefs)]
 #[require(ModifierInstance)]
-pub struct ModifierEntity {
+pub struct ModifierCollectionRef {
     #[relationship] 
-    pub modier_collection_owner: Entity,
+    pub modifier_collection: Entity,
 }
 
 
 /// An instance that lives as a component, or rather a single component entity that exists as a child on a tree of a Stat Entity.
 #[derive(Component, Debug, Default)]
 pub struct ModifierInstance {
-    pub tag: ValueTag,
+    pub definition: ModifierDefinition,
     pub source_context: ModifierContext,
     pub target_context: Option<ModifierContext>,
-    pub value: ModifierValue,
 }
 
 /// Context to provide what stat entity this modifier is applied to
@@ -52,7 +65,71 @@ pub struct ModifierContext {
 
 /// A component on an entity to keep track of all Modifier Entities affecting this entity
 #[derive(Component, Debug, Default)]
-#[relationship_target(relationship = ModifierEntity)]
+#[require(ModifierCollectionDependencyRegistry)]
+#[relationship_target(relationship = ModifierCollectionRef)]
 pub struct ModifierCollectionRefs {
-    modifiers: Vec<Entity>
+    #[relationship]
+    modifiers: Vec<Entity>,
+}
+
+impl ModifierCollectionRefs {
+    pub fn swap(&mut self, e1: Entity, e2: Entity) {
+        let e1 = self.modifiers.iter().position(|e| *e == e1);
+        let e2 = self.modifiers.iter().position(|e| *e == e2);
+        
+        if let (Some(e1), Some(e2)) = (e1, e2) {
+            self.modifiers.swap(e1, e2);
+        } else {
+            warn!("Entity not found in swap")
+        }
+    }
+}
+
+#[derive(Component, Debug, Default)]
+pub struct ModifierCollectionDependencyRegistry {
+    dependency_mapping: EntityHashMap<HashSet<String>>,
+    dependents_mapping: HashMap<String, EntityHashSet>,
+    
+    // Whether resolution order needs updating
+    needs_update: bool,
+}
+
+
+fn handle_added_modifiers(
+    trigger: Trigger<OnAdd, ModifierInstance>,
+    mut q_modifier_instances: Query<(&ModifierInstance, &ModifierCollectionRef)>,
+    mut q_modifier_collections: Query<(&mut ModifierCollectionRefs, &mut ModifierCollectionDependencyRegistry) >,
+) {
+    if let Ok((modifier, modifier_entity)) = q_modifier_instances.get_mut(trigger.target()) {
+        if let Ok((mut modifier_collection, mut dependency_registry)) = q_modifier_collections.get_mut(modifier_entity.modifier_collection) {
+            if let Some(dependencies) = modifier.definition.value.get_value_type().extract_dependencies() {
+                dependency_registry.dependency_mapping.insert(trigger.target(), dependencies.clone());
+                
+                for dependency in dependencies.iter() {
+                    dependency_registry.dependents_mapping
+                        .entry(dependency.clone())
+                        .or_default()
+                        .insert(trigger.target());
+                }
+                
+                // TODO reorder dependency ordering in the modifier collection
+            }
+        }
+    }
+}
+
+fn handle_removed_modifiers(
+    trigger: Trigger<OnRemove, ModifierInstance>,
+) {
+    
+}
+
+
+
+
+
+
+pub fn plugin(app: &mut App) {
+    app.add_observer(handle_added_modifiers)
+        .add_observer(handle_removed_modifiers);
 }
