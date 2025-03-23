@@ -90,6 +90,8 @@ pub struct ModifierCollectionDependencyRegistry {
     dependency_mapping: EntityHashMap<HashSet<String>>,
     dependents_mapping: HashMap<String, EntityHashSet>,
     
+    // TODO add separate ordering and maintain via onremove or hook
+    
     // Whether resolution order needs updating
     needs_update: bool,
 }

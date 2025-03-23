@@ -184,10 +184,9 @@ impl StatDependencyRegistry {
             .cloned()
             .collect()
     }
-
 }
 
-
+//TODO Implement resource type stat this is to handle constantly changing stats. enum? 
 
 
 #[derive(Debug, Clone, Default)]
