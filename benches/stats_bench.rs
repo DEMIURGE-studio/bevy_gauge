@@ -49,8 +49,8 @@ fn bench_evaluate_cached(c: &mut Criterion) {
     let stats = setup_stat_definitions();
     let mut cache = HashMap::new();
     c.bench_function("evaluate_health_cached", |b| {
-        cache.clear();
         b.iter(|| {
+            cache.clear();
             let result = stats.evaluate_cached("Health", &mut cache);
             black_box(result);
         });
