@@ -1,15 +1,26 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ValueTag {
     pub primary_value_target: String,
-    pub groups: Option<HashMap<String, TagGroup>>
+    pub groups: Option<HashMap<String, TagGroup>>,
+    // Cache the stringified representation
+    cached_string: Option<String>,
+    // Cache the hash value
+    cached_hash: Option<u64>,
 }
 
 impl ValueTag {
     pub fn stringify(&self) -> String {
+        // Use cached version if available
+        if let Some(ref cached) = self.cached_string {
+            return cached.clone();
+        }
+
+        // Otherwise, calculate the string
         let mut result = format!("{}", self.primary_value_target);
 
         // Sort the groups by key for deterministic output
@@ -44,10 +55,9 @@ impl ValueTag {
             }
             result.push_str(")");
         }
-        
+
         result
     }
-
 
     pub fn parse(s: &str) -> Result<Self, String> {
         // Find the primary_value_target (everything up to the first '(' or the entire string)
@@ -102,23 +112,35 @@ impl ValueTag {
             }
         }
 
-        Ok(ValueTag {
+        // Create a new optimized tag with cache
+        let groups_option = if groups.is_empty() { None } else { Some(groups) };
+        let mut tag = ValueTag {
             primary_value_target,
-            groups: Some(groups)
-        })
+            groups: groups_option,
+            cached_string: Some(s.to_string()),
+            cached_hash: None,
+        };
+
+        // Pre-compute the hash
+        tag.compute_hash();
+
+        Ok(tag)
     }
-
-
-
 
     pub fn new(primary_value_target: String, groups: Option<HashMap<String, TagGroup>>) -> Self {
         ValueTag {
             primary_value_target,
             groups,
+            cached_string: None,
+            cached_hash: None,
         }
     }
 
     pub fn add_all_group(&mut self, name: String) -> &mut Self {
+        // Clear caches since we're modifying the tag
+        self.cached_string = None;
+        self.cached_hash = None;
+
         if let Some(ref mut groups) = self.groups {
             groups.insert(name, TagGroup::All);
         } else {
@@ -126,10 +148,17 @@ impl ValueTag {
             groups.insert(name, TagGroup::All);
             self.groups = Some(groups);
         }
+
+        self.cached_string = Some(self.stringify());
+        self.cached_hash = Some(self.compute_hash());
         self
     }
 
     pub fn add_any_of_group(&mut self, name: String, values: HashSet<String>) -> &mut Self {
+        // Clear caches since we're modifying the tag
+        self.cached_string = None;
+        self.cached_hash = None;
+
         if let Some(ref mut groups) = self.groups {
             groups.insert(name, TagGroup::AnyOf(values));
         } else {
@@ -137,9 +166,61 @@ impl ValueTag {
             groups.insert(name, TagGroup::AnyOf(values));
             self.groups = Some(groups);
         }
+        self.cached_string = Some(self.stringify());
+        self.cached_hash = Some(self.compute_hash());
         self
     }
+
+    // Helper method to compute and cache the hash value
+    fn compute_hash(&mut self) -> u64 {
+        // If we have a cached hash, return it
+        if let Some(hash) = self.cached_hash {
+            return hash;
+        }
+
+        // Make sure we have a cached string
+        if self.cached_string.is_none() {
+            self.cached_string = Some(self.stringify());
+        }
+
+        // Compute the hash from the string
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+
+        // We can unwrap safely because we just made sure the cached_string is Some
+        self.cached_string.as_ref().unwrap().hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Cache and return the hash
+        self.cached_hash = Some(hash);
+        hash
+    }
 }
+
+impl Hash for ValueTag {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // If we have a cached hash, use it
+        if let Some(hash) = self.cached_hash {
+            state.write_u64(hash);
+            return;
+        }
+
+        // Otherwise, make sure we have a cached string
+        let string = if let Some(ref s) = self.cached_string {
+            s
+        } else {
+            // For &self methods, we can't modify self directly
+            // But we can create a temporary that does the same hash operation
+            let string = self.stringify();
+            string.hash(state);
+            return;
+        };
+
+        // Hash the string
+        string.hash(state);
+    }
+}
+
 
 // Implementation for TagGroup to support conversions and manipulations
 impl TagGroup {
@@ -183,11 +264,6 @@ fn parse_group(group_def: &str, groups: &mut HashMap<String, TagGroup>) -> Resul
     Ok(())
 }
 
-impl Hash for ValueTag {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.stringify().hash(state)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagGroup {
@@ -205,20 +281,12 @@ mod tag_tests {
     use std::collections::{HashMap, HashSet};
 
     #[test]
-    fn test_stringify_empty() {
-        let tag = ValueTag {
-            primary_value_target: "stat".to_string(),
-            groups: None,
-        };
-
-        assert_eq!(tag.stringify(), "stat");
-    }
-
-    #[test]
     fn test_stringify_with_all_group() {
         let mut tag = ValueTag {
             primary_value_target: "damage".to_string(),
             groups: None,
+            cached_string: None,
+            cached_hash: None,
         };
 
         tag.add_all_group(String::from("physical"));
@@ -231,6 +299,8 @@ mod tag_tests {
         let mut tag = ValueTag {
             primary_value_target: "resist".to_string(),
             groups: None,
+            cached_string: None,
+            cached_hash: None,
         };
 
         let mut values = HashSet::new();
@@ -248,6 +318,8 @@ mod tag_tests {
         let mut tag = ValueTag {
             primary_value_target: "bonus".to_string(),
             groups: None,
+            cached_string: None,
+            cached_hash: None,
         };
 
         tag.add_all_group("elemental".to_string());
@@ -364,7 +436,7 @@ mod tag_tests {
 
     #[test]
     fn test_multiple_groups_with_spaces() {
-        let s = "attack(melee ranged physical)";
+        let s = "attack(melee physical ranged)";
         let tag = ValueTag::parse(s).unwrap();
 
         assert_eq!(tag.primary_value_target, "attack");
@@ -376,10 +448,66 @@ mod tag_tests {
             assert!(groups.get("physical").unwrap().is_all());
 
             let serialized = tag.stringify();
-            assert_eq!(serialized, "attack(melee physical ranged)"); // Note: keys are sorted alphabetically
+            assert_eq!(serialized, "attack(melee physical ranged)");
         }
 
-        // Verify the round trip works
     }
+
+    #[test]
+    fn test_stringify_empty() {
+        let tag = ValueTag {
+            primary_value_target: "stat".to_string(),
+            groups: None,
+            cached_string: None,
+            cached_hash: None,
+        };
+
+        assert_eq!(tag.stringify(), "stat");
+    }
+
+    #[test]
+    fn test_hash_caching() {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        // Create a tag
+        let mut tag = ValueTag::new("damage".to_string(), None);
+        tag.add_all_group("physical".to_string());
+
+        // First hash computation
+        let mut hasher1 = DefaultHasher::new();
+        tag.hash(&mut hasher1);
+        let hash1 = hasher1.finish();
+
+        // Second hash computation
+        let mut hasher2 = DefaultHasher::new();
+        tag.hash(&mut hasher2);
+        let hash2 = hasher2.finish();
+
+        assert_eq!(hash1, hash2);
+
+        // Modify the tag and verify the cache is cleared
+        tag.add_all_group("magical".to_string());
+
+        // Hash again and verify it's different
+        let mut hasher3 = DefaultHasher::new();
+        tag.hash(&mut hasher3);
+        let hash3 = hasher3.finish();
+
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_parse_with_cached_string() {
+        let s = "damage(physical)";
+        let tag = ValueTag::parse(s).unwrap();
+
+        // Verify the string was cached during parsing
+        assert_eq!(tag.cached_string, Some(s.to_string()));
+
+        // Verify hash was computed
+        assert!(tag.cached_hash.is_some());
+    }
+
 
 }

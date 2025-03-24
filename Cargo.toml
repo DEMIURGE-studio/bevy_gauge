@@ -43,6 +43,6 @@ log = "0.4.26"
 criterion = "0.5.1"
 
 [[bench]]
-name = "stats_bench"
-path = "benches/stats_bench.rs"
+name = "tags_bench"
+path = "benches/tags_bench.rs"
 harness = false
