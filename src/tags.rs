@@ -1,62 +1,50 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ValueTag {
-    StatTag(String),
-    EffectTag(EffectTag),
-} 
-
-impl Default for ValueTag {
-    fn default() -> Self {
-        ValueTag::StatTag(String::new())
-    }
-}
-
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct EffectTag {
+pub struct ValueTag {
     pub primary_value_target: String,
-    pub groups: HashMap<String, TagGroup>
+    pub groups: Option<HashMap<String, TagGroup>>
 }
 
-impl EffectTag {
+impl ValueTag {
     pub fn stringify(&self) -> String {
         let mut result = format!("{}", self.primary_value_target);
 
         // Sort the groups by key for deterministic output
-        if self.groups.is_empty() { return result; }
-        
-        result.push_str("(");
-        let mut sorted_groups: Vec<(&String, &TagGroup)> = self.groups.iter().collect();
-        sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
+        if let Some(ref groups) = self.groups {
+            result.push_str("(");
+            let mut sorted_groups: Vec<(&String, &TagGroup)> = groups.iter().collect();
+            sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
 
-        let mut first = true;
-        for (group_name, group) in sorted_groups {
-            if !first {
-                result.push_str(" ");  // Add space between groups
-            }
-            first = false;
-            match group {
-                TagGroup::All => {
-                    result.push_str(&format!("{}", group_name));
+            let mut first = true;
+            for (group_name, group) in sorted_groups {
+                if !first {
+                    result.push_str(" ");  // Add space between groups
                 }
-                TagGroup::AnyOf(values) => {
-                    // Sort values for deterministic output
-                    let mut sorted_values: Vec<&String> = values.iter().collect();
-                    sorted_values.sort();
+                first = false;
+                match group {
+                    TagGroup::All => {
+                        result.push_str(&format!("{}", group_name));
+                    }
+                    TagGroup::AnyOf(values) => {
+                        // Sort values for deterministic output
+                        let mut sorted_values: Vec<&String> = values.iter().collect();
+                        sorted_values.sort();
 
-                    let values_str = sorted_values.iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<String>>()
-                        .join(" ");
+                        let values_str = sorted_values.iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<String>>()
+                            .join(" ");
 
-                    result.push_str(&format!("{}[\"{}\"]", group_name, values_str));
+                        result.push_str(&format!("{}[\"{}\"]", group_name, values_str));
+                    }
                 }
             }
+            result.push_str(")");
         }
-        result.push_str(")");
-
+        
         result
     }
 
@@ -114,29 +102,41 @@ impl EffectTag {
             }
         }
 
-        Ok(EffectTag {
+        Ok(ValueTag {
             primary_value_target,
-            groups,
+            groups: Some(groups)
         })
     }
 
 
 
 
-    pub fn new(primary_value_target: String) -> Self {
-        EffectTag {
+    pub fn new(primary_value_target: String, groups: Option<HashMap<String, TagGroup>>) -> Self {
+        ValueTag {
             primary_value_target,
-            groups: HashMap::new(),
+            groups,
         }
     }
 
     pub fn add_all_group(&mut self, name: String) -> &mut Self {
-        self.groups.insert(name, TagGroup::All);
+        if let Some(ref mut groups) = self.groups {
+            groups.insert(name, TagGroup::All);
+        } else {
+            let mut groups = HashMap::new();
+            groups.insert(name, TagGroup::All);
+            self.groups = Some(groups);
+        }
         self
     }
 
     pub fn add_any_of_group(&mut self, name: String, values: HashSet<String>) -> &mut Self {
-        self.groups.insert(name, TagGroup::AnyOf(values));
+        if let Some(ref mut groups) = self.groups {
+            groups.insert(name, TagGroup::AnyOf(values));
+        } else {
+            let mut groups = HashMap::new();
+            groups.insert(name, TagGroup::AnyOf(values));
+            self.groups = Some(groups);
+        }
         self
     }
 }
@@ -183,7 +183,7 @@ fn parse_group(group_def: &str, groups: &mut HashMap<String, TagGroup>) -> Resul
     Ok(())
 }
 
-impl Hash for EffectTag {
+impl Hash for ValueTag {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stringify().hash(state)
     }
@@ -206,9 +206,9 @@ mod tag_tests {
 
     #[test]
     fn test_stringify_empty() {
-        let tag = EffectTag {
+        let tag = ValueTag {
             primary_value_target: "stat".to_string(),
-            groups: HashMap::new(),
+            groups: None,
         };
 
         assert_eq!(tag.stringify(), "stat");
@@ -216,28 +216,28 @@ mod tag_tests {
 
     #[test]
     fn test_stringify_with_all_group() {
-        let mut tag = EffectTag {
+        let mut tag = ValueTag {
             primary_value_target: "damage".to_string(),
-            groups: HashMap::new(),
+            groups: None,
         };
 
-        tag.groups.insert("physical".to_string(), TagGroup::All);
+        tag.add_all_group(String::from("physical"));
 
         assert_eq!(tag.stringify(), "damage(physical)");
     }
 
     #[test]
     fn test_stringify_with_any_of_group() {
-        let mut tag = EffectTag {
+        let mut tag = ValueTag {
             primary_value_target: "resist".to_string(),
-            groups: HashMap::new(),
+            groups: None,
         };
 
         let mut values = HashSet::new();
         values.insert("fire".to_string());
         values.insert("ice".to_string());
 
-        tag.groups.insert("element".to_string(), TagGroup::AnyOf(values));
+        tag.add_any_of_group(String::from("element"), values);
 
         // Note: Values are sorted alphabetically for deterministic output
         assert_eq!(tag.stringify(), "resist(element[\"fire ice\"])");
@@ -245,19 +245,19 @@ mod tag_tests {
 
     #[test]
     fn test_stringify_complex() {
-        let mut tag = EffectTag {
+        let mut tag = ValueTag {
             primary_value_target: "bonus".to_string(),
-            groups: HashMap::new(),
+            groups: None,
         };
 
-        tag.groups.insert("elemental".to_string(), TagGroup::All);
+        tag.add_all_group("elemental".to_string());
 
         let mut values = HashSet::new();
         values.insert("sword".to_string());
         values.insert("axe".to_string());
         values.insert("mace".to_string());
 
-        tag.groups.insert("weapon".to_string(), TagGroup::AnyOf(values));
+        tag.add_any_of_group(String::from("weapon"), values);
 
         // Note: Groups are sorted by name and values are sorted alphabetically
         assert_eq!(tag.stringify(), "bonus(elemental weapon[\"axe mace sword\"])");
@@ -266,49 +266,60 @@ mod tag_tests {
     #[test]
     fn test_parse_simple() {
         let s = "damage(physical)";
-        let tag = EffectTag::parse(s).unwrap();
+        let tag = ValueTag::parse(s).unwrap();
 
         assert_eq!(tag.primary_value_target, "damage");
-        assert_eq!(tag.groups.len(), 1);
-        assert!(tag.groups.get("physical").unwrap().is_all());
+        if let Some(ref groups) = tag.groups {
+
+            assert_eq!(groups.len(), 1);
+            assert!(groups.get("physical").unwrap().is_all());
+        } else {
+            assert!(false);
+        }
     }
 
     #[test]
     fn test_parse_any_of() {
         let s = "resist(element[\"fire ice\"])";
-        let tag = EffectTag::parse(s).unwrap();
+        let tag = ValueTag::parse(s).unwrap();
 
         assert_eq!(tag.primary_value_target, "resist");
-        assert_eq!(tag.groups.len(), 1);
+        if let Some(ref groups) = tag.groups {
+            assert_eq!(groups.len(), 1);
 
-        let element_group = tag.groups.get("element").unwrap();
-        if let TagGroup::AnyOf(values) = element_group {
-            assert_eq!(values.len(), 2);
-            assert!(values.contains("fire"));
-            assert!(values.contains("ice"));
-        } else {
-            panic!("Expected AnyOf group");
+            let element_group = groups.get("element").unwrap();
+            if let TagGroup::AnyOf(values) = element_group {
+                assert_eq!(values.len(), 2);
+                assert!(values.contains("fire"));
+                assert!(values.contains("ice"));
+            } else {
+                panic!("Expected AnyOf group");
+            }
         }
     }
 
     #[test]
     fn test_parse_complex() {
         let s = "bonus(melee weapon[\"axe mace sword\"])";
-        let tag = EffectTag::parse(s).unwrap();
+        let tag = ValueTag::parse(s).unwrap();
 
         assert_eq!(tag.primary_value_target, "bonus");
-        assert_eq!(tag.groups.len(), 2);
+        if let Some(ref groups) = tag.groups {
+            assert_eq!(groups.len(), 2);
 
-        assert!(tag.groups.get("melee").unwrap().is_all());
+            assert!(groups.get("melee").unwrap().is_all());
 
-        let weapon_group = tag.groups.get("weapon").unwrap();
-        if let TagGroup::AnyOf(values) = weapon_group {
-            assert_eq!(values.len(), 3);
-            assert!(values.contains("axe"));
-            assert!(values.contains("mace"));
-            assert!(values.contains("sword"));
+            let weapon_group = groups.get("weapon").unwrap();
+            if let TagGroup::AnyOf(values) = weapon_group {
+                assert_eq!(values.len(), 3);
+                assert!(values.contains("axe"));
+                assert!(values.contains("mace"));
+                assert!(values.contains("sword"));
+            } else {
+                panic!("Expected AnyOf group");
+            }
         } else {
-            panic!("Expected AnyOf group");
+            assert!(false);
         }
     }
 
@@ -318,11 +329,11 @@ mod tag_tests {
         use std::collections::hash_map::DefaultHasher;
 
         // Create two identical tags through different methods
-        let mut tag1 = EffectTag::new("damage".to_string());
+        let mut tag1 = ValueTag::new("damage".to_string(), None);
         tag1.add_all_group("physical".to_string());
 
         let s = "damage(physical)";
-        let tag2 = EffectTag::parse(s).unwrap();
+        let tag2 = ValueTag::parse(s).unwrap();
 
         // Hash both tags
         let mut hasher1 = DefaultHasher::new();
@@ -337,7 +348,7 @@ mod tag_tests {
 
     #[test]
     fn test_roundtrip() {
-        let mut original = EffectTag::new("critical".to_string());
+        let mut original = ValueTag::new("critical".to_string(), None);
         original.add_all_group("weapon".to_string());
 
         let mut values = HashSet::new();
@@ -346,7 +357,7 @@ mod tag_tests {
         original.add_any_of_group("type".to_string(), values);
 
         let serialized = original.stringify();
-        let parsed = EffectTag::parse(&serialized).unwrap();
+        let parsed = ValueTag::parse(&serialized).unwrap();
 
         assert_eq!(original, parsed);
     }
@@ -354,17 +365,21 @@ mod tag_tests {
     #[test]
     fn test_multiple_groups_with_spaces() {
         let s = "attack(melee ranged physical)";
-        let tag = EffectTag::parse(s).unwrap();
+        let tag = ValueTag::parse(s).unwrap();
 
         assert_eq!(tag.primary_value_target, "attack");
-        assert_eq!(tag.groups.len(), 3);
-        assert!(tag.groups.get("melee").unwrap().is_all());
-        assert!(tag.groups.get("ranged").unwrap().is_all());
-        assert!(tag.groups.get("physical").unwrap().is_all());
+        if let Some(ref groups) = tag.groups {
+
+            assert_eq!(groups.len(), 3);
+            assert!(groups.get("melee").unwrap().is_all());
+            assert!(groups.get("ranged").unwrap().is_all());
+            assert!(groups.get("physical").unwrap().is_all());
+
+            let serialized = tag.stringify();
+            assert_eq!(serialized, "attack(melee physical ranged)"); // Note: keys are sorted alphabetically
+        }
 
         // Verify the round trip works
-        let serialized = tag.stringify();
-        assert_eq!(serialized, "attack(melee physical ranged)"); // Note: keys are sorted alphabetically
     }
 
 }
