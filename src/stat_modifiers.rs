@@ -30,6 +30,7 @@ impl StatDefinitions {
         let Some(stat_data) = stat_modifier else { return 0.0; };
         let value = stat_data.evaluate_cache(self, cache);
         cache.insert(stat.to_string(), value);
+        println!("{:?} :: {:?}", stat, value);
         value
     }
 

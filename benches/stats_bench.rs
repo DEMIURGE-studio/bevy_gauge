@@ -26,6 +26,9 @@ fn setup_stat_definitions() -> StatDefinitions {
     if let Some(stat) = stats.0.get_mut("Health") {
         stat.total = Expression(build_operator_tree("Add").unwrap());
     }
+    if let Some(stat) = stats.0.get_mut("Strength") {
+        stat.total = Expression(build_operator_tree("Add").unwrap());
+    }
     
     stats
 }
