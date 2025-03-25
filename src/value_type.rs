@@ -3,7 +3,6 @@ use bevy::prelude::{Deref, DerefMut};
 use evalexpr::{
     ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
 };
-use crate::stats::StatCollection;
 use crate::tags::ValueTag;
 
 #[derive(Debug)]
@@ -43,7 +42,7 @@ impl ValueType {
     }
 
     /// Evaluate this expression into a final f32, given a stat context.
-    pub fn evaluate(&self, stat_collection: &StatCollection) -> f32 {
+    pub fn evaluate(&self) -> f32 {
         if let ValueType::Literal(val) = self {
             return *val;
         }
@@ -51,58 +50,8 @@ impl ValueType {
         let ValueType::Expression(expr) = self else {
             return 0.0;
         };
-
-        // Track visited stats to detect cycles using a thread_local static
-        thread_local! {
-        static EVAL_STACK: std::cell::RefCell<std::collections::HashSet<ValueTag>> = 
-            std::cell::RefCell::new(std::collections::HashSet::new());
-    }
-
-        // Start from base
-        let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
-
-        // Fill context with variable identifiers
-        for var_name in expr.iter_variable_identifiers() {
-            // Use the thread_local stack to check for cycles
-            let is_cyclic = EVAL_STACK.with(|stack| {
-                let tag = ValueTag::parse(var_name).unwrap_or_default();
-                stack.borrow().contains(&tag)
-            });
-
-            // If we detect a cycle, use 0.0 as the fallback value to break the cycle
-            let val = if is_cyclic {
-                0.0
-            } else {
-                // Add this tag to stack before recursively evaluating
-                EVAL_STACK.with(|stack| {
-                    let tag = ValueTag::parse(var_name).unwrap_or_default();
-                    stack.borrow_mut().insert(tag)
-                });
-
-                // Get the value recursively
-                let result = stat_collection.get(var_name).unwrap_or(0.0);
-
-                // Remove from stack after evaluation
-                EVAL_STACK.with(|stack| {
-                    let tag = ValueTag::parse(var_name).unwrap_or_default();
-                    stack.borrow_mut().remove(&tag)
-                });
-
-                result
-            };
-
-            // Add to context
-            context
-                .set_value(var_name.to_string(), EvalValue::from_float(val as f64))
-                .unwrap();
-        }
-
-        // Evaluate with populated context
-        // We use unwrap_or and as_number unwrap_or for error handling
-        expr.eval_with_context_mut(&mut context)
-            .unwrap_or(EvalValue::from_float(0.0))
-            .as_number()
-            .unwrap_or(0.0) as f32
+        
+        expr.cached_value
     }
 
 
@@ -119,8 +68,6 @@ impl ValueType {
             ValueType::Expression(expr) => { Some(expr.extract_dependencies()) }
         }
     }
-
-
 }
 
 impl Default for ValueType {
@@ -130,9 +77,22 @@ impl Default for ValueType {
 }
 
 #[derive(Debug, Clone, PartialEq, Deref, DerefMut)]
-pub struct Expression(pub Node<DefaultNumericTypes>);
+pub struct Expression { 
+    #[deref]
+    pub expression: Node<DefaultNumericTypes>,
+    pub cached_value: f32
+}
+
 
 impl Expression {
+    pub fn new(node: Node<DefaultNumericTypes>) -> Self {
+        Self {
+            expression: node,
+            cached_value: 0.0
+        }
+    }
+    
+    
     pub fn extract_dependencies(&self) -> HashSet<ValueTag> {
         let mut deps = HashSet::new();
 
@@ -143,12 +103,18 @@ impl Expression {
         }
         deps
     }
+
+
+
 }
 
 
 impl Default for Expression {
     fn default() -> Self {
-        Self(evalexpr::build_operator_tree("Total = 0").unwrap())
+        Self {
+            expression: evalexpr::build_operator_tree("0").unwrap(),
+            cached_value: 0.0,
+        }
     }
 }
 

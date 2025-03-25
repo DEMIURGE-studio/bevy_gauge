@@ -1,37 +1,30 @@
-use std::fmt::Debug;
 use crate::value_type::{Expression, ValueBounds, ValueType};
-
-
-
+use std::fmt::Debug;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AttributeInstance {
     pub value: ValueType,
-    pub bounds: Option<ValueBounds>
+    pub bounds: Option<ValueBounds>,
 }
 
 impl AttributeInstance {
     pub fn new(value: ValueType, bounds: Option<ValueBounds>) -> Self {
-        Self {
-            value,
-            bounds
-        }
+        Self { value, bounds }
     }
     pub fn from_f32(val: f32) -> Self {
         Self {
             value: ValueType::Literal(val),
-            bounds: None
+            bounds: None,
         }
     }
-    
+
     pub fn from_expression(expression: Expression) -> Self {
         Self {
             value: ValueType::Expression(expression),
-            bounds: None
+            bounds: None,
         }
     }
 }
-
 
 // fn update_attributes(
 //     attribute_entity_query: Query<Entity, Changed<StatContext>>,
@@ -41,7 +34,6 @@ impl AttributeInstance {
 //         // TODO
 //     }
 // }
-
 
 // pub(crate) fn plugin(app: &mut App) {
 //     app.add_systems(AddStatComponent, (

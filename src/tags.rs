@@ -509,18 +509,23 @@ mod tag_tests {
         assert!(all_damage_mod.qualifies_for(&fire_tag)); // All damage qualifies for fire
 
         // Test complex cases
-        let complex_tag = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe sword\"])").unwrap();
+        let complex_tag = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_type[\"axe sword\"])").unwrap();
 
         // Create various complex modifiers
         let exact_mod = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
         let wrong_element_mod = ValueTag::parse("Damage(elemental[\"ice\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
         let missing_size_mod = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_type[\"axe\"])").unwrap();
+        let another_mod = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"spell\"])").unwrap();
         let generic_element_mod = ValueTag::parse("Damage(elemental ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
+        
+        
+        
 
         // Test qualification logic
         assert!(exact_mod.qualifies_for(&complex_tag)); // Exact match qualifies
         assert!(!wrong_element_mod.qualifies_for(&complex_tag)); // Wrong element doesn't qualify
         assert!(missing_size_mod.qualifies_for(&complex_tag)); // Missing size still qualifies
+        assert!(!another_mod.qualifies_for(&complex_tag));
         assert!(generic_element_mod.qualifies_for(&complex_tag)); // Generic element qualifies
     }
     
