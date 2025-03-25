@@ -5,8 +5,6 @@ use crate::tags::ValueTag;
 use crate::value_type::{StatError, ValueType};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
-use bevy::asset::AssetContainer;
-use ron::Value;
 
 #[derive(Debug, Clone, Default, Deref, DerefMut)]
 pub struct StatInstance {
@@ -63,7 +61,6 @@ impl StatCollection {
         }
     }
 
-    // Insert a attribute and update resolution order if needed
 
     pub fn insert(&mut self, tag: ValueTag, stat_type: StatType) {
         
@@ -162,7 +159,7 @@ impl StatCollection {
         // Process the queue
         while let Some(tag) = to_check.pop() {
             // Remove this tag from pending stats
-            if let Some(deps) = self.pending_stats.remove(&tag) {
+            if let Some(_) = self.pending_stats.remove(&tag) {
 
                 // Now check if any stats that were waiting for this one can be resolved
                 let mut new_resolvable = Vec::new();
@@ -323,7 +320,6 @@ impl StatCollection {
     //     }
     // }
 
-    // Get the value of a attribute by name, evaluating it if necessary
     pub fn get_str(&self, stat: &ValueTag) -> Result<f32, StatError> {
         match self.stats.get(stat) {
             Some(stat) => Ok(stat.get_value(self)),
@@ -331,7 +327,6 @@ impl StatCollection {
         }
     }
 
-    // Get the value of a attribute by name, evaluating it if necessary
     pub fn get<S: AsRef<str>>(&self, stat: S) -> Result<f32, StatError> {
         let parse_result = ValueTag::parse(stat.as_ref());
         if let Ok(parsed_tag) = parse_result {
@@ -393,8 +388,8 @@ impl StatCollection {
 #[cfg(test)]
 mod stat_tests {
     use super::*;
-    use crate::tags::{ValueTag, TagGroup};
-    use crate::value_type::{ValueType, Expression};
+    use crate::tags::{ValueTag};
+    use crate::value_type::{Expression};
     use evalexpr::build_operator_tree;
 
     // Helper to create a simple attribute

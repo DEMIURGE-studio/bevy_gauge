@@ -3,7 +3,7 @@ use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
 use log::warn;
-use crate::tags::{TagGroup, ValueTag};
+use crate::tags::*;
 use crate::value_type::ValueType;
 
 #[derive(Debug, Clone)]
@@ -111,9 +111,9 @@ pub struct ModifierCollectionDependencyRegistry {
 
 
 fn handle_added_modifiers(
-    trigger: Trigger<OnAdd, ModifierInstance>,
-    mut q_modifier_instances: Query<(&ModifierInstance, &ChildOf)>,
-    mut q_modifier_collections: Query<(&mut ModifierCollectionRefs, &mut ModifierCollectionDependencyRegistry) >,
+    _trigger: Trigger<OnAdd, ModifierInstance>,
+    mut _q_modifier_instances: Query<(&ModifierInstance, &ChildOf)>,
+    mut _q_modifier_collections: Query<(&mut ModifierCollectionRefs, &mut ModifierCollectionDependencyRegistry) >,
 ) {
     // if let Ok((modifier, modifier_entity, parent)) = q_modifier_instances.get_mut(trigger.target()) {
     //     if let Ok((mut modifier_collection, mut dependency_registry)) = q_modifier_collections.get_mut(modifier_entity.modifier_collection) {
@@ -134,7 +134,7 @@ fn handle_added_modifiers(
 }
 
 fn handle_removed_modifiers(
-    trigger: Trigger<OnRemove, ModifierInstance>,
+    _trigger: Trigger<OnRemove, ModifierInstance>,
 ) {
     
 }
@@ -160,10 +160,10 @@ impl ModifierRegistry {
         }
     }
 
-    pub fn register(&mut self, tag: ValueTag, modifier_value: f32) {
+    pub fn register(&mut self, _tag: ValueTag, _modifier_value: f32) {
     }
 
-    pub fn find_matching_modifiers(&self, action: &ValueTag) -> Vec<(f32, &ValueTag)> {
+    pub fn find_matching_modifiers(&self, _action: &ValueTag) -> Vec<(f32, &ValueTag)> {
         Vec::new()
     }
 }

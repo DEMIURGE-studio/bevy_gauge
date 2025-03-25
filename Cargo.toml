@@ -33,11 +33,10 @@ bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", default-fe
 ] }
 
 # Serialization
-ron = "0.8.1"
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 evalexpr = "12.0.2"
 bevy_mod_debugdump = "0.12.1"
-log = "0.4.26"
+log = "0.4.27"
 
 [dev-dependencies]
 criterion = "0.5.1"
