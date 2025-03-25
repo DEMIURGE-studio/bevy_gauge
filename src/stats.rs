@@ -72,7 +72,6 @@ impl StatCollection {
         match stat_type {
             StatType::Attribute(attribute) => {
 
-                
                 if let ValueType::Expression(expr) = &attribute.value {
                     let dependencies = expr.extract_dependencies();
                     
@@ -106,7 +105,12 @@ impl StatCollection {
                     stat_instance.dependencies = dependencies;
                     stat_instance.dependents = dependents;
                     stat_instance.stat = StatType::Attribute(attribute);
+                } else if let ValueType::Literal(_) = &attribute.value {
+
+                    let stat_instance = self.stats.entry(tag.clone()).or_insert(Default::default());
+                    stat_instance.stat = StatType::Attribute(attribute);
                 }
+                    
 
 
 
