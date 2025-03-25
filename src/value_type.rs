@@ -12,7 +12,7 @@ pub enum StatError {
     NotFound(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ValueType {
     Literal(f32),
     Expression(Expression),
@@ -24,7 +24,7 @@ pub enum ValueType {
 // Need to be able to optionally pass in a stat_collection or value to be added to the evalexpression context
 
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ValueBounds {
     min: Option<ValueType>,
     max: Option<ValueType>,
@@ -82,27 +82,62 @@ impl ValueType {
         let ValueType::Expression(expr) = self else {
             return 0.0;
         };
-        
+
+        // Track visited stats to detect cycles using a thread_local static
+        thread_local! {
+        static EVAL_STACK: std::cell::RefCell<std::collections::HashSet<ValueTag>> = 
+            std::cell::RefCell::new(std::collections::HashSet::new());
+    }
+
         // Start from base
         let mut context: HashMapContext<DefaultNumericTypes> = HashMapContext::new();
 
-        // Health + Armor/3
-        // Fill that context with variable identifiers
+        // Fill context with variable identifiers
         for var_name in expr.iter_variable_identifiers() {
-            let val = stat_collection.get(var_name).unwrap_or(0.0);
+            // Use the thread_local stack to check for cycles
+            let is_cyclic = EVAL_STACK.with(|stack| {
+                let tag = ValueTag::parse(var_name).unwrap_or_default();
+                stack.borrow().contains(&tag)
+            });
+
+            // If we detect a cycle, use 0.0 as the fallback value to break the cycle
+            let val = if is_cyclic {
+                0.0
+            } else {
+                // Add this tag to stack before recursively evaluating
+                EVAL_STACK.with(|stack| {
+                    let tag = ValueTag::parse(var_name).unwrap_or_default();
+                    stack.borrow_mut().insert(tag)
+                });
+
+                // Get the value recursively
+                let result = stat_collection.get(var_name).unwrap_or(0.0);
+
+                // Remove from stack after evaluation
+                EVAL_STACK.with(|stack| {
+                    let tag = ValueTag::parse(var_name).unwrap_or_default();
+                    stack.borrow_mut().remove(&tag)
+                });
+
+                result
+            };
+
+            // Add to context
             context
                 .set_value(var_name.to_string(), EvalValue::from_float(val as f64))
                 .unwrap();
         }
 
-        
-        // Evaluate. We just unwrap because:
-        //  1. Eval should not fail
-        //  2. get_value("Total") should never fail
-        //  3. because stat expressions all return number values, as_number should never fail
-        expr.eval_with_context_mut(&mut context).unwrap().as_number().unwrap() as f32
-        // TODO add some error handling
+        // Evaluate with populated context
+        // We use unwrap_or and as_number unwrap_or for error handling
+        expr.eval_with_context_mut(&mut context)
+            .unwrap_or(EvalValue::from_float(0.0))
+            .as_number()
+            .unwrap_or(0.0) as f32
     }
+
+
+
 
     pub fn from_expression(value: Expression) -> Self {
         ValueType::Expression(value)
@@ -125,7 +160,7 @@ impl Default for ValueType {
     }
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
+#[derive(Debug, Clone, PartialEq, Deref, DerefMut)]
 pub struct Expression(pub Node<DefaultNumericTypes>);
 
 impl Expression {

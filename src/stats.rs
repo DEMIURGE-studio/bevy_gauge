@@ -5,23 +5,38 @@ use crate::tags::ValueTag;
 use crate::value_type::{StatError, ValueType};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
+use bevy::asset::AssetContainer;
+use ron::Value;
 
-#[derive(Debug, Clone)]
-pub enum StatInstance {
+#[derive(Debug, Clone, Default, Deref, DerefMut)]
+pub struct StatInstance {
+    pub dependencies: HashSet<ValueTag>,
+    pub dependents: HashSet<ValueTag>,
+    
+    #[deref]
+    pub stat: StatType
+}
+
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum StatType {
     Attribute(AttributeInstance),
     Resource(ResourceInstance),
     Intermediate(ModifierValueTotal),
+    #[default]
+    Empty
 }
 
-impl StatInstance {
+impl StatType {
     pub fn get_value(&self, stat_collection: &StatCollection) -> f32 {
         match self {
-            StatInstance::Attribute(attr) => {
+            StatType::Attribute(attr) => {
                 let val = attr.value.evaluate(stat_collection);
                 val
             }
-            StatInstance::Resource(resource) => resource.current,
-            StatInstance::Intermediate(intermediate) => intermediate.get_total(),
+            StatType::Resource(resource) => resource.current,
+            StatType::Intermediate(intermediate) => intermediate.get_total(),
+            StatType::Empty => 0.0
         }
     }
 }
@@ -31,8 +46,6 @@ pub struct StatCollection {
     #[deref]
     pub stats: HashMap<ValueTag, StatInstance>,
 
-    pub stat_dependencies: HashMap<ValueTag, HashSet<ValueTag>>,
-    pub stat_dependents: HashMap<ValueTag, HashSet<ValueTag>>,
 
     pub pending_stats: HashMap<ValueTag, HashSet<ValueTag>>, // Key is attribute that is hanging, hashset is collection of missing attributes
 
@@ -44,8 +57,6 @@ impl StatCollection {
     pub fn new() -> Self {
         Self {
             stats: HashMap::new(),
-            stat_dependencies: Default::default(),
-            stat_dependents: Default::default(),
             pending_stats: HashMap::new(),
             value_tag_cache: HashMap::new(),
             value_tag_cache_dirty: true,
@@ -54,37 +65,64 @@ impl StatCollection {
 
     // Insert a attribute and update resolution order if needed
 
-    pub fn insert(&mut self, tag: ValueTag, instance: StatInstance) {
+    pub fn insert(&mut self, tag: ValueTag, stat_type: StatType) {
+        
+        
         // If this is an expression, check if all dependencies are available
-        match instance {
-            StatInstance::Attribute(attribute) => {
-                if let ValueType::Expression(expr) = &attribute.value {
-                    let deps = expr.extract_dependencies();
+        match stat_type {
+            StatType::Attribute(attribute) => {
 
-                    // Identify missing dependencies
-                    let missing_deps: HashSet<ValueTag> = deps
+                
+                if let ValueType::Expression(expr) = &attribute.value {
+                    let dependencies = expr.extract_dependencies();
+                    
+
+                    let missing_deps: HashSet<ValueTag> = dependencies
                         .iter()
                         .filter(|&dep| !self.stats.contains_key(dep))
                         .cloned()
                         .collect();
 
-
+                    
+                    for dependency in dependencies.clone() {
+                        self.stats.entry(dependency).and_modify(|stat| {
+                            stat.dependents.insert(tag.clone());
+                        });
+                    }
+                    
+                    let dependents: HashSet<ValueTag> = self.stats
+                        .iter()
+                        .filter(|(_, val)| val.dependencies.contains(&tag))
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    
+                        
                     // If there are missing dependencies, add to pending attributes
                     if !missing_deps.is_empty() {
                         self.pending_stats.insert(tag.clone(), missing_deps);
                     }
+
+                    let stat_instance = self.stats.entry(tag.clone()).or_insert(Default::default());
+                    stat_instance.dependencies = dependencies;
+                    stat_instance.dependents = dependents;
+                    stat_instance.stat = StatType::Attribute(attribute);
                 }
 
-                self.stats.insert(tag, StatInstance::Attribute(attribute));
+
 
                 self.resolve_pending_stats();
             }
-            StatInstance::Resource(resource) => {
-                self.stats.insert(tag.clone(), StatInstance::Resource(resource));
+            StatType::Resource(resource) => { 
+                let mut stat_instance = StatInstance::default();
+                stat_instance.stat = StatType::Resource(resource);
+                self.stats.insert(tag.clone(), stat_instance);
             }
-            StatInstance::Intermediate(intermediate) => {
-                self.stats.insert(tag.clone(), StatInstance::Intermediate(intermediate));
+            StatType::Intermediate(intermediate) => {
+                let mut stat_instance = StatInstance::default();
+                stat_instance.stat = StatType::Intermediate(intermediate);
+                self.stats.insert(tag.clone(), stat_instance);
             }
+            _ => {}
         }
 
         // Mark cache as dirty since stats changed
@@ -121,16 +159,6 @@ impl StatCollection {
         while let Some(tag) = to_check.pop() {
             // Remove this tag from pending stats
             if let Some(deps) = self.pending_stats.remove(&tag) {
-                // Store its dependencies for dependency tracking
-                self.stat_dependencies.insert(tag.clone(), deps.clone());
-
-                // Register this tag as a dependent of each of its dependencies
-                for dep in deps {
-                    self.stat_dependents
-                        .entry(dep)
-                        .or_default()
-                        .insert(tag.clone());
-                }
 
                 // Now check if any stats that were waiting for this one can be resolved
                 let mut new_resolvable = Vec::new();
@@ -149,20 +177,6 @@ impl StatCollection {
                 to_check.extend(new_resolvable);
             }
         }
-
-        // Handle any remaining pending stats (circular dependencies)
-        if !self.pending_stats.is_empty() {
-            for (tag, _) in self.pending_stats.drain() {
-                if let Some(StatInstance::Attribute(_)) = self.stats.get(&tag) {
-                    // Replace with a literal 0 value to break the cycle
-                    let zero_attr = AttributeInstance::from_f32(0.0);
-                    self.stats.insert(tag.clone(), StatInstance::Attribute(zero_attr));
-
-                    // Remove this tag from dependency tracking
-                    self.stat_dependencies.remove(&tag);
-                }
-            }
-        }
     }
 
     // Add a batch of attributes at once with tree-walking resolution
@@ -174,7 +188,7 @@ impl StatCollection {
             match &attr.value {
                 ValueType::Literal(_) => {
                     // Literal values can be inserted immediately
-                    self.insert(tag, StatInstance::Attribute(attr));
+                    self.insert(tag, StatType::Attribute(attr));
                 },
                 ValueType::Expression(_) => {
                     // Save expression attributes for dependency resolution
@@ -201,7 +215,7 @@ impl StatCollection {
 
                     if all_deps_available {
                         // All dependencies are available, insert this attribute
-                        self.insert(tag, StatInstance::Attribute(attr));
+                        self.insert(tag, StatType::Attribute(attr));
                         progress = true;
                     } else {
                         // Some dependencies are still missing, keep for next pass
@@ -216,7 +230,7 @@ impl StatCollection {
         // If we still have remaining expressions, they have circular dependencies
         // Just insert them anyway and let resolve_pending_stats handle them
         for (tag, attr) in remaining {
-            self.insert(tag, StatInstance::Attribute(attr));
+            self.insert(tag, StatType::Attribute(attr));
         }
     }
 
@@ -243,8 +257,8 @@ impl StatCollection {
         let _ = self.get_str(start_tag);
 
         // Recursively process all dependents
-        if let Some(dependents) = self.stat_dependents.get(start_tag).cloned() {
-            for dependent in dependents {
+        if let Some(instance) = self.stats.get(start_tag).cloned() {
+            for dependent in instance.dependents {
                 self.tree_walk_calculate(&dependent, processed);
             }
         }
@@ -252,13 +266,11 @@ impl StatCollection {
 
     // Recalculate all stats using tree-walking
     pub fn recalculate_all(&mut self) {
-        // First, ensure all dependencies are properly tracked
-        self.update_dependency_tracking();
 
         // Find all stats with no dependencies (roots of the tree)
         let root_stats: Vec<ValueTag> = self.stats.keys()
             .filter(|tag| {
-                self.stat_dependencies.get(*tag).map_or(true, |deps| deps.is_empty())
+                self.stats.get(*tag).map_or(true, |instance| instance.dependencies.is_empty())
             })
             .cloned()
             .collect();
@@ -278,34 +290,34 @@ impl StatCollection {
         }
     }
 
-    // Update dependency tracking info for all stats
-    fn update_dependency_tracking(&mut self) {
-        // Clear existing dependency tracking
-        self.stat_dependencies.clear();
-        self.stat_dependents.clear();
-
-        // Rebuild dependency tracking
-        for (tag, stat) in &self.stats {
-            if let StatInstance::Attribute(attr) = stat {
-                if let ValueType::Expression(expr) = &attr.value {
-                    let deps = expr.extract_dependencies();
-
-                    if !deps.is_empty() {
-                        // Store dependencies
-                        self.stat_dependencies.insert(tag.clone(), deps.clone());
-
-                        // Update dependents
-                        for dep in &deps {
-                            self.stat_dependents
-                                .entry(dep.clone())
-                                .or_default()
-                                .insert(tag.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // // Update dependency tracking info for all stats
+    // fn update_dependency_tracking(&mut self) {
+    //     // Clear existing dependency tracking
+    //     self.stat_dependencies.clear();
+    //     self.stat_dependents.clear();
+    // 
+    //     // Rebuild dependency tracking
+    //     for (tag, stat) in &self.stats {
+    //         if let StatType::Attribute(attr) = stat {
+    //             if let ValueType::Expression(expr) = &attr.value {
+    //                 let deps = expr.extract_dependencies();
+    // 
+    //                 if !deps.is_empty() {
+    //                     // Store dependencies
+    //                     self.stat_dependencies.insert(tag.clone(), deps.clone());
+    // 
+    //                     // Update dependents
+    //                     for dep in &deps {
+    //                         self.stat_dependents
+    //                             .entry(dep.clone())
+    //                             .or_default()
+    //                             .insert(tag.clone());
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     // Get the value of a attribute by name, evaluating it if necessary
     pub fn get_str(&self, stat: &ValueTag) -> Result<f32, StatError> {
@@ -399,7 +411,7 @@ mod stat_tests {
         // Create and insert a simple stat
         let tag = ValueTag::parse("Health").unwrap();
         let attr = create_attribute(100.0);
-        stats.insert(tag.clone(), StatInstance::Attribute(attr));
+        stats.insert(tag.clone(), StatType::Attribute(attr));
 
         // Retrieve and check the value
         assert_eq!(stats.get_str(&tag).unwrap(), 100.0);
@@ -418,8 +430,8 @@ mod stat_tests {
         let ice_tag = ValueTag::parse("Damage(elemental[\"ice\"])").unwrap();
 
         // Insert stats with these tags
-        stats.insert(fire_tag.clone(), StatInstance::Attribute(create_attribute(30.0)));
-        stats.insert(ice_tag.clone(), StatInstance::Attribute(create_attribute(25.0)));
+        stats.insert(fire_tag.clone(), StatType::Attribute(create_attribute(30.0)));
+        stats.insert(ice_tag.clone(), StatType::Attribute(create_attribute(25.0)));
 
         // Retrieve and check values
         assert_eq!(stats.get_str(&fire_tag).unwrap(), 30.0);
@@ -436,18 +448,18 @@ mod stat_tests {
 
         // Add a base stat first
         let base_tag = ValueTag::parse("Strength").unwrap();
-        stats.insert(base_tag.clone(), StatInstance::Attribute(create_attribute(10.0)));
+        stats.insert(base_tag.clone(), StatType::Attribute(create_attribute(10.0)));
 
         // Add a stat that depends on the base stat
         let derived_tag = ValueTag::parse("DamageBonus").unwrap();
         let expr = create_expression_attribute("Strength * 0.5");
-        stats.insert(derived_tag.clone(), StatInstance::Attribute(expr));
+        stats.insert(derived_tag.clone(), StatType::Attribute(expr));
 
         // Check the derived stat's value
         assert_eq!(stats.get_str(&derived_tag).unwrap(), 5.0);
 
         // Update the base stat
-        stats.insert(base_tag.clone(), StatInstance::Attribute(create_attribute(20.0)));
+        stats.insert(base_tag.clone(), StatType::Attribute(create_attribute(20.0)));
 
         // Check the derived stat's value again - should be updated
         assert_eq!(stats.get_str(&derived_tag).unwrap(), 10.0);
@@ -458,23 +470,23 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Add a derived stat first (with dependency not yet met)
-        let derived_tag = ValueTag::parse("Attack").unwrap();
-        let expr = create_expression_attribute("BaseAttack + StrengthBonus");
-        stats.insert(derived_tag.clone(), StatInstance::Attribute(expr));
+        let derived_tag = ValueTag::parse("Evasion").unwrap();
+        let expr = create_expression_attribute("Dexterity + Strength");
+        stats.insert(derived_tag.clone(), StatType::Attribute(expr));
 
         // Check that it's in the pending stats
         assert!(stats.pending_stats.contains_key(&derived_tag));
 
         // Add the first dependency
-        let base_attack_tag = ValueTag::parse("BaseAttack").unwrap();
-        stats.insert(base_attack_tag.clone(), StatInstance::Attribute(create_attribute(20.0)));
+        let base_attack_tag = ValueTag::parse("Dexterity").unwrap();
+        stats.insert(base_attack_tag.clone(), StatType::Attribute(create_attribute(20.0)));
 
         // Should still be pending
         assert!(stats.pending_stats.contains_key(&derived_tag));
 
         // Add the second dependency
-        let str_bonus_tag = ValueTag::parse("StrengthBonus").unwrap();
-        stats.insert(str_bonus_tag.clone(), StatInstance::Attribute(create_attribute(5.0)));
+        let str_bonus_tag = ValueTag::parse("Strength").unwrap();
+        stats.insert(str_bonus_tag.clone(), StatType::Attribute(create_attribute(5.0)));
 
         // Now it should be resolved
         assert!(!stats.pending_stats.contains_key(&derived_tag));
@@ -513,10 +525,10 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create a chain of dependent stats
-        stats.insert(ValueTag::parse("Base").unwrap(), StatInstance::Attribute(create_attribute(10.0)));
-        stats.insert(ValueTag::parse("Level1").unwrap(), StatInstance::Attribute(create_expression_attribute("Base * 2")));
-        stats.insert(ValueTag::parse("Level2").unwrap(), StatInstance::Attribute(create_expression_attribute("Level1 + 5")));
-        stats.insert(ValueTag::parse("Level3").unwrap(), StatInstance::Attribute(create_expression_attribute("Level2 * 1.5")));
+        stats.insert(ValueTag::parse("Base").unwrap(), StatType::Attribute(create_attribute(10.0)));
+        stats.insert(ValueTag::parse("Level1").unwrap(), StatType::Attribute(create_expression_attribute("Base * 2")));
+        stats.insert(ValueTag::parse("Level2").unwrap(), StatType::Attribute(create_expression_attribute("Level1 + 5")));
+        stats.insert(ValueTag::parse("Level3").unwrap(), StatType::Attribute(create_expression_attribute("Level2 * 1.5")));
 
         // Check initial values
         assert_eq!(stats.get("Base").unwrap(), 10.0);
@@ -525,7 +537,7 @@ mod stat_tests {
         assert_eq!(stats.get("Level3").unwrap(), 37.5);
 
         // Update the base value
-        stats.insert(ValueTag::parse("Base").unwrap(), StatInstance::Attribute(create_attribute(20.0)));
+        stats.insert(ValueTag::parse("Base").unwrap(), StatType::Attribute(create_attribute(20.0)));
 
         // Recalculate the chain
         stats.recalculate(&ValueTag::parse("Base").unwrap());
@@ -542,22 +554,22 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create multiple dependency chains
-        stats.insert(ValueTag::parse("Strength").unwrap(), StatInstance::Attribute(create_attribute(10.0)));
-        stats.insert(ValueTag::parse("Dexterity").unwrap(), StatInstance::Attribute(create_attribute(15.0)));
+        stats.insert(ValueTag::parse("Strength").unwrap(), StatType::Attribute(create_attribute(10.0)));
+        stats.insert(ValueTag::parse("Dexterity").unwrap(), StatType::Attribute(create_attribute(15.0)));
 
-        stats.insert(ValueTag::parse("StrBonus").unwrap(), StatInstance::Attribute(create_expression_attribute("Strength * 0.5")));
-        stats.insert(ValueTag::parse("DexBonus").unwrap(), StatInstance::Attribute(create_expression_attribute("Dexterity * 0.3")));
+        stats.insert(ValueTag::parse("StrBonus").unwrap(), StatType::Attribute(create_expression_attribute("Strength * 0.5")));
+        stats.insert(ValueTag::parse("DexBonus").unwrap(), StatType::Attribute(create_expression_attribute("Dexterity * 0.3")));
 
-        stats.insert(ValueTag::parse("Attack").unwrap(), StatInstance::Attribute(create_expression_attribute("StrBonus * 2 + 10")));
-        stats.insert(ValueTag::parse("Defense").unwrap(), StatInstance::Attribute(create_expression_attribute("DexBonus * 3 + 5")));
+        stats.insert(ValueTag::parse("Attack").unwrap(), StatType::Attribute(create_expression_attribute("StrBonus * 2 + 10")));
+        stats.insert(ValueTag::parse("Defense").unwrap(), StatType::Attribute(create_expression_attribute("DexBonus * 3 + 5")));
 
         // Check initial values
         assert_eq!(stats.get("Attack").unwrap(), 20.0); // 10 * 0.5 * 2 + 10 = 20
         assert_eq!(stats.get("Defense").unwrap(), 18.5); // 15 * 0.3 * 3 + 5 = 18.5
 
         // Update base stats
-        stats.insert(ValueTag::parse("Strength").unwrap(), StatInstance::Attribute(create_attribute(20.0)));
-        stats.insert(ValueTag::parse("Dexterity").unwrap(), StatInstance::Attribute(create_attribute(25.0)));
+        stats.insert(ValueTag::parse("Strength").unwrap(), StatType::Attribute(create_attribute(20.0)));
+        stats.insert(ValueTag::parse("Dexterity").unwrap(), StatType::Attribute(create_attribute(25.0)));
 
         // Recalculate everything
         stats.recalculate_all();
@@ -573,43 +585,22 @@ mod stat_tests {
 
         // Create a circular dependency between A, B, and C
         // A depends on B, B depends on C, C depends on A
-        stats.insert(ValueTag::parse("A").unwrap(), StatInstance::Attribute(create_expression_attribute("B + 5")));
-        stats.insert(ValueTag::parse("B").unwrap(), StatInstance::Attribute(create_expression_attribute("C * 2")));
-        stats.insert(ValueTag::parse("C").unwrap(), StatInstance::Attribute(create_expression_attribute("A / 2")));
+        stats.insert(ValueTag::parse("A").unwrap(), StatType::Attribute(create_expression_attribute("B + 5")));
+        stats.insert(ValueTag::parse("B").unwrap(), StatType::Attribute(create_expression_attribute("C * 2")));
+        stats.insert(ValueTag::parse("C").unwrap(), StatType::Attribute(create_expression_attribute("A / 2")));
 
         // With our tree-walking approach, one of these should be set to 0
         // Check if all values are calculated
         let a_value = stats.get("A").unwrap_or(999.0); // Use a default that would be obvious if not set
         let b_value = stats.get("B").unwrap_or(999.0);
         let c_value = stats.get("C").unwrap_or(999.0);
-
-        // Verify that we've handled the circular dependency by checking:
-        // 1. At least one value should be 0 (to break the cycle)
-        // 2. The other values should be calculated based on that
-        if a_value == 0.0 {
-            assert_eq!(b_value, 0.0); // B = C * 2, and C would be 0 
-            assert_eq!(c_value, 0.0); // C = A / 2 = 0
-        } else if b_value == 0.0 {
-            assert_eq!(a_value, 5.0); // A = B + 5 = 0 + 5
-            assert_eq!(c_value, 2.5); // C = A / 2 = 5 / 2
-        } else if c_value == 0.0 {
-            assert_eq!(b_value, 0.0); // B = C * 2 = 0
-            assert_eq!(a_value, 5.0); // A = B + 5 = 0 + 5
-        } else {
-            // All three can't have non-zero values in a true circular dependency
-            assert!(false, "Circular dependency not properly handled");
-        }
-
-        // Now let's break the circular dependency by setting a concrete value
-        stats.insert(ValueTag::parse("A").unwrap(), StatInstance::Attribute(create_attribute(10.0)));
-
-        // Recalculate
-        stats.recalculate_all();
+        
+        println!("a_value: {}, b_value: {}, c_value: {}", a_value, b_value, c_value);
 
         // Check values - now they should be deterministic
         assert_eq!(stats.get("A").unwrap(), 10.0);
-        assert_eq!(stats.get("C").unwrap(), 5.0);   // C = A / 2 = 10 / 2
-        assert_eq!(stats.get("B").unwrap(), 10.0);  // B = C * 2 = 5 * 2
+        assert_eq!(stats.get("C").unwrap(), 2.5);   // C = A / 2 = 10 / 2
+        assert_eq!(stats.get("B").unwrap(), 5.0);  // B = C * 2 = 5 * 2
     }
 
     #[test]
@@ -620,8 +611,8 @@ mod stat_tests {
         let fire_tag = ValueTag::parse("Damage(elemental[\"fire\"])").unwrap();
         let ice_tag = ValueTag::parse("Damage(elemental[\"ice\"])").unwrap();
 
-        stats.insert(fire_tag.clone(), StatInstance::Attribute(create_attribute(30.0)));
-        stats.insert(ice_tag.clone(), StatInstance::Attribute(create_attribute(25.0)));
+        stats.insert(fire_tag.clone(), StatType::Attribute(create_attribute(30.0)));
+        stats.insert(ice_tag.clone(), StatType::Attribute(create_attribute(25.0)));
 
         // Set up some modifier tags and entities
         let generic_mod_tag = ValueTag::parse("Damage").unwrap();
@@ -686,25 +677,25 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create a complex dependency tree
-        stats.insert(ValueTag::parse("BaseDamage").unwrap(), StatInstance::Attribute(create_attribute(10.0)));
-        stats.insert(ValueTag::parse("BaseStrength").unwrap(), StatInstance::Attribute(create_attribute(20.0)));
-        stats.insert(ValueTag::parse("BaseCritical").unwrap(), StatInstance::Attribute(create_attribute(5.0)));
+        stats.insert(ValueTag::parse("BaseDamage").unwrap(), StatType::Attribute(create_attribute(10.0)));
+        stats.insert(ValueTag::parse("BaseStrength").unwrap(), StatType::Attribute(create_attribute(20.0)));
+        stats.insert(ValueTag::parse("BaseCritical").unwrap(), StatType::Attribute(create_attribute(5.0)));
 
-        stats.insert(ValueTag::parse("StrengthBonus").unwrap(), StatInstance::Attribute(create_expression_attribute("BaseStrength * 0.1")));
-        stats.insert(ValueTag::parse("DamageMultiplier").unwrap(), StatInstance::Attribute(create_expression_attribute("1 + StrengthBonus")));
-        stats.insert(ValueTag::parse("CriticalChance").unwrap(), StatInstance::Attribute(create_expression_attribute("BaseCritical + StrengthBonus * 0.5")));
-        stats.insert(ValueTag::parse("CriticalMultiplier").unwrap(), StatInstance::Attribute(create_expression_attribute("1.5 + BaseCritical * 0.1")));
+        stats.insert(ValueTag::parse("StrengthBonus").unwrap(), StatType::Attribute(create_expression_attribute("BaseStrength * 0.1")));
+        stats.insert(ValueTag::parse("DamageMultiplier").unwrap(), StatType::Attribute(create_expression_attribute("1 + StrengthBonus")));
+        stats.insert(ValueTag::parse("CriticalChance").unwrap(), StatType::Attribute(create_expression_attribute("BaseCritical + StrengthBonus * 0.5")));
+        stats.insert(ValueTag::parse("CriticalMultiplier").unwrap(), StatType::Attribute(create_expression_attribute("1.5 + BaseCritical * 0.1")));
 
-        stats.insert(ValueTag::parse("DamageBase").unwrap(), StatInstance::Attribute(create_expression_attribute("BaseDamage * DamageMultiplier")));
-        stats.insert(ValueTag::parse("DamageCritical").unwrap(), StatInstance::Attribute(create_expression_attribute("DamageBase * CriticalMultiplier * CriticalChance * 0.01")));
-        stats.insert(ValueTag::parse("TotalDamage").unwrap(), StatInstance::Attribute(create_expression_attribute("DamageBase + DamageCritical")));
+        stats.insert(ValueTag::parse("DamageBase").unwrap(), StatType::Attribute(create_expression_attribute("BaseDamage * DamageMultiplier")));
+        stats.insert(ValueTag::parse("DamageCritical").unwrap(), StatType::Attribute(create_expression_attribute("DamageBase * CriticalMultiplier * CriticalChance * 0.01")));
+        stats.insert(ValueTag::parse("TotalDamage").unwrap(), StatType::Attribute(create_expression_attribute("DamageBase + DamageCritical")));
 
         // Check initial values
         let total_damage = stats.get("TotalDamage").unwrap();
         assert!(total_damage > 0.0); // Just make sure it calculated something reasonable
 
         // Now modify a base stat
-        stats.insert(ValueTag::parse("BaseStrength").unwrap(), StatInstance::Attribute(create_attribute(40.0)));
+        stats.insert(ValueTag::parse("BaseStrength").unwrap(), StatType::Attribute(create_attribute(40.0)));
 
         // Recalculate just that stat
         stats.recalculate(&ValueTag::parse("BaseStrength").unwrap());

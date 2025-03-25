@@ -29,7 +29,7 @@ impl Default for ModifierValue {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModifierValueTotal {
     flat: f32,
     increased: f32,

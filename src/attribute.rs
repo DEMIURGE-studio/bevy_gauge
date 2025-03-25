@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 use crate::prelude::*;
-use crate::value_type::{Expression, StatError, ValueBounds, ValueType};
+use crate::value_type::{Expression, ValueBounds, ValueType};
 
 
 
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AttributeInstance {
     pub value: ValueType,
     pub bounds: Option<ValueBounds>
