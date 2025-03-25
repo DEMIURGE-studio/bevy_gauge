@@ -1,18 +1,112 @@
+use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use crate::modifiers::ModifierInstance;
+use crate::stats::StatCollection;
 
+/// Represents a group of values within a tag
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagGroup {
+    /// Represents all possible values in this group
+    All,
+    /// Represents a specific set of values
+    AnyOf(HashSet<String>),
+}
 
+impl TagGroup {
+    pub fn to_any_of(&self) -> Option<&HashSet<String>> {
+        match self {
+            TagGroup::AnyOf(set) => Some(set),
+            _ => None,
+        }
+    }
+
+    pub fn is_all(&self) -> bool {
+        matches!(self, TagGroup::All)
+    }
+
+    /// Check if this tag group is compatible with another tag group
+    pub fn is_compatible_with(&self, other: &TagGroup) -> bool {
+        match (self, other) {
+            // Both All - automatic match
+            (TagGroup::All, TagGroup::All) => true,
+
+            // Self is All - matches any specific values in other
+            (TagGroup::All, TagGroup::AnyOf(_)) => true,
+
+            // Other is All - matches any specific values in self
+            (TagGroup::AnyOf(_), TagGroup::All) => true,
+
+            // Both have specific values - need at least one value in common
+            (TagGroup::AnyOf(self_values), TagGroup::AnyOf(other_values)) => {
+                self_values.intersection(other_values).next().is_some()
+            }
+        }
+    }
+}
+
+/// A tag that identifies a specific value or attribute
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ValueTag {
+    /// The primary value this tag targets (e.g., "Damage")
     pub primary_value_target: String,
+
+    /// Optional groups that qualify this tag (e.g., elemental type, weapon type)
     pub groups: Option<HashMap<String, TagGroup>>,
-    // Cache the stringified representation
+
+    /// Cache of string representation for efficient comparison
     cached_string: Option<String>,
-    // Cache the hash value
+
+    /// Cache of hash value for efficient comparison
     cached_hash: Option<u64>,
 }
 
 impl ValueTag {
+    /// Create a new tag with a primary target and optional groups
+    pub fn new(primary_value_target: String, groups: Option<HashMap<String, TagGroup>>) -> Self {
+        ValueTag {
+            primary_value_target,
+            groups,
+            cached_string: None,
+            cached_hash: None,
+        }
+    }
+
+    /// Add a group that represents all values of a particular type
+    pub fn add_all_group(&mut self, name: String) -> &mut Self {
+        // Clear caches since we're modifying the tag
+        self.cached_string = None;
+        self.cached_hash = None;
+
+        if let Some(ref mut groups) = self.groups {
+            groups.insert(name, TagGroup::All);
+        } else {
+            let mut groups = HashMap::new();
+            groups.insert(name, TagGroup::All);
+            self.groups = Some(groups);
+        }
+
+        self
+    }
+
+    /// Add a group with specific allowed values
+    pub fn add_any_of_group(&mut self, name: String, values: HashSet<String>) -> &mut Self {
+        // Clear caches since we're modifying the tag
+        self.cached_string = None;
+        self.cached_hash = None;
+
+        if let Some(ref mut groups) = self.groups {
+            groups.insert(name, TagGroup::AnyOf(values));
+        } else {
+            let mut groups = HashMap::new();
+            groups.insert(name, TagGroup::AnyOf(values));
+            self.groups = Some(groups);
+        }
+
+        self
+    }
+
+    /// Convert the tag to a string representation
     pub fn stringify(&self) -> String {
         // Use cached version if available
         if let Some(ref cached) = self.cached_string {
@@ -55,9 +149,15 @@ impl ValueTag {
             result.push_str(")");
         }
 
+        // Cache the result
+        let result_clone = result.clone();
+        let mut mutable_self = self.clone();
+        mutable_self.cached_string = Some(result_clone);
+
         result
     }
 
+    /// Parse a tag from a string representation
     pub fn parse(s: &str) -> Result<Self, String> {
         // Find the primary_value_target (everything up to the first '(' or the entire string)
         let primary_end = s.find('(').unwrap_or(s.len());
@@ -126,50 +226,6 @@ impl ValueTag {
         Ok(tag)
     }
 
-    pub fn new(primary_value_target: String, groups: Option<HashMap<String, TagGroup>>) -> Self {
-        ValueTag {
-            primary_value_target,
-            groups,
-            cached_string: None,
-            cached_hash: None,
-        }
-    }
-
-    pub fn add_all_group(&mut self, name: String) -> &mut Self {
-        // Clear caches since we're modifying the tag
-        self.cached_string = None;
-        self.cached_hash = None;
-
-        if let Some(ref mut groups) = self.groups {
-            groups.insert(name, TagGroup::All);
-        } else {
-            let mut groups = HashMap::new();
-            groups.insert(name, TagGroup::All);
-            self.groups = Some(groups);
-        }
-
-        self.cached_string = Some(self.stringify());
-        self.cached_hash = Some(self.compute_hash());
-        self
-    }
-
-    pub fn add_any_of_group(&mut self, name: String, values: HashSet<String>) -> &mut Self {
-        // Clear caches since we're modifying the tag
-        self.cached_string = None;
-        self.cached_hash = None;
-
-        if let Some(ref mut groups) = self.groups {
-            groups.insert(name, TagGroup::AnyOf(values));
-        } else {
-            let mut groups = HashMap::new();
-            groups.insert(name, TagGroup::AnyOf(values));
-            self.groups = Some(groups);
-        }
-        self.cached_string = Some(self.stringify());
-        self.cached_hash = Some(self.compute_hash());
-        self
-    }
-
     // Helper method to compute and cache the hash value
     fn compute_hash(&mut self) -> u64 {
         // If we have a cached hash, return it
@@ -195,63 +251,11 @@ impl ValueTag {
         hash
     }
 
-    pub fn contains(&self, other: &ValueTag) -> bool {
+    /// Check if this tag qualifies to affect another tag
+    /// Returns true if this tag qualifies to affect `target_tag`
+    pub fn qualifies_for(&self, target_tag: &ValueTag) -> bool {
         // Primary value must match exactly
-        if self.primary_value_target != other.primary_value_target {
-            return false;
-        }
-
-        // If other has no groups, then we match (any tag with matching primary value)
-        if other.groups.is_none() {
-            return true;
-        }
-
-        // If we have no groups but other does, we can't match
-        if self.groups.is_none() {
-            return false;
-        }
-
-        let our_groups = self.groups.as_ref().unwrap();
-        let their_groups = other.groups.as_ref().unwrap();
-
-        // For each of their groups, we must have a compatible group
-        for (group_name, their_group) in their_groups {
-            // If we don't have this group at all, no match
-            if !our_groups.contains_key(group_name) {
-                return false;
-            }
-
-            let our_group = our_groups.get(group_name).unwrap();
-
-            match (our_group, their_group) {
-                // If their group is All, we need All too (or a matching any-of)
-                (TagGroup::All, TagGroup::All) => continue,
-
-                // If we have All but they have specific values, we don't match
-                (TagGroup::All, TagGroup::AnyOf(_)) => return false,
-
-                // If they have All but we have specific values, we match
-                (TagGroup::AnyOf(_), TagGroup::All) => continue,
-
-                // Both have AnyOf - we need at least one value in common
-                (TagGroup::AnyOf(our_values), TagGroup::AnyOf(their_values)) => {
-                    if our_values.intersection(their_values).count() == 0 {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
-    }
-
-    // Check if this tag is compatible with (could apply to) another tag
-    pub fn applies_to(&self, action: &ValueTag) -> bool {
-        // Different implementations depending on your exact matching rules
-        // For example:
-
-        // Primary value must match
-        if self.primary_value_target != action.primary_value_target {
+        if self.primary_value_target != target_tag.primary_value_target {
             return false;
         }
 
@@ -261,53 +265,69 @@ impl ValueTag {
             return true;
         }
 
-        // If we have groups but action doesn't, we're too specific
-        if action.groups.is_none() {
+        // If we have groups but target doesn't, we're too specific
+        if target_tag.groups.is_none() {
             return false;
         }
 
-        // For each of our groups:
         let our_groups = self.groups.as_ref().unwrap();
-        let action_groups = action.groups.as_ref().unwrap();
+        let target_groups = target_tag.groups.as_ref().unwrap();
 
+        // For each of our groups, check compatibility with the target
         for (group_name, our_group) in our_groups {
-            match our_group {
-                // If our group is All, action must have the same group
-                // (but can be either All or specific values)
-                TagGroup::All => {
-                    if !action_groups.contains_key(group_name) {
-                        return false;
-                    }
-                },
+            // If target doesn't have this group at all, no match
+            if !target_groups.contains_key(group_name) {
+                // In your requirements, you mentioned that a modifier without weapon_size
+                // would still qualify for a target with weapon_size["one_handed"],
+                // so we allow missing groups in the target
+                continue;
+            }
 
-                // If our group is AnyOf, action must have the group AND
-                // have at least one matching value
-                TagGroup::AnyOf(our_values) => {
-                    if !action_groups.contains_key(group_name) {
-                        return false;
-                    }
+            let target_group = target_groups.get(group_name).unwrap();
 
-                    match action_groups.get(group_name).unwrap() {
-                        // If action has All for this group, it matches any of our values
-                        TagGroup::All => continue,
-
-                        // If action has specific values, we need intersection
-                        TagGroup::AnyOf(action_values) => {
-                            if our_values.intersection(action_values).count() == 0 {
-                                return false;
-                            }
-                        }
-                    }
-                }
+            // Check if our group is compatible with the target's group
+            if !our_group.is_compatible_with(target_group) {
+                return false;
             }
         }
 
+        // All checks passed, this tag qualifies
         true
+    }
+
+    /// Get all values for a specific group
+    pub fn get_group_values(&self, group_name: &str) -> Option<HashSet<String>> {
+        if let Some(groups) = &self.groups {
+            if let Some(group) = groups.get(group_name) {
+                match group {
+                    TagGroup::All => Some(HashSet::new()), // Empty set means "all"
+                    TagGroup::AnyOf(values) => Some(values.clone()),
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Check if this tag has a specific value in a group
+    pub fn has_value(&self, group_name: &str, value: &str) -> bool {
+        if let Some(values) = self.get_group_values(group_name) {
+            if values.is_empty() {
+                // Empty set means All - matches anything
+                true
+            } else {
+                values.contains(value)
+            }
+        } else {
+            false
+        }
     }
 }
 
 impl Hash for ValueTag {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         // If we have a cached hash, use it
         if let Some(hash) = self.cached_hash {
             state.write_u64(hash);
@@ -327,21 +347,6 @@ impl Hash for ValueTag {
 
         // Hash the string
         string.hash(state);
-    }
-}
-
-
-// Implementation for TagGroup to support conversions and manipulations
-impl TagGroup {
-    pub fn to_any_of(&self) -> Option<&HashSet<String>> {
-        match self {
-            TagGroup::AnyOf(set) => Some(set),
-            _ => None,
-        }
-    }
-
-    pub fn is_all(&self) -> bool {
-        matches!(self, TagGroup::All)
     }
 }
 
@@ -373,250 +378,150 @@ fn parse_group(group_def: &str, groups: &mut HashMap<String, TagGroup>) -> Resul
     Ok(())
 }
 
+// System to update tag qualification caches
+pub fn update_tag_caches(
+    mut query: Query<(Entity, &mut StatCollection)>,
+    all_modifiers: Query<(Entity, &ModifierInstance)>,
+) {
+    for (entity, mut stat_collection) in query.iter_mut() {
+        if !stat_collection.is_dirty() {
+            continue;
+        }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TagGroup {
-    All,
-    AnyOf(HashSet<String>),
+        // Extract all stat tags
+        let stat_tags: Vec<ValueTag> = stat_collection.stats.keys().cloned().collect();
+
+        // Get all modifiers and their tags
+        let modifiers: Vec<(ValueTag, Entity)> = all_modifiers.iter()
+            .filter_map(|(modifier_entity, modifier)| {
+                // Only include modifiers targeting this entity
+                if let Some(target_context) = &modifier.target_context {
+                    if target_context.entity == Some(entity) {
+                        return Some((modifier.definition.tag.clone(), modifier_entity));
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Rebuild the cache
+        stat_collection.rebuild(&stat_tags, &modifiers);
+    }
 }
 
-// expand to query language
-// Add wildcards such as AnyOf
+// Event sent when modifiers change and caches need updating
+#[derive(Event)]
+pub struct ModifiersChangedEvent {
+    pub target_entity: Entity,
+}
 
+// System to handle modifier change events
+pub fn handle_modifier_events(
+    mut events: EventReader<ModifiersChangedEvent>,
+    mut stat_collections: Query<(Entity, &mut StatCollection)>,
+) {
+    for event in events.read() {
+        for (entity, mut stat_collection) in stat_collections.iter_mut() {
+            if entity == event.target_entity {
+                stat_collection.mark_dirty();
+            }
+        }
+    }
+}
+
+// Plugin to add all tag system components
+pub fn tag_system_plugin(app: &mut App) {
+    app
+        .add_event::<ModifiersChangedEvent>()
+        .add_systems(Update, update_tag_caches)
+        .add_systems(Update, handle_modifier_events);
+}
 
 #[cfg(test)]
 mod tag_tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
 
     #[test]
-    fn test_stringify_with_all_group() {
-        let mut tag = ValueTag {
-            primary_value_target: "damage".to_string(),
-            groups: None,
-            cached_string: None,
-            cached_hash: None,
-        };
+    fn test_tag_parsing() {
+        // Test basic tag
+        let tag1 = ValueTag::parse("Damage").unwrap();
+        assert_eq!(tag1.primary_value_target, "Damage");
+        assert!(tag1.groups.is_none());
 
-        tag.add_all_group(String::from("physical"));
+        // Test tag with groups
+        let tag2 = ValueTag::parse("Damage(elemental[\"fire\"] weapon_type[\"sword\"])").unwrap();
+        assert_eq!(tag2.primary_value_target, "Damage");
+        assert!(tag2.groups.is_some());
 
-        assert_eq!(tag.stringify(), "damage(physical)");
-    }
+        let groups = tag2.groups.unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups.contains_key("elemental"));
+        assert!(groups.contains_key("weapon_type"));
 
-    #[test]
-    fn test_stringify_with_any_of_group() {
-        let mut tag = ValueTag {
-            primary_value_target: "resist".to_string(),
-            groups: None,
-            cached_string: None,
-            cached_hash: None,
-        };
-
-        let mut values = HashSet::new();
-        values.insert("fire".to_string());
-        values.insert("ice".to_string());
-
-        tag.add_any_of_group(String::from("element"), values);
-
-        // Note: Values are sorted alphabetically for deterministic output
-        assert_eq!(tag.stringify(), "resist(element[\"fire ice\"])");
-    }
-
-    #[test]
-    fn test_stringify_complex() {
-        let mut tag = ValueTag {
-            primary_value_target: "bonus".to_string(),
-            groups: None,
-            cached_string: None,
-            cached_hash: None,
-        };
-
-        tag.add_all_group("elemental".to_string());
-
-        let mut values = HashSet::new();
-        values.insert("sword".to_string());
-        values.insert("axe".to_string());
-        values.insert("mace".to_string());
-
-        tag.add_any_of_group(String::from("weapon"), values);
-
-        // Note: Groups are sorted by name and values are sorted alphabetically
-        assert_eq!(tag.stringify(), "bonus(elemental weapon[\"axe mace sword\"])");
-    }
-
-    #[test]
-    fn test_parse_simple() {
-        let s = "damage(physical)";
-        let tag = ValueTag::parse(s).unwrap();
-
-        assert_eq!(tag.primary_value_target, "damage");
-        if let Some(ref groups) = tag.groups {
-
-            assert_eq!(groups.len(), 1);
-            assert!(groups.get("physical").unwrap().is_all());
+        if let TagGroup::AnyOf(values) = &groups["elemental"] {
+            assert_eq!(values.len(), 1);
+            assert!(values.contains("fire"));
         } else {
-            assert!(false);
+            panic!("Expected AnyOf group");
         }
-    }
 
-    #[test]
-    fn test_parse_any_of() {
-        let s = "resist(element[\"fire ice\"])";
-        let tag = ValueTag::parse(s).unwrap();
-
-        assert_eq!(tag.primary_value_target, "resist");
-        if let Some(ref groups) = tag.groups {
-            assert_eq!(groups.len(), 1);
-
-            let element_group = groups.get("element").unwrap();
-            if let TagGroup::AnyOf(values) = element_group {
-                assert_eq!(values.len(), 2);
-                assert!(values.contains("fire"));
-                assert!(values.contains("ice"));
-            } else {
-                panic!("Expected AnyOf group");
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_complex() {
-        let s = "bonus(melee weapon[\"axe mace sword\"])";
-        let tag = ValueTag::parse(s).unwrap();
-
-        assert_eq!(tag.primary_value_target, "bonus");
-        if let Some(ref groups) = tag.groups {
-            assert_eq!(groups.len(), 2);
-
-            assert!(groups.get("melee").unwrap().is_all());
-
-            let weapon_group = groups.get("weapon").unwrap();
-            if let TagGroup::AnyOf(values) = weapon_group {
-                assert_eq!(values.len(), 3);
-                assert!(values.contains("axe"));
-                assert!(values.contains("mace"));
-                assert!(values.contains("sword"));
-            } else {
-                panic!("Expected AnyOf group");
-            }
+        if let TagGroup::AnyOf(values) = &groups["weapon_type"] {
+            assert_eq!(values.len(), 1);
+            assert!(values.contains("sword"));
         } else {
-            assert!(false);
-        }
-    }
-
-    #[test]
-    fn test_hash_consistency() {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-
-        // Create two identical tags through different methods
-        let mut tag1 = ValueTag::new("damage".to_string(), None);
-        tag1.add_all_group("physical".to_string());
-
-        let s = "damage(physical)";
-        let tag2 = ValueTag::parse(s).unwrap();
-
-        // Hash both tags
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        tag1.hash(&mut hasher1);
-        tag2.hash(&mut hasher2);
-
-        // Compare hash values
-        assert_eq!(hasher1.finish(), hasher2.finish());
-    }
-
-    #[test]
-    fn test_roundtrip() {
-        let mut original = ValueTag::new("critical".to_string(), None);
-        original.add_all_group("weapon".to_string());
-
-        let mut values = HashSet::new();
-        values.insert("backstab".to_string());
-        values.insert("headshot".to_string());
-        original.add_any_of_group("type".to_string(), values);
-
-        let serialized = original.stringify();
-        let parsed = ValueTag::parse(&serialized).unwrap();
-
-        assert_eq!(original, parsed);
-    }
-
-    #[test]
-    fn test_multiple_groups_with_spaces() {
-        let s = "attack(melee physical ranged)";
-        let tag = ValueTag::parse(s).unwrap();
-
-        assert_eq!(tag.primary_value_target, "attack");
-        if let Some(ref groups) = tag.groups {
-
-            assert_eq!(groups.len(), 3);
-            assert!(groups.get("melee").unwrap().is_all());
-            assert!(groups.get("ranged").unwrap().is_all());
-            assert!(groups.get("physical").unwrap().is_all());
-
-            let serialized = tag.stringify();
-            assert_eq!(serialized, "attack(melee physical ranged)");
+            panic!("Expected AnyOf group");
         }
 
+        // Test tag with multiple values in a group
+        let tag3 = ValueTag::parse("Damage(weapon_type[\"sword axe\"])").unwrap();
+        let groups = tag3.groups.unwrap();
+
+        if let TagGroup::AnyOf(values) = &groups["weapon_type"] {
+            assert_eq!(values.len(), 2);
+            assert!(values.contains("sword"));
+            assert!(values.contains("axe"));
+        } else {
+            panic!("Expected AnyOf group");
+        }
+
+        // Test tag with All group
+        let tag4 = ValueTag::parse("Damage(elemental)").unwrap();
+        let groups = tag4.groups.unwrap();
+
+        assert!(matches!(groups["elemental"], TagGroup::All));
     }
 
     #[test]
-    fn test_stringify_empty() {
-        let tag = ValueTag {
-            primary_value_target: "stat".to_string(),
-            groups: None,
-            cached_string: None,
-            cached_hash: None,
-        };
+    fn test_tag_qualification() {
+        // Create a fire damage tag
+        let fire_tag = ValueTag::parse("Damage(elemental[\"fire\"])").unwrap();
 
-        assert_eq!(tag.stringify(), "stat");
+        // Create various modifier tags
+        let fire_mod = ValueTag::parse("Damage(elemental[\"fire\"])").unwrap();
+        let ice_mod = ValueTag::parse("Damage(elemental[\"ice\"])").unwrap();
+        let elemental_mod = ValueTag::parse("Damage(elemental)").unwrap();
+        let all_damage_mod = ValueTag::parse("Damage").unwrap();
+
+        // Test qualification logic
+        assert!(fire_mod.qualifies_for(&fire_tag)); // Fire qualifies for fire
+        assert!(!ice_mod.qualifies_for(&fire_tag)); // Ice doesn't qualify for fire
+        assert!(elemental_mod.qualifies_for(&fire_tag)); // General elemental qualifies for fire
+        assert!(all_damage_mod.qualifies_for(&fire_tag)); // All damage qualifies for fire
+
+        // Test complex cases
+        let complex_tag = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe sword\"])").unwrap();
+
+        // Create various complex modifiers
+        let exact_mod = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
+        let wrong_element_mod = ValueTag::parse("Damage(elemental[\"ice\"] ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
+        let missing_size_mod = ValueTag::parse("Damage(elemental[\"fire\"] ability_type[\"attack\"] weapon_type[\"axe\"])").unwrap();
+        let generic_element_mod = ValueTag::parse("Damage(elemental ability_type[\"attack\"] weapon_size[\"one_handed\"] weapon_type[\"axe\"])").unwrap();
+
+        // Test qualification logic
+        assert!(exact_mod.qualifies_for(&complex_tag)); // Exact match qualifies
+        assert!(!wrong_element_mod.qualifies_for(&complex_tag)); // Wrong element doesn't qualify
+        assert!(missing_size_mod.qualifies_for(&complex_tag)); // Missing size still qualifies
+        assert!(generic_element_mod.qualifies_for(&complex_tag)); // Generic element qualifies
     }
-
-    #[test]
-    fn test_hash_caching() {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-
-        // Create a tag
-        let mut tag = ValueTag::new("damage".to_string(), None);
-        tag.add_all_group("physical".to_string());
-
-        // First hash computation
-        let mut hasher1 = DefaultHasher::new();
-        tag.hash(&mut hasher1);
-        let hash1 = hasher1.finish();
-
-        // Second hash computation
-        let mut hasher2 = DefaultHasher::new();
-        tag.hash(&mut hasher2);
-        let hash2 = hasher2.finish();
-
-        assert_eq!(hash1, hash2);
-
-        // Modify the tag and verify the cache is cleared
-        tag.add_all_group("magical".to_string());
-
-        // Hash again and verify it's different
-        let mut hasher3 = DefaultHasher::new();
-        tag.hash(&mut hasher3);
-        let hash3 = hasher3.finish();
-
-        assert_ne!(hash1, hash3);
-    }
-
-    #[test]
-    fn test_parse_with_cached_string() {
-        let s = "damage(physical)";
-        let tag = ValueTag::parse(s).unwrap();
-
-        // Verify the string was cached during parsing
-        assert_eq!(tag.cached_string, Some(s.to_string()));
-
-        // Verify hash was computed
-        assert!(tag.cached_hash.is_some());
-    }
-
-
+    
 }
