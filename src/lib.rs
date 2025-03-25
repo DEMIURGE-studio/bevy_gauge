@@ -2,7 +2,7 @@
 use bevy::app::App;
 
 pub mod app_extension;
-pub mod stats;
+pub mod attribute;
 pub mod dirty;
 pub mod eval_context;
 pub mod macros;
@@ -17,11 +17,11 @@ pub mod tags;
 pub mod modifiers;
 pub mod effects;
 mod value_type;
+mod resource;
+mod stats;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins((
         schedule::plugin,
-        stats::plugin,
-    ))
-    .register_type::<prelude::StatContext>();
+    ));
 }

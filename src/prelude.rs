@@ -1,5 +1,5 @@
 pub use super::app_extension::*;
-pub use super::stats::*;
+pub use super::attribute::*;
 pub use super::eval_context::*;
 pub use super::requirements::*;
 pub use super::schedule::*;
@@ -10,6 +10,6 @@ pub use bevy_gauge_macros::SimpleStatDerived;
 pub use bevy_gauge_macros::stat_component;
 pub use crate::simple_generic_stat;
 pub use crate::simple_stat;
-pub use crate::stats;
+pub use crate::attribute;
 pub use crate::stat_effect;
 pub use crate::requires;

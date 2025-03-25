@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -194,6 +193,116 @@ impl ValueTag {
         // Cache and return the hash
         self.cached_hash = Some(hash);
         hash
+    }
+
+    pub fn contains(&self, other: &ValueTag) -> bool {
+        // Primary value must match exactly
+        if self.primary_value_target != other.primary_value_target {
+            return false;
+        }
+
+        // If other has no groups, then we match (any tag with matching primary value)
+        if other.groups.is_none() {
+            return true;
+        }
+
+        // If we have no groups but other does, we can't match
+        if self.groups.is_none() {
+            return false;
+        }
+
+        let our_groups = self.groups.as_ref().unwrap();
+        let their_groups = other.groups.as_ref().unwrap();
+
+        // For each of their groups, we must have a compatible group
+        for (group_name, their_group) in their_groups {
+            // If we don't have this group at all, no match
+            if !our_groups.contains_key(group_name) {
+                return false;
+            }
+
+            let our_group = our_groups.get(group_name).unwrap();
+
+            match (our_group, their_group) {
+                // If their group is All, we need All too (or a matching any-of)
+                (TagGroup::All, TagGroup::All) => continue,
+
+                // If we have All but they have specific values, we don't match
+                (TagGroup::All, TagGroup::AnyOf(_)) => return false,
+
+                // If they have All but we have specific values, we match
+                (TagGroup::AnyOf(_), TagGroup::All) => continue,
+
+                // Both have AnyOf - we need at least one value in common
+                (TagGroup::AnyOf(our_values), TagGroup::AnyOf(their_values)) => {
+                    if our_values.intersection(their_values).count() == 0 {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    // Check if this tag is compatible with (could apply to) another tag
+    pub fn applies_to(&self, action: &ValueTag) -> bool {
+        // Different implementations depending on your exact matching rules
+        // For example:
+
+        // Primary value must match
+        if self.primary_value_target != action.primary_value_target {
+            return false;
+        }
+
+        // A tag with no groups is a "universal" tag that applies to anything
+        // with the same primary value
+        if self.groups.is_none() {
+            return true;
+        }
+
+        // If we have groups but action doesn't, we're too specific
+        if action.groups.is_none() {
+            return false;
+        }
+
+        // For each of our groups:
+        let our_groups = self.groups.as_ref().unwrap();
+        let action_groups = action.groups.as_ref().unwrap();
+
+        for (group_name, our_group) in our_groups {
+            match our_group {
+                // If our group is All, action must have the same group
+                // (but can be either All or specific values)
+                TagGroup::All => {
+                    if !action_groups.contains_key(group_name) {
+                        return false;
+                    }
+                },
+
+                // If our group is AnyOf, action must have the group AND
+                // have at least one matching value
+                TagGroup::AnyOf(our_values) => {
+                    if !action_groups.contains_key(group_name) {
+                        return false;
+                    }
+
+                    match action_groups.get(group_name).unwrap() {
+                        // If action has All for this group, it matches any of our values
+                        TagGroup::All => continue,
+
+                        // If action has specific values, we need intersection
+                        TagGroup::AnyOf(action_values) => {
+                            if our_values.intersection(action_values).count() == 0 {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        true
     }
 }
 

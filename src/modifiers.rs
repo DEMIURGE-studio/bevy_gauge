@@ -3,7 +3,7 @@ use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
 use log::warn;
-use crate::tags::ValueTag;
+use crate::tags::{TagGroup, ValueTag};
 use crate::value_type::ValueType;
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,19 @@ impl ModifierValue {
 impl Default for ModifierValue {
     fn default() -> Self {
         ModifierValue::Flat(ValueType::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModifierValueTotal {
+    flat: f32,
+    increased: f32,
+    more: f32,
+}
+
+impl ModifierValueTotal {
+    pub fn get_total(&self) -> f32 {
+        self.flat * self.increased * self.more
     }
 }
 
@@ -99,25 +112,25 @@ pub struct ModifierCollectionDependencyRegistry {
 
 fn handle_added_modifiers(
     trigger: Trigger<OnAdd, ModifierInstance>,
-    mut q_modifier_instances: Query<(&ModifierInstance, &ModifierCollectionRef)>,
+    mut q_modifier_instances: Query<(&ModifierInstance, &ChildOf)>,
     mut q_modifier_collections: Query<(&mut ModifierCollectionRefs, &mut ModifierCollectionDependencyRegistry) >,
 ) {
-    if let Ok((modifier, modifier_entity)) = q_modifier_instances.get_mut(trigger.target()) {
-        if let Ok((mut modifier_collection, mut dependency_registry)) = q_modifier_collections.get_mut(modifier_entity.modifier_collection) {
-            if let Some(dependencies) = modifier.definition.value.get_value_type().extract_dependencies() {
-                dependency_registry.dependency_mapping.insert(trigger.target(), dependencies.clone());
-                
-                for dependency in dependencies.iter() {
-                    dependency_registry.dependents_mapping
-                        .entry(dependency.clone())
-                        .or_default()
-                        .insert(trigger.target());
-                }
-                
-                // TODO reorder dependency ordering in the modifier collection
-            }
-        }
-    }
+    // if let Ok((modifier, modifier_entity, parent)) = q_modifier_instances.get_mut(trigger.target()) {
+    //     if let Ok((mut modifier_collection, mut dependency_registry)) = q_modifier_collections.get_mut(modifier_entity.modifier_collection) {
+    //         if let Some(dependencies) = modifier.definition.value.get_value_type().extract_dependencies() {
+    //             dependency_registry.dependency_mapping.insert(trigger.target(), dependencies.clone());
+    //             
+    //             for dependency in dependencies.iter() {
+    //                 dependency_registry.dependents_mapping
+    //                     .entry(dependency.clone())
+    //                     .or_default()
+    //                     .insert(trigger.target());
+    //             }
+    //             
+    //             // TODO reorder dependency ordering in the modifier collection
+    //         }
+    //     }
+    // }
 }
 
 fn handle_removed_modifiers(
@@ -127,6 +140,33 @@ fn handle_removed_modifiers(
 }
 
 
+
+
+pub struct ModifierRegistry {
+    // Keep modifiers indexed by relevant attributes
+    primary_index: HashMap<String, Vec<(ValueTag, ModifierValue)>>,
+    group_index: HashMap<String, Vec<(ValueTag, ModifierValue)>>,
+    value_index: HashMap<(String, String), Vec<(ValueTag, )>>,
+    all_modifiers: Vec<(ValueTag, f32)>,
+}
+
+impl ModifierRegistry {
+    pub fn new() -> Self {
+        ModifierRegistry {
+            primary_index: HashMap::new(),
+            group_index: HashMap::new(),
+            value_index: HashMap::new(),
+            all_modifiers: Vec::new(),
+        }
+    }
+
+    pub fn register(&mut self, tag: ValueTag, modifier_value: f32) {
+    }
+
+    pub fn find_matching_modifiers(&self, action: &ValueTag) -> Vec<(f32, &ValueTag)> {
+        Vec::new()
+    }
+}
 
 
 
