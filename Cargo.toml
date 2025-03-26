@@ -38,11 +38,12 @@ evalexpr = "12.0.2"
 bevy_mod_debugdump = "0.12.1"
 log = "0.4.27"
 bitvec = "1.0.1"
+rand = "0.8.5"
 
 [dev-dependencies]
 criterion = "0.5.1"
 
 [[bench]]
-name = "tags_bench"
-path = "benches/tags_bench.rs"
+name = "bit_tags_bench"
+path = "benches/bit_tags_bench.rs"
 harness = false
