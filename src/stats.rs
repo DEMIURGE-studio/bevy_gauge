@@ -1,9 +1,8 @@
-use crate::modifiers::ModifierValueTotal;
+use crate::modifiers::{Intermediate, ModifierValueTotal};
 use crate::prelude::AttributeInstance;
 use crate::resource::ResourceInstance;
 use crate::tags::ValueTag;
 use crate::value_type::{Expression, StatError, ValueType};
-use bevy::asset::AssetContainer;
 use bevy::prelude::*;
 use evalexpr::{
     ContextWithMutableVariables, HashMapContext, Value as EvalValue,
@@ -23,10 +22,11 @@ pub struct StatInstance {
 pub enum StatType {
     Attribute(AttributeInstance),
     Resource(ResourceInstance),
-    Intermediate(ModifierValueTotal),
+    Intermediate(HashMap<u32, ModifierValueTotal>),
     #[default]
     Empty,
 }
+
 
 impl StatType {
     pub fn get_value(&self) -> f32 {
@@ -45,7 +45,7 @@ impl StatType {
 #[derive(Component, Debug, Default, Clone, DerefMut, Deref)]
 pub struct StatCollection {
     #[deref]
-    pub stats: HashMap<ValueTag, StatInstance>,
+    pub stats: HashMap<String, StatInstance>,
 
     pub pending_stats: HashMap<ValueTag, HashSet<ValueTag>>, // Key is attribute that is hanging, hashset is collection of missing attributes
 

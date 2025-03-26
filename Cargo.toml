@@ -37,6 +37,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 evalexpr = "12.0.2"
 bevy_mod_debugdump = "0.12.1"
 log = "0.4.27"
+bitvec = "1.0.1"
 
 [dev-dependencies]
 criterion = "0.5.1"

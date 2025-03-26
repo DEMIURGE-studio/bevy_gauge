@@ -3,6 +3,7 @@ use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
 use log::warn;
+use crate::bit_tags::BitTagGroup;
 use crate::tags::*;
 use crate::value_type::ValueType;
 
@@ -27,6 +28,12 @@ impl Default for ModifierValue {
     fn default() -> Self {
         ModifierValue::Flat(ValueType::default())
     }
+}
+
+
+pub struct Intermediate {
+    pub tag: BitTagGroup,
+    pub value: ModifierValue,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

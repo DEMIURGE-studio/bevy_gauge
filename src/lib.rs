@@ -19,6 +19,8 @@ pub mod effects;
 mod value_type;
 mod resource;
 mod stats;
+mod bit_tags;
+mod tag_registry;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins((

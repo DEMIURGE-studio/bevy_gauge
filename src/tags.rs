@@ -3,6 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use crate::modifiers::ModifierInstance;
 use crate::stats::StatCollection;
+use bevy::prelude::*;
+use bitvec::prelude::*;
+use std::sync::RwLock;
 
 /// Represents a group of values within a tag
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +83,7 @@ impl ValueTag {
 
         if let Some(ref mut groups) = self.groups {
             groups.insert(name, TagGroup::All);
+            
         } else {
             let mut groups = HashMap::new();
             groups.insert(name, TagGroup::All);
