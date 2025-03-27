@@ -15,7 +15,7 @@ pub enum ModType {
 // warnings.
 
 /// A collection of stats keyed by their names.
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Default)]
 pub struct StatDefinitions(pub HashMap<String, StatType>);
 
 impl StatDefinitions {
