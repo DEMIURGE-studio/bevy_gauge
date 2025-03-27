@@ -1,8 +1,5 @@
 use crate::value_type::{Expression, StatValue, ValueBounds, ValueType};
 use std::fmt::Debug;
-use bevy::ecs::entity::hash_map::EntityHashMap;
-use bevy::prelude::Entity;
-use crate::modifiers::{ModifierInstance, ModifierStorageType, ModifierValue, ModifierValueTotal};
 
 #[derive(Debug, Clone, Default)]
 pub struct AttributeInstance {

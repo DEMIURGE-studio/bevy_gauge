@@ -1,8 +1,7 @@
-use crate::modifiers::{IntermediateModifierValue, ModifierCollectionRefs, ModifierInstance, ModifierStorageType, ModifierStorage, ModifierValue, ModifierValueTotal};
+use crate::modifiers::{IntermediateModifierValue, ModifierCollectionRefs, ModifierInstance, ModifierStorageType, ModifierStorage, ModifierValue, ModifierValueTotal, StatUpdatedEvent, BitMaskedStatModifierStorage};
 use std::collections::{HashMap, HashSet};
-use bevy::asset::AssetContainer;
 use bevy::prelude::*;
-use crate::modifiers::{Intermediate};
+// use crate::modifiers::{Intermediate};
 use crate::prelude::AttributeInstance;
 use crate::resource::ResourceInstance;
 
@@ -12,7 +11,7 @@ pub enum StatError {
     NotFound(String),
 }
 
-#[derive(Debug, Clone, Default, Deref, DerefMut)]
+#[derive(Debug, Clone, Default)]
 pub struct StatInstance {
     // Dependencies and dependents now use strings instead of ValueTags
     pub dependencies: HashSet<String>,
@@ -20,7 +19,6 @@ pub struct StatInstance {
 
     pub modifier_collection: ModifierStorage,
     
-    #[deref]
     pub stat: StatType,
 }
 
@@ -33,13 +31,24 @@ impl StatInstance {
     pub fn remove_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {
         self.modifier_collection.remove_modifier(modifier, modifier_entity);
     }
+    
+    pub fn new(stat_type: StatType, modifier_storage: ModifierStorage) -> Self {
+        Self {
+            dependents: HashSet::new(),
+            dependencies: HashSet::new(),
+            
+            modifier_collection: modifier_storage,
+            
+            stat: stat_type
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub enum StatType {
     Attribute(AttributeInstance),
     Resource(ResourceInstance),
-    Intermediate(Intermediate),
+    // Intermediate(Intermediate),
     #[default]
     Empty,
 }
@@ -49,7 +58,7 @@ impl StatType {
         match self {
             StatType::Attribute(attr) => attr.get_value_f32(),
             StatType::Resource(resource) => resource.current,
-            StatType::Intermediate(intermediate) => {0.0}
+            // StatType::Intermediate(intermediate) => {0.0}
             // Assuming Intermediate now has a get_total method
             StatType::Empty => 0.0,
         }
@@ -59,7 +68,7 @@ impl StatType {
         let x = match self {
             StatType::Attribute(attr) => { attr.value().extract_dependencies() },
             StatType::Resource(resource) => {resource.bounds.extract_bound_dependencies()},
-            StatType::Intermediate(intermediate) => { None }, // TODO NEED TO UPDATE TO UPDATE MODIFIERS BASED ON CHANGING STATS
+            // StatType::Intermediate(intermediate) => { None }, // TODO NEED TO UPDATE TO UPDATE MODIFIERS BASED ON CHANGING STATS
             StatType::Empty => { None },
         };
         x
@@ -85,13 +94,13 @@ impl StatCollection {
         }
     }
 
-    pub fn insert(&mut self, tag: &str, stat_type: StatType) {
+    pub fn insert(&mut self, tag: &str, mut stat_instance: StatInstance) {
         let tag_string = tag.to_string();
 
-        let dependencies = stat_type.get_dependencies();
+        let dependencies = stat_instance.stat.get_dependencies();
         // If this is an expression, check if all dependencies are available
-        match &stat_type {
-            StatType::Attribute(attribute) => {
+        match stat_instance.stat {
+            StatType::Attribute(ref attribute) => {
                 let dependents: HashSet<String> = self
                     .stats
                     .iter()
@@ -122,21 +131,21 @@ impl StatCollection {
 
                 // If there are missing dependencies, add to pending attributes
 
-                let stat_instance = self.stats.entry(tag_string.clone()).or_insert(Default::default());
+                // let stat_instance = self.stats.entry(tag_string.clone()).or_insert(Default::default());
                 stat_instance.dependencies = dependencies.clone().unwrap_or(HashSet::new());
                 stat_instance.dependents = dependents;
-                stat_instance.stat = StatType::Attribute(attribute.clone());
+                self.stats.insert(tag_string.clone(), stat_instance);
             }
             StatType::Resource(resource) => {
                 let mut stat_instance = StatInstance::default();
                 stat_instance.stat = StatType::Resource(resource.clone());
                 self.stats.insert(tag_string.clone(), stat_instance);
             }
-            StatType::Intermediate(intermediate) => {
-                let mut stat_instance = StatInstance::default();
-                stat_instance.stat = StatType::Intermediate(intermediate.clone());
-                self.stats.insert(tag_string.clone(), stat_instance);
-            }
+            // StatType::Intermediate(intermediate) => {
+            //     let mut stat_instance = StatInstance::default();
+            //     stat_instance.stat = StatType::Intermediate(intermediate.clone());
+            //     self.stats.insert(tag_string.clone(), stat_instance);
+            // }
             _ => {}
         }
 
@@ -312,6 +321,15 @@ impl StatCollection {
     }
 }
 
+pub fn on_modifier_change(
+    trigger: Trigger<StatUpdatedEvent>,
+    mut query: Query<&mut StatCollection>
+) {
+    let Ok(mut stats) = query.get_mut(trigger.target()) else { todo!() };
+    let x = stats.get("ATTRIBUTE").unwrap();
+    stats.recalculate(&trigger.stat_name);
+}
+
 
 #[cfg(test)]
 mod stat_tests {
@@ -319,7 +337,6 @@ mod stat_tests {
     use crate::prelude::AttributeInstance;
     use crate::resource::ResourceInstance;
     use crate::value_type::*;
-    use std::collections::HashSet;
     use evalexpr::build_operator_tree;
 
     // Helper function to create an attribute with a literal value
@@ -342,7 +359,7 @@ mod stat_tests {
 
         // Insert a literal stat
         let attr = create_literal_attribute(42.0);
-        stats.insert("health", StatType::Attribute(attr));
+        stats.insert("health", StatInstance::new(StatType::Attribute(attr), ModifierStorage::default()));
 
         // Check value
         assert_eq!(stats.get("health").unwrap(), 42.0);
@@ -354,11 +371,11 @@ mod stat_tests {
 
         // Insert a literal stat first
         let base_attr = create_literal_attribute(10.0);
-        stats.insert("base", StatType::Attribute(base_attr));
+        stats.insert("base", StatInstance::new(StatType::Attribute(base_attr), ModifierStorage::default()));
 
         // Insert an expression that references the first stat
         let expr_attr = create_expression_attribute("base * 2");
-        stats.insert("derived", StatType::Attribute(expr_attr));
+        stats.insert("derived", StatInstance::new(StatType::Attribute(expr_attr), ModifierStorage::default()));
 
         // Check values
         assert_eq!(stats.get("base").unwrap(), 10.0);
@@ -371,13 +388,13 @@ mod stat_tests {
 
         // Create a chain of stats
         let attr1 = create_literal_attribute(5.0);
-        stats.insert("a", StatType::Attribute(attr1));
+        stats.insert("a", StatInstance::new(StatType::Attribute(attr1), ModifierStorage::default()));
 
         let attr2 = create_expression_attribute("a + 10");
-        stats.insert("b", StatType::Attribute(attr2));
+        stats.insert("b", StatInstance::new(StatType::Attribute(attr2), ModifierStorage::default()));
 
         let attr3 = create_expression_attribute("b * 2");
-        stats.insert("c", StatType::Attribute(attr3));
+        stats.insert("c", StatInstance::new(StatType::Attribute(attr3), ModifierStorage::default()));
 
         // Check values
         assert_eq!(stats.get("a").unwrap(), 5.0);
@@ -391,11 +408,11 @@ mod stat_tests {
 
         // Create base stat
         let attr1 = create_literal_attribute(5.0);
-        stats.insert("base", StatType::Attribute(attr1));
+        stats.insert("base", StatInstance::new(StatType::Attribute(attr1), ModifierStorage::default()));
 
         // Create derived stat
         let attr2 = create_expression_attribute("base * 3");
-        stats.insert("derived", StatType::Attribute(attr2));
+        stats.insert("derived", StatInstance::new(StatType::Attribute(attr2), ModifierStorage::default()));
 
         // Initial check
         assert_eq!(stats.get("base").unwrap(), 5.0);
@@ -403,7 +420,7 @@ mod stat_tests {
 
         // Update base stat
         let new_attr = create_literal_attribute(10.0);
-        stats.insert("base", StatType::Attribute(new_attr));
+        stats.insert("base", StatInstance::new(StatType::Attribute(new_attr), ModifierStorage::default()));
 
         // Check that derived value updated
         assert_eq!(stats.get("base").unwrap(), 10.0);
@@ -416,10 +433,10 @@ mod stat_tests {
 
         // Create two stats that reference each other
         let attr1 = create_expression_attribute("b + 5");
-        stats.insert("a", StatType::Attribute(attr1));
+        stats.insert("a", StatInstance::new(StatType::Attribute(attr1), ModifierStorage::default()));
 
         let attr2 = create_expression_attribute("a + 3");
-        stats.insert("b", StatType::Attribute(attr2));
+        stats.insert("b", StatInstance::new(StatType::Attribute(attr2), ModifierStorage::default()));
 
         // This should not crash, even with circular references
         // Values might not be meaningful, but the system should be stable
@@ -436,14 +453,14 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Set up base stats
-        stats.insert("str", StatType::Attribute(create_literal_attribute(16.0)));
-        stats.insert("dex", StatType::Attribute(create_literal_attribute(14.0)));
-        stats.insert("con", StatType::Attribute(create_literal_attribute(12.0)));
+        stats.insert("str", StatInstance::new(StatType::Attribute(create_literal_attribute(16.0)), ModifierStorage::default()));
+        stats.insert("dex", StatInstance::new(StatType::Attribute(create_literal_attribute(14.0)), ModifierStorage::default()));
+        stats.insert("con", StatInstance::new(StatType::Attribute(create_literal_attribute(12.0)), ModifierStorage::default()));
 
         // Create a more complex expression
         let formula = "floor((str + dex + con) / 6)";
         let attr = create_expression_attribute(formula);
-        stats.insert("bonus", StatType::Attribute(attr));
+        stats.insert("bonus", StatInstance::new(StatType::Attribute(attr), ModifierStorage::default()));
 
         // Check result
         assert_eq!(stats.get("bonus").unwrap(), 7.0); // (16 + 14 + 12) / 6 = 7
@@ -455,7 +472,7 @@ mod stat_tests {
 
         // Create max health
         let max_health_attr = create_literal_attribute(100.0);
-        stats.insert("max_health", StatType::Attribute(max_health_attr));
+        stats.insert("max_health", StatInstance::new(StatType::Attribute(max_health_attr), ModifierStorage::default()));
 
         // Create health resource
         let mut resource = ResourceInstance {current: 80.0, bounds: ValueBounds::new(None, None)};
@@ -463,7 +480,7 @@ mod stat_tests {
             build_operator_tree("max_health").unwrap()
         )));
 
-        stats.insert("health", StatType::Resource(resource));
+        stats.insert("health", StatInstance::new(StatType::Resource(resource), ModifierStorage::default()));
 
         // Check values
         assert_eq!(stats.get("max_health").unwrap(), 100.0);
@@ -482,7 +499,7 @@ mod stat_tests {
         )));
 
         let attr = AttributeInstance::new(stat_value);
-        stats.insert("bounded", StatType::Attribute(attr));
+        stats.insert("bounded", StatInstance::new(StatType::Attribute(attr), ModifierStorage::default()));
 
         // Check value
         assert_eq!(stats.get("bounded").unwrap(), 50.0);
@@ -495,7 +512,7 @@ mod stat_tests {
         )));
 
         let attr_below = AttributeInstance::new(below_min);
-        stats.insert("bounded", StatType::Attribute(attr_below));
+        stats.insert("bounded", StatInstance::new(StatType::Attribute(attr_below), ModifierStorage::default()));
 
         // Should be clamped to minimum
         assert_eq!(stats.get("bounded").unwrap(), 0.0);
@@ -508,7 +525,7 @@ mod stat_tests {
         )));
 
         let attr_above = AttributeInstance::new(above_max);
-        stats.insert("bounded", StatType::Attribute(attr_above));
+        stats.insert("bounded", StatInstance::new(StatType::Attribute(attr_above), ModifierStorage::default()));
 
         // Should be clamped to maximum
         assert_eq!(stats.get("bounded").unwrap(), 100.0);
@@ -519,8 +536,8 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create base stats
-        stats.insert("min_bound", StatType::Attribute(create_literal_attribute(10.0)));
-        stats.insert("max_bound", StatType::Attribute(create_literal_attribute(30.0)));
+        stats.insert("min_bound", StatInstance::new(StatType::Attribute(create_literal_attribute(10.0)), ModifierStorage::default()));
+        stats.insert("max_bound", StatInstance::new(StatType::Attribute(create_literal_attribute(30.0)), ModifierStorage::default()));
 
         // Create a stat with dynamic bounds
         let mut stat_value = StatValue::from_f32(20.0);
@@ -534,13 +551,13 @@ mod stat_tests {
         )));
 
         let attr = AttributeInstance::new(stat_value);
-        stats.insert("dynamic_bounded", StatType::Attribute(attr));
+        stats.insert("dynamic_bounded", StatInstance::new(StatType::Attribute(attr), ModifierStorage::default()));
 
         // Check initial value
         assert_eq!(stats.get("dynamic_bounded").unwrap(), 20.0);
 
         // Update bound
-        stats.insert("min_bound", StatType::Attribute(create_literal_attribute(25.0)));
+        stats.insert("min_bound", StatInstance::new(StatType::Attribute(create_literal_attribute(25.0)), ModifierStorage::default()));
 
         // Value should be updated to minimum
         // Note: This might need manual recalculation depending on your implementation
@@ -554,14 +571,14 @@ mod stat_tests {
 
         // Insert an expression that depends on a non-existent stat
         let expr_attr = create_expression_attribute("missing_stat + 5");
-        stats.insert("dependent", StatType::Attribute(expr_attr));
+        stats.insert("dependent", StatInstance::new(StatType::Attribute(expr_attr), ModifierStorage::default()));
 
         // Check that it's in pending stats
         assert!(stats.get_hanging_attributes().contains_key("dependent"));
 
         // Now add the missing stat
         let base_attr = create_literal_attribute(10.0);
-        stats.insert("missing_stat", StatType::Attribute(base_attr));
+        stats.insert("missing_stat", StatInstance::new(StatType::Attribute(base_attr), ModifierStorage::default()));
 
         // Check that dependent is resolved and has the correct value
         assert!(!stats.get_hanging_attributes().contains_key("dependent"));
@@ -573,23 +590,23 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create multiple base stats
-        stats.insert("str", StatType::Attribute(create_literal_attribute(10.0)));
-        stats.insert("dex", StatType::Attribute(create_literal_attribute(12.0)));
-        stats.insert("con", StatType::Attribute(create_literal_attribute(14.0)));
+        stats.insert("str", StatInstance::new(StatType::Attribute(create_literal_attribute(10.0)), ModifierStorage::default()));
+        stats.insert("dex", StatInstance::new(StatType::Attribute(create_literal_attribute(12.0)), ModifierStorage::default()));
+        stats.insert("con", StatInstance::new(StatType::Attribute(create_literal_attribute(14.0)), ModifierStorage::default()));
 
         // Create derived stats
         let attr1 = create_expression_attribute("str + dex");
-        stats.insert("reflex", StatType::Attribute(attr1));
+        stats.insert("reflex", StatInstance::new(StatType::Attribute(attr1), ModifierStorage::default()));
 
         let attr2 = create_expression_attribute("str + con");
-        stats.insert("fortitude", StatType::Attribute(attr2));
+        stats.insert("fortitude", StatInstance::new(StatType::Attribute(attr2), ModifierStorage::default()));
 
         // Check values
         assert_eq!(stats.get("reflex").unwrap(), 22.0);
         assert_eq!(stats.get("fortitude").unwrap(), 24.0);
 
         // Update base stat and check both derived stats update
-        stats.insert("str", StatType::Attribute(create_literal_attribute(20.0)));
+        stats.insert("str", StatInstance::new(StatType::Attribute(create_literal_attribute(20.0)), ModifierStorage::default()));
 
         assert_eq!(stats.get("reflex").unwrap(), 32.0);
         assert_eq!(stats.get("fortitude").unwrap(), 34.0);
@@ -600,9 +617,9 @@ mod stat_tests {
         let mut stats = StatCollection::new();
 
         // Create a chain of stats
-        stats.insert("a", StatType::Attribute(create_literal_attribute(5.0)));
-        stats.insert("b", StatType::Attribute(create_expression_attribute("a * 2")));
-        stats.insert("c", StatType::Attribute(create_expression_attribute("b + 10")));
+        stats.insert("a", StatInstance::new(StatType::Attribute(create_literal_attribute(5.0)), ModifierStorage::default()));
+        stats.insert("b", StatInstance::new(StatType::Attribute(create_expression_attribute("a * 2")), ModifierStorage::default()));
+        stats.insert("c", StatInstance::new(StatType::Attribute(create_expression_attribute("b + 10")), ModifierStorage::default()));
 
         // Manually change a value without using insert
         // This simulates a direct change that wouldn't trigger recalculation
