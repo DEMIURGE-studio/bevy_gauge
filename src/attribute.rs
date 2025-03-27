@@ -1,14 +1,17 @@
 use crate::value_type::{Expression, StatValue, ValueBounds, ValueType};
 use std::fmt::Debug;
+use bevy::ecs::entity::hash_map::EntityHashMap;
+use bevy::prelude::Entity;
+use crate::modifiers::{ModifierInstance, ModifierStorageType, ModifierValue, ModifierValueTotal};
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct AttributeInstance {
     value: StatValue,
 }
 
 impl AttributeInstance {
     pub fn new(value: StatValue) -> Self {
-        AttributeInstance { value }
+        AttributeInstance { value,  }
     }
     
     pub fn value(&self) -> &StatValue {

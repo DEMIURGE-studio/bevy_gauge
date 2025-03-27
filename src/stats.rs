@@ -1,30 +1,15 @@
+use crate::modifiers::{IntermediateModifierValue, ModifierCollectionRefs, ModifierInstance, ModifierStorageType, ModifierStorage, ModifierValue, ModifierValueTotal};
 use std::collections::{HashMap, HashSet};
-use bevy::ecs::entity::hash_map::EntityHashMap;
-use bevy::ecs::entity::hash_set::EntityHashSet;
+use bevy::asset::AssetContainer;
 use bevy::prelude::*;
-use evalexpr::{
-    ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
-};
-use crate::modifiers::{ModifierInstance, ModifierValue, ModifierValueTotal};
+use crate::modifiers::{Intermediate};
 use crate::prelude::AttributeInstance;
 use crate::resource::ResourceInstance;
-use crate::tags::TagRegistry;
-use crate::value_type::*;
 
 #[derive(Debug)]
 pub enum StatError {
     BadOpp(String),
     NotFound(String),
-}
-
-
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Intermediate {
-    // tag ID to (entities with modifiers for this tag, total modifier value)
-    pub tags: HashMap<u32, (EntityHashSet, ModifierValueTotal)>,
-    // entity to set of tag IDs it affects
-    pub modifiers: EntityHashMap<HashSet<u32>>,
 }
 
 #[derive(Debug, Clone, Default, Deref, DerefMut)]
@@ -33,11 +18,24 @@ pub struct StatInstance {
     pub dependencies: HashSet<String>,
     pub dependents: HashSet<String>,
 
+    pub modifier_collection: ModifierStorage,
+    
     #[deref]
     pub stat: StatType,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+impl StatInstance {
+    
+    pub fn add_replace_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {
+        self.modifier_collection.add_or_replace_modifier(modifier, modifier_entity);
+    }
+    
+    pub fn remove_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {
+        self.modifier_collection.remove_modifier(modifier, modifier_entity);
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub enum StatType {
     Attribute(AttributeInstance),
     Resource(ResourceInstance),
@@ -51,9 +49,8 @@ impl StatType {
         match self {
             StatType::Attribute(attr) => attr.get_value_f32(),
             StatType::Resource(resource) => resource.current,
-            StatType::Intermediate(intermediate) =>
+            StatType::Intermediate(intermediate) => {0.0}
             // Assuming Intermediate now has a get_total method
-                intermediate.get_total(),
             StatType::Empty => 0.0,
         }
     }
@@ -70,50 +67,9 @@ impl StatType {
 }
 
 
-// Implementation for Intermediate
-impl Intermediate {
-    // Helper method to get total value
-    pub fn get_total(&self) -> f32 {
-        // Sum up all modifier values
-        self.tags.values()
-            .map(|(_, modifier_value)| modifier_value.get_total())
-            .sum()
-    }
-
-    pub fn add_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {
-        for (tag, &mut (ref mut vset, ref mut modifier_value)) in self.tags.iter_mut() {
-            // Check if this modifier qualifies for this tag using bitwise AND
-            if tag & modifier.source_tag > 0 {  // Changed from > 1 to > 0
-                vset.insert(modifier_entity);
-                *modifier_value += &modifier.value;
-                self.modifiers.entry(modifier_entity).or_insert(HashSet::new()).insert(*tag);
-            }
-        }
-    }
-
-    pub fn remove_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {
-        if let Some(target_tags) = self.modifiers.get(&modifier_entity) {
-            let tags_to_remove: Vec<u32> = target_tags.iter().copied().collect();
-
-            for target_tag in tags_to_remove {
-                if let Some(&mut (ref mut map, ref mut modifier_total)) = self.tags.get_mut(&target_tag) {
-                    map.remove(&modifier_entity);
-                    *modifier_total -= &modifier.value;
-
-                    if map.is_empty() {
-                        self.tags.remove(&target_tag);
-                    }
-                }
-            }
-        }
-
-        self.modifiers.remove(&modifier_entity);
-    }
-}
-
-
 
 #[derive(Component, Debug, Default, Clone, DerefMut, Deref)]
+#[require(ModifierCollectionRefs)]
 pub struct StatCollection {
     #[deref]
     pub stats: HashMap<String, StatInstance>,
@@ -342,8 +298,19 @@ impl StatCollection {
     pub fn get_hanging_attributes(&self) -> &HashMap<String, HashSet<String>> {
         &self.pending_stats
     }
+    
+    pub fn add_replace_modifier(&mut self, target: &str, modifier: &ModifierInstance, modifier_entity: Entity) {
+        if let Some(stat) = self.get_mut(target) {
+            stat.add_replace_modifier(modifier, modifier_entity);
+        }
+    }
+    
+    pub fn remove_modifier(&mut self, target: &str, modifier: &ModifierInstance, modifier_entity: Entity) {
+        if let Some(stat) = self.get_mut(target) {
+            stat.remove_modifier(modifier, modifier_entity);
+        }
+    }
 }
-
 
 
 #[cfg(test)]
