@@ -15,6 +15,10 @@ impl AttributeInstance {
         &self.value
     }
     
+    pub fn value_mut(&mut self) -> &mut StatValue {
+        &mut self.value
+    }
+    
     pub fn get_value_f32(&self) -> f32 {
         self.value.get_value_f32()
     }

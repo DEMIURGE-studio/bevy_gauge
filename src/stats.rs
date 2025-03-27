@@ -59,12 +59,13 @@ impl StatType {
     }
     
     pub fn get_dependencies(&self) -> Option<HashSet<String>> {
-        match self {
-            StatType::Attribute(attr) => {attr.value().extract_dependencies()}
-            StatType::Resource(resource) => {resource.bounds.extract_bound_dependencies()}
-            StatType::Intermediate(intermediate) => { None } // TODO NEED TO UPDATE TO UPDATE MODIFIERS BASED ON CHANGING STATS
-            StatType::Empty => { None }
-        }
+        let x = match self {
+            StatType::Attribute(attr) => { attr.value().extract_dependencies() },
+            StatType::Resource(resource) => {resource.bounds.extract_bound_dependencies()},
+            StatType::Intermediate(intermediate) => { None }, // TODO NEED TO UPDATE TO UPDATE MODIFIERS BASED ON CHANGING STATS
+            StatType::Empty => { None },
+        };
+        x
     }
 }
 
@@ -168,7 +169,7 @@ impl StatCollection {
                 let stat_instance = self.stats.entry(tag_string.clone()).or_insert(Default::default());
                 stat_instance.dependencies = dependencies.clone().unwrap_or(HashSet::new());
                 stat_instance.dependents = dependents;
-                stat_instance.stat = stat_type;
+                stat_instance.stat = StatType::Attribute(attribute.clone());
             }
             StatType::Resource(resource) => {
                 let mut stat_instance = StatInstance::default();
@@ -237,59 +238,6 @@ impl StatCollection {
         }
     }
 
-    // Add a batch of attributes at once with tree-walking resolution
-    // pub fn batch_insert(&mut self, attributes: Vec<(&str, AttributeInstance)>) {
-    //     // Insert non-expression attributes first (they have no dependencies)
-    //     let mut expressions = Vec::new();
-    // 
-    //     for (tag, attr) in attributes {
-    //         match &attr.value {
-    //             ValueType::Literal(_) => {
-    //                 // Literal values can be inserted immediately
-    //                 self.insert(tag, StatType::Attribute(attr));
-    //             }
-    //             ValueType::Expression(_) => {
-    //                 // Save expression attributes for dependency resolution
-    //                 expressions.push((tag, attr));
-    //             }
-    //         }
-    //     }
-    // 
-    //     // Now try to resolve expressions in passes until we make no more progress
-    //     let mut remaining = expressions;
-    //     let mut progress = true;
-    // 
-    //     while progress && !remaining.is_empty() {
-    //         progress = false;
-    //         let mut next_remaining = Vec::new();
-    // 
-    //         for (tag, attr) in remaining {
-    //             if let ValueType::Expression(expr) = &attr.value {
-    //                 let deps = expr.extract_dependencies();
-    // 
-    //                 // Check if all dependencies are available
-    //                 let all_deps_available = deps.iter().all(|dep| self.stats.contains_key(dep));
-    // 
-    //                 if all_deps_available {
-    //                     // All dependencies are available, insert this attribute
-    //                     self.insert(tag, StatType::Attribute(attr));
-    //                     progress = true;
-    //                 } else {
-    //                     // Some dependencies are still missing, keep for next pass
-    //                     next_remaining.push((tag, attr));
-    //                 }
-    //             }
-    //         }
-    // 
-    //         remaining = next_remaining;
-    //     }
-    // 
-    //     // If we still have remaining expressions, they have circular dependencies
-    //     // Just insert them anyway and let resolve_pending_stats handle them
-    //     for (tag, attr) in remaining {
-    //         self.insert(tag, StatType::Attribute(attr));
-    //     }
-    // }
 
     // Recalculate a stat and its dependents using tree-walking
     pub fn recalculate(&mut self, tag: &str) {
@@ -335,76 +283,27 @@ impl StatCollection {
 
     // Update a dependent stat's value
     pub fn update_dependent_stat(&mut self, stat: &str) {
-        // 1. First check if we need to update this stat and extract necessary info
-        let mut needs_update = false;
-        let mut variable_names = Vec::new();
 
-        if let Some(stat_instance) = self.stats.get(stat) {
+        // Two-step process to avoid borrowing issues:
+        // 1. Clone the StatValue from the attribute (if it exists)
+        let mut stat_value = if let Some(stat_instance) = self.stats.get(stat) {
             if let StatType::Attribute(attribute) = &stat_instance.stat {
-                if let ValueType::Expression(expression) = &attribute.value {
-                    needs_update = true;
-                    // Collect variable names before any mutable borrows
-                    variable_names.extend(
-                        expression
-                            .iter_variable_identifiers()
-                            .map(|s| s.to_string()),
-                    );
-                }
-            }
-        }
-
-        if !needs_update {
-            return;
-        }
-
-        // 2. Collect all variable values BEFORE any mutable borrows
-        let mut variable_values = HashMap::new();
-
-        // Use thread-local to track stack for cycle detection
-        thread_local! {
-            static EVAL_STACK: std::cell::RefCell<HashSet<String>> =
-                std::cell::RefCell::new(HashSet::new());
-        }
-
-        for var_name in &variable_names {
-            let is_cyclic = EVAL_STACK.with(|stack| stack.borrow().contains(var_name));
-
-            let val = if is_cyclic {
-                0.0 // Break cycles
+                Some(attribute.value().clone())
             } else {
-                // Add to stack to detect cycles
-                EVAL_STACK.with(|stack| stack.borrow_mut().insert(var_name.clone()));
+                None
+            }
+        } else {
+            None
+        };
 
-                // Get value safely without recursive mutable borrowing
-                let result = self.get(var_name).unwrap_or(0.0);
+        // 2. If we have a stat value, update it with the current stat collection
+        if let Some(ref mut value) = stat_value {
+            value.set_value_with_context(self);
 
-                // Remove from stack
-                EVAL_STACK.with(|stack| stack.borrow_mut().remove(var_name));
-
-                result as f64
-            };
-
-            variable_values.insert(var_name.clone(), val);
-        }
-
-        // 3. NOW we can mutably borrow to update the expression
-        if let Some(stat_instance) = self.stats.get_mut(stat) {
-            if let StatType::Attribute(attribute) = &mut stat_instance.stat {
-                if let ValueType::Expression(expression) = &mut attribute.value {
-                    // Create context with all our pre-collected variable values
-                    let mut context = HashMapContext::new();
-                    for (name, value) in variable_values {
-                        context
-                            .set_value(name, EvalValue::from_float(value))
-                            .unwrap();
-                    }
-
-                    // Evaluate expression with the prepared context
-                    expression.cached_value = expression
-                        .eval_with_context_mut(&mut context)
-                        .unwrap_or(EvalValue::from_float(0.0))
-                        .as_number()
-                        .unwrap_or(0.0) as f32;
+            // 3. Now place the updated value back in the attribute
+            if let Some(stat_instance) = self.stats.get_mut(stat) {
+                if let StatType::Attribute(attribute) = &mut stat_instance.stat {
+                    *attribute.value_mut() = value.clone();
                 }
             }
         }
@@ -442,5 +341,321 @@ impl StatCollection {
     // Get a list of hanging attributes with their missing dependencies
     pub fn get_hanging_attributes(&self) -> &HashMap<String, HashSet<String>> {
         &self.pending_stats
+    }
+}
+
+
+
+#[cfg(test)]
+mod stat_tests {
+    use super::*;
+    use crate::prelude::AttributeInstance;
+    use crate::resource::ResourceInstance;
+    use crate::value_type::*;
+    use std::collections::HashSet;
+    use evalexpr::build_operator_tree;
+
+    // Helper function to create an attribute with a literal value
+    fn create_literal_attribute(value: f32) -> AttributeInstance {
+        let stat_value = StatValue::from_f32(value);
+        AttributeInstance::new(stat_value)
+    }
+
+    // Helper function to create an attribute with an expression
+    fn create_expression_attribute(expr_str: &str) -> AttributeInstance {
+        let node = build_operator_tree(expr_str).unwrap();
+        let expression = Expression::new(node);
+        let stat_value = StatValue::from_expression(expression);
+        AttributeInstance::new(stat_value)
+    }
+
+    #[test]
+    fn test_literal_stat_value() {
+        let mut stats = StatCollection::new();
+
+        // Insert a literal stat
+        let attr = create_literal_attribute(42.0);
+        stats.insert("health", StatType::Attribute(attr));
+
+        // Check value
+        assert_eq!(stats.get("health").unwrap(), 42.0);
+    }
+
+    #[test]
+    fn test_expression_stat_value() {
+        let mut stats = StatCollection::new();
+
+        // Insert a literal stat first
+        let base_attr = create_literal_attribute(10.0);
+        stats.insert("base", StatType::Attribute(base_attr));
+
+        // Insert an expression that references the first stat
+        let expr_attr = create_expression_attribute("base * 2");
+        stats.insert("derived", StatType::Attribute(expr_attr));
+
+        // Check values
+        assert_eq!(stats.get("base").unwrap(), 10.0);
+        assert_eq!(stats.get("derived").unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_expression_chain() {
+        let mut stats = StatCollection::new();
+
+        // Create a chain of stats
+        let attr1 = create_literal_attribute(5.0);
+        stats.insert("a", StatType::Attribute(attr1));
+
+        let attr2 = create_expression_attribute("a + 10");
+        stats.insert("b", StatType::Attribute(attr2));
+
+        let attr3 = create_expression_attribute("b * 2");
+        stats.insert("c", StatType::Attribute(attr3));
+
+        // Check values
+        assert_eq!(stats.get("a").unwrap(), 5.0);
+        assert_eq!(stats.get("b").unwrap(), 15.0);
+        assert_eq!(stats.get("c").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn test_update_propagation() {
+        let mut stats = StatCollection::new();
+
+        // Create base stat
+        let attr1 = create_literal_attribute(5.0);
+        stats.insert("base", StatType::Attribute(attr1));
+
+        // Create derived stat
+        let attr2 = create_expression_attribute("base * 3");
+        stats.insert("derived", StatType::Attribute(attr2));
+
+        // Initial check
+        assert_eq!(stats.get("base").unwrap(), 5.0);
+        assert_eq!(stats.get("derived").unwrap(), 15.0);
+
+        // Update base stat
+        let new_attr = create_literal_attribute(10.0);
+        stats.insert("base", StatType::Attribute(new_attr));
+
+        // Check that derived value updated
+        assert_eq!(stats.get("base").unwrap(), 10.0);
+        assert_eq!(stats.get("derived").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn test_circular_reference_safety() {
+        let mut stats = StatCollection::new();
+
+        // Create two stats that reference each other
+        let attr1 = create_expression_attribute("b + 5");
+        stats.insert("a", StatType::Attribute(attr1));
+
+        let attr2 = create_expression_attribute("a + 3");
+        stats.insert("b", StatType::Attribute(attr2));
+
+        // This should not crash, even with circular references
+        // Values might not be meaningful, but the system should be stable
+        let a_val = stats.get("a").unwrap_or(-1.0);
+        let b_val = stats.get("b").unwrap_or(-1.0);
+
+        // Just verify we got some values without crashing
+        assert!(a_val >= 0.0);
+        assert!(b_val >= 0.0);
+    }
+
+    #[test]
+    fn test_complex_expression() {
+        let mut stats = StatCollection::new();
+
+        // Set up base stats
+        stats.insert("str", StatType::Attribute(create_literal_attribute(16.0)));
+        stats.insert("dex", StatType::Attribute(create_literal_attribute(14.0)));
+        stats.insert("con", StatType::Attribute(create_literal_attribute(12.0)));
+
+        // Create a more complex expression
+        let formula = "floor((str + dex + con) / 6)";
+        let attr = create_expression_attribute(formula);
+        stats.insert("bonus", StatType::Attribute(attr));
+
+        // Check result
+        assert_eq!(stats.get("bonus").unwrap(), 7.0); // (16 + 14 + 12) / 6 = 7
+    }
+
+    #[test]
+    fn test_resource_stat() {
+        let mut stats = StatCollection::new();
+
+        // Create max health
+        let max_health_attr = create_literal_attribute(100.0);
+        stats.insert("max_health", StatType::Attribute(max_health_attr));
+
+        // Create health resource
+        let mut resource = ResourceInstance {current: 80.0, bounds: ValueBounds::new(None, None)};
+        resource.bounds.max = Some(ValueType::Expression(Expression::new(
+            build_operator_tree("max_health").unwrap()
+        )));
+
+        stats.insert("health", StatType::Resource(resource));
+
+        // Check values
+        assert_eq!(stats.get("max_health").unwrap(), 100.0);
+        assert_eq!(stats.get("health").unwrap(), 80.0);
+    }
+
+    #[test]
+    fn test_bounds_checking() {
+        let mut stats = StatCollection::new();
+
+        // Create a stat with bounds
+        let mut stat_value = StatValue::from_f32(50.0);
+        stat_value.set_bounds(Some(ValueBounds::new(
+            Some(ValueType::Literal(0.0)),
+            Some(ValueType::Literal(100.0))
+        )));
+
+        let attr = AttributeInstance::new(stat_value);
+        stats.insert("bounded", StatType::Attribute(attr));
+
+        // Check value
+        assert_eq!(stats.get("bounded").unwrap(), 50.0);
+
+        // Update to below minimum
+        let mut below_min = StatValue::from_f32(-10.0);
+        below_min.set_bounds(Some(ValueBounds::new(
+            Some(ValueType::Literal(0.0)),
+            Some(ValueType::Literal(100.0))
+        )));
+
+        let attr_below = AttributeInstance::new(below_min);
+        stats.insert("bounded", StatType::Attribute(attr_below));
+
+        // Should be clamped to minimum
+        assert_eq!(stats.get("bounded").unwrap(), 0.0);
+
+        // Update to above maximum
+        let mut above_max = StatValue::from_f32(150.0);
+        above_max.set_bounds(Some(ValueBounds::new(
+            Some(ValueType::Literal(0.0)),
+            Some(ValueType::Literal(100.0))
+        )));
+
+        let attr_above = AttributeInstance::new(above_max);
+        stats.insert("bounded", StatType::Attribute(attr_above));
+
+        // Should be clamped to maximum
+        assert_eq!(stats.get("bounded").unwrap(), 100.0);
+    }
+
+    #[test]
+    fn test_dynamic_bounds() {
+        let mut stats = StatCollection::new();
+
+        // Create base stats
+        stats.insert("min_bound", StatType::Attribute(create_literal_attribute(10.0)));
+        stats.insert("max_bound", StatType::Attribute(create_literal_attribute(30.0)));
+
+        // Create a stat with dynamic bounds
+        let mut stat_value = StatValue::from_f32(20.0);
+        stat_value.set_bounds(Some(ValueBounds::new(
+            Some(ValueType::Expression(Expression::new(
+                build_operator_tree("min_bound").unwrap()
+            ))),
+            Some(ValueType::Expression(Expression::new(
+                build_operator_tree("max_bound").unwrap()
+            )))
+        )));
+
+        let attr = AttributeInstance::new(stat_value);
+        stats.insert("dynamic_bounded", StatType::Attribute(attr));
+
+        // Check initial value
+        assert_eq!(stats.get("dynamic_bounded").unwrap(), 20.0);
+
+        // Update bound
+        stats.insert("min_bound", StatType::Attribute(create_literal_attribute(25.0)));
+
+        // Value should be updated to minimum
+        // Note: This might need manual recalculation depending on your implementation
+        stats.recalculate("dynamic_bounded");
+        assert_eq!(stats.get("dynamic_bounded").unwrap(), 25.0);
+    }
+
+    #[test]
+    fn test_pending_stats_resolution() {
+        let mut stats = StatCollection::new();
+
+        // Insert an expression that depends on a non-existent stat
+        let expr_attr = create_expression_attribute("missing_stat + 5");
+        stats.insert("dependent", StatType::Attribute(expr_attr));
+
+        // Check that it's in pending stats
+        assert!(stats.get_hanging_attributes().contains_key("dependent"));
+
+        // Now add the missing stat
+        let base_attr = create_literal_attribute(10.0);
+        stats.insert("missing_stat", StatType::Attribute(base_attr));
+
+        // Check that dependent is resolved and has the correct value
+        assert!(!stats.get_hanging_attributes().contains_key("dependent"));
+        assert_eq!(stats.get("dependent").unwrap(), 15.0);
+    }
+
+    #[test]
+    fn test_multiple_dependencies() {
+        let mut stats = StatCollection::new();
+
+        // Create multiple base stats
+        stats.insert("str", StatType::Attribute(create_literal_attribute(10.0)));
+        stats.insert("dex", StatType::Attribute(create_literal_attribute(12.0)));
+        stats.insert("con", StatType::Attribute(create_literal_attribute(14.0)));
+
+        // Create derived stats
+        let attr1 = create_expression_attribute("str + dex");
+        stats.insert("reflex", StatType::Attribute(attr1));
+
+        let attr2 = create_expression_attribute("str + con");
+        stats.insert("fortitude", StatType::Attribute(attr2));
+
+        // Check values
+        assert_eq!(stats.get("reflex").unwrap(), 22.0);
+        assert_eq!(stats.get("fortitude").unwrap(), 24.0);
+
+        // Update base stat and check both derived stats update
+        stats.insert("str", StatType::Attribute(create_literal_attribute(20.0)));
+
+        assert_eq!(stats.get("reflex").unwrap(), 32.0);
+        assert_eq!(stats.get("fortitude").unwrap(), 34.0);
+    }
+
+    #[test]
+    fn test_recalculate_all() {
+        let mut stats = StatCollection::new();
+
+        // Create a chain of stats
+        stats.insert("a", StatType::Attribute(create_literal_attribute(5.0)));
+        stats.insert("b", StatType::Attribute(create_expression_attribute("a * 2")));
+        stats.insert("c", StatType::Attribute(create_expression_attribute("b + 10")));
+
+        // Manually change a value without using insert
+        // This simulates a direct change that wouldn't trigger recalculation
+        if let Some(stat) = stats.stats.get_mut("a") {
+            if let StatType::Attribute(ref mut attr) = stat.stat {
+                attr.value_mut().set_value(10.0);
+            }
+        }
+
+        // Values are stale without recalculation
+        assert_eq!(stats.get("a").unwrap(), 10.0); // Updated directly
+        assert_eq!(stats.get("b").unwrap(), 10.0); // Still using old value of a
+        assert_eq!(stats.get("c").unwrap(), 20.0); // Still using old value of b
+
+        // Recalculate all stats
+        stats.recalculate_all();
+
+        // Check updated values
+        assert_eq!(stats.get("a").unwrap(), 10.0);
+        assert_eq!(stats.get("b").unwrap(), 20.0); // Now updated
+        assert_eq!(stats.get("c").unwrap(), 30.0); // Now updated
     }
 }
