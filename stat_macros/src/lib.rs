@@ -1,7 +1,6 @@
-use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::token::{Brace, Paren, Semi};
-use syn::{parse_macro_input, Attribute, Ident, Token, Visibility};
+use syn::{braced, parse_macro_input, Attribute, Ident, Token, Visibility};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 
@@ -16,7 +15,7 @@ pub fn derive_named(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
     };
 
-    TokenStream::from(expanded).into()
+    proc_macro::TokenStream::from(expanded).into()
 }
 
 #[proc_macro_derive(SimpleStatDerived)]
@@ -46,7 +45,7 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
         }
     };
 
-    TokenStream::from(expanded).into()
+    proc_macro::TokenStream::from(expanded).into()
 }
 
 #[proc_macro]
@@ -655,5 +654,118 @@ fn expand_trait_impls_for_no_variant(
                 #writeback_body
             }
         }
+    }
+}
+
+/// A tag node with a name and optional children.
+struct Tag {
+    name: Ident,
+    children: Vec<Tag>,
+}
+
+impl Parse for Tag {
+    fn parse(input: ParseStream) -> Result<Self, syn::Error> {
+        // Parse the tag name (an identifier).
+        let name: Ident = input.parse()?;
+        let children = if input.peek(syn::token::Brace) {
+            // Capture the content inside the braces.
+            let content;
+            let _brace_token = braced!(content in input);
+            // Parse a comma-separated list of child tags.
+            let child_list: Punctuated<Tag, Token![,]> =
+                content.parse_terminated(Tag::parse, Token![,])?;
+            child_list.into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Tag { name, children })
+    }
+}
+
+/// The procedural macro definition.
+#[proc_macro]
+pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    // Parse the input into a tag tree.
+    let root = parse_macro_input!(input as Tag);
+
+    // Derive a module name from the root tag (convert first letter to uppercase).
+    let root_name = root.name.to_string();
+    let mod_name = {
+        let mut chars = root_name.chars();
+        match chars.next() {
+            None => root_name,
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    };
+    let mod_ident = format_ident!("{}", mod_name);
+
+    // We use a counter to assign unique bits to each leaf.
+    let mut counter = 0u32;
+    let mut constants = Vec::new();
+    let mut arms = Vec::new();
+
+    // Recursively generate constant definitions and matching arms.
+    gen_constants(&root, &mut counter, &mut constants, &mut arms);
+
+    // Build the output tokens wrapped in a module.
+    let expanded = quote! {
+        pub mod #mod_ident {
+            // Generated constant definitions.
+            #(#constants)*
+
+            // Match a tag string to its constant.
+            pub fn match_tag(tag: &str) -> u32 {
+                match tag {
+                    #(#arms),*,
+                    _ => 0,
+                }
+            }
+        }
+    };
+
+    expanded.into()
+}
+
+/// Recursively generates:
+/// - For a leaf: a constant defined as `1 << n`.
+/// - For an internal node: a constant defined as the bitwise OR of its children’s constants.
+/// It also adds a match arm mapping the tag’s lowercase name to its constant.
+fn gen_constants(
+    tag: &Tag,
+    counter: &mut u32,
+    constants: &mut Vec<proc_macro2::TokenStream>,
+    arms: &mut Vec<proc_macro2::TokenStream>,
+) -> proc_macro2::TokenStream {
+    // Convert the tag name (e.g. "fire") to uppercase (e.g. FIRE) for the constant.
+    let name_str = tag.name.to_string();
+    let const_ident = format_ident!("{}", name_str.to_uppercase());
+
+    if tag.children.is_empty() {
+        // This is a leaf: assign a unique bit.
+        let bit = *counter;
+        *counter += 1;
+        let expr = quote! { 1 << #bit };
+        constants.push(quote! {
+            pub const #const_ident: u32 = #expr;
+        });
+        arms.push(quote! {
+            #name_str => #const_ident
+        });
+        expr
+    } else {
+        // Internal node: compute the OR of all children.
+        let mut child_exprs = Vec::new();
+        for child in &tag.children {
+            let child_expr = gen_constants(child, counter, constants, arms);
+            child_exprs.push(child_expr);
+        }
+        let expr = quote! { #(#child_exprs)|* };
+        constants.push(quote! {
+            pub const #const_ident: u32 = #expr;
+        });
+        arms.push(quote! {
+            #name_str => #const_ident
+        });
+        expr
     }
 }

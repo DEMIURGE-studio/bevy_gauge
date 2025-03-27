@@ -14,6 +14,7 @@ pub mod stat_effect;
 pub mod stat_modifiers;
 pub mod stat_type;
 pub mod systems;
+pub mod tags;
 pub mod traits;
 
 pub fn plugin(app: &mut App) {

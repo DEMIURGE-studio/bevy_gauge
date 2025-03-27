@@ -7,6 +7,7 @@ pub use super::schedule::{AddStatComponent, StatComponentUpdate, StatsUpdate, St
 pub use super::stat_definitions::*;
 pub use super::stat_effect::*;
 pub use super::stat_type::*;
+pub use super::tags::*;
 pub use super::traits::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;
