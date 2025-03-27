@@ -5,7 +5,7 @@ use bevy::ecs::component::Component;
 use std::time::Duration;
 use rand::prelude::*;
 
-pub mod Damage {
+pub mod damage {
     pub const FIRE: u32 = 1 << 0u32; 
     pub const COLD: u32 = 1 << 1u32;
     pub const LIGHTNING: u32 = 1 << 2u32;
@@ -81,7 +81,7 @@ fn benchmark_group(c: &mut Criterion) {
         b.iter(|| {
             let mut stats = StatDefinitions::default();
             stats.add_modifier(
-                &format!("Damage_Added_{}", Damage::FIRE | Damage::SWORD),
+                &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
                 black_box(5.0)
             );
         })
@@ -115,12 +115,12 @@ fn benchmark_group(c: &mut Criterion) {
     group.bench_function("remove_complex_stat", |b| {
         let mut stats = StatDefinitions::default();
         stats.add_modifier(
-            &format!("Damage_Added_{}", Damage::FIRE | Damage::SWORD),
+            &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
             5.0
         );
         b.iter(|| {
             stats.remove_modifier(
-                &format!("Damage_Added_{}", Damage::FIRE | Damage::SWORD),
+                &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
                 black_box(2.0)
             );
         })
@@ -148,15 +148,15 @@ fn benchmark_group(c: &mut Criterion) {
     group.bench_function("evaluate_complex_stat", |b| {
         let mut stats = StatDefinitions::default();
         stats.add_modifier(
-            &format!("Damage_Added_{}", Damage::FIRE | Damage::SWORD),
+            &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
             5.0
         );
         stats.add_modifier(
-            &format!("Damage_Increased_{}", Damage::FIRE | Damage::SWORD),
+            &format!("Damage_Increased_{}", damage::FIRE | damage::SWORD),
             1.2
         );
         b.iter(|| {
-            black_box(stats.evaluate(&format!("Damage_{}", Damage::FIRE | Damage::SWORD)));
+            black_box(stats.evaluate(&format!("Damage_{}", damage::FIRE | damage::SWORD)));
         })
     });
 
@@ -178,10 +178,10 @@ fn benchmark_group(c: &mut Criterion) {
                 let mut stats = StatDefinitions::default();
                 stats.add_modifier("Base", 10.0);
                 
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 for i in 0..count {
-                    let modifier_type = if rng.gen_bool(0.5) { "Added" } else { "Increased" };
-                    let value: f32 = rng.gen_range(0.5..2.0);
+                    let modifier_type = if rng.random_bool(0.5) { "Added" } else { "Increased" };
+                    let value: f32 = rng.random_range(0.5..2.0);
                     stats.add_modifier(format!("Damage_{}_{}", modifier_type, i), value);
                 }
                 
@@ -235,6 +235,42 @@ fn benchmark_group(c: &mut Criterion) {
             |s| {
                 for _ in 0..100 {
                     black_box(s.evaluate("Damage"));
+                }
+            },
+            BatchSize::PerIteration // Treat the whole 100 as one "iteration"
+        );
+    }); 
+
+    group.bench_function("evaluate_complex_expression_dependencies", |b| {
+        let mut stats = StatDefinitions::default();
+        
+        // Setup base stats
+        stats.add_modifier("Strength", 50.0); // Simple stat
+        stats.add_modifier("Intelligence", 30.0); // Simple stat
+        
+        // Life with expression-based modifiers
+        stats.add_modifier("Life_Added", "Strength / 5"); // 50/5 = 10
+        stats.add_modifier("Life_Increased", 1); // 30/30 = 1.0 (100% increase)
+        stats.add_modifier("Life_Increased", "Intelligence / 30"); // 30/30 = 1.0 (100% increase)
+        stats.add_modifier("Life_More", 1); // 1.0 + 0.5 = 1.5
+        stats.add_modifier("Life_More", "Strength / 100"); // 1.0 + 0.5 = 1.5
+        
+        // Lightning Damage that depends on Life
+        stats.add_modifier("Damage_Added_1", "Life * 0.2"); // Depends on full Life calculation
+        stats.add_modifier("Damage_Increased_1", 1); // 1.0 + 0.5 = 1.5
+        stats.add_modifier("Damage_Increased_1", "Intelligence / 60"); // 1.0 + 0.5 = 1.5
+        
+        // Expected calculations:
+        // Life = (Strength/5) * (1 + Intelligence/30) * (1.0 + Strength/100)
+        //       = 10 * 2.0 * 1.5 = 30
+        // LightningDamage = (Life * 0.2) * (1.0 + Intelligence/60)
+        //                 = 6 * 1.5 = 9
+        
+        b.iter_batched(
+            || &stats, // Clone/reuse the prepared stats
+            |s| {
+                for _ in 0..100 {
+                    black_box(s.evaluate("Damage_1"));
                 }
             },
             BatchSize::PerIteration // Treat the whole 100 as one "iteration"
