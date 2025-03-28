@@ -46,5 +46,15 @@ impl AttributeInstance {
         }
         self.modifier_collection.remove(&modifier_entity);
     }
+    
+    pub fn modify_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity,) {
+        let value = self.modifier_collection.get_mut(&modifier_entity);
+        
+        if let Some(value) = value {
+            self.modifier_total -= &value;
+            *value = modifier.value.clone();
+            self.modifier_total += &value;
+        }
+    }
 }
 

@@ -3,6 +3,7 @@ use bevy::prelude::{Deref, DerefMut};
 use evalexpr::{
     ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
 };
+use crate::prelude::AttributeId;
 use crate::stats::{StatCollection};
 use crate::tags::TagRegistry;
 
@@ -76,7 +77,7 @@ impl StatValue {
         }
     }
 
-    pub fn set_value_with_context(&mut self, stats: &StatCollection, tag_registry: &TagRegistry) {
+    pub fn update_value_with_context(&mut self, stats: &StatCollection, tag_registry: &TagRegistry) {
         // Collect all variable names/values for both the main expression
         // and any expressions in the bounds
         let mut all_variable_names = HashSet::new();
@@ -152,12 +153,12 @@ impl StatValue {
                 Some(id)
             } else {
                 // If not a numeric ID, try to look it up in the registry
-                tag_registry.get_id(group, tag_str)
+                tag_registry.get_id(group.clone(), tag_str)
             };
 
             // If we have a valid tag ID, try to get the attribute value
             let val = if let Some(id) = tag_id {
-                match stats.get(group, id) {
+                match stats.get_f32(AttributeId {group: group.to_string() , tag: id}) {
                     Ok(value) => value as f64,
                     Err(_) => 0.0,
                 }
