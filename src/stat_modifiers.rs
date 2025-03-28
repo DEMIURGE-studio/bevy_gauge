@@ -1,5 +1,7 @@
 use bevy::{ecs::component::Component, utils::{HashMap, HashSet}};
-use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
+use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
+
+use crate::error::StatError;
 
 #[derive(Debug, Clone, Default)]
 pub enum ModType {
@@ -27,6 +29,14 @@ impl Stats {
         Self { definitions: HashMap::new(), cached_stats: HashMapContext::new() }
     }
 
+    pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
+        if let Some(stat_value) = self.cached_stats.get_value(stat_path.into()) {
+            return Ok(stat_value.as_float().unwrap_or(0.0) as f32);
+        }
+
+        return Err(StatError::NotFound("Stat not found in get".to_string()));
+    }
+
     /// Evaluates a stat by gathering all its parts and combining their values.
     pub fn evaluate<S>(&self, path: S) -> f32 
     where
@@ -44,12 +54,6 @@ impl Stats {
 
     /// Updates a stat's cached value and propagates to dependents
     pub fn update_stat(&mut self, stat_path: &str) {
-        // Get the current value
-        let value = self.evaluate(stat_path);
-        
-        // Update the cached value
-        self.cached_stats.set_value(stat_path.to_string(), Value::Float(value as f64)).unwrap();
-        
         // Gather all dependents
         let segments: Vec<&str> = stat_path.split("_").collect();
         let mut dependents = HashSet::new();
@@ -62,6 +66,12 @@ impl Stats {
         for dependent in dependents {
             self.update_stat(&dependent);
         }
+
+        // Get the current value
+        let value = self.evaluate(stat_path);
+
+        // Update the cached value
+        self.cached_stats.set_value(stat_path.to_string(), Value::Float(value as f64)).unwrap();
     }
 
     pub fn add_modifier<V, S>(&mut self, stat_path: S, value: V)
@@ -76,7 +86,9 @@ impl Stats {
         if let Some(stat) = self.definitions.get_mut(&base_stat) {
             stat.add_modifier(&stat_path_segments, value.clone());
         } else {
-            self.definitions.insert(base_stat.clone(), StatType::new(&stat_path_str, value.clone()));
+            let new_stat = StatType::new(&stat_path_str, value.clone());
+            new_stat.on_insert(self, &stat_path_segments);
+            self.definitions.insert(base_stat.clone(), new_stat);
         }
 
         let vt: ValueType = value.into();
@@ -87,7 +99,7 @@ impl Stats {
             },
         }
         
-        self.update_stat(&base_stat);
+        self.update_stat(&stat_path_str);
     }
 
     pub fn remove_modifier<V, S>(&mut self, stat_path: S, value: V)
@@ -111,7 +123,7 @@ impl Stats {
             },
         }
         
-        self.update_stat(&base_stat);
+        self.update_stat(&stat_path_str);
     }
 
     fn add_dependent(&mut self, stat_path: &str, depends_on_expression: &Expression) {
@@ -150,6 +162,7 @@ pub trait StatLike {
     fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str);
     fn gather_dependents(&self, stat_path: &[&str], dependents: &mut HashSet<String>);
     fn evaluate(&self, stat_path: &[&str], stats: &Stats) -> f32;
+    fn on_insert(&self, stats: &mut Stats, stat_path: &[&str]);
 }
 
 #[derive(Debug)]
@@ -189,25 +202,6 @@ impl StatType {
                 StatType::Complex(stat)
             },
             _ => panic!("Invalid stat path format: {}", stat_path)
-        }
-    }
-
-    pub fn evaluate(&self, path: &[&str], stats: &Stats) -> f32 {
-        match self {
-            StatType::Simple(simple) => simple.value,
-            StatType::Modifiable(modifiable) => {
-                if path.len() == 1 {
-                    modifiable.evaluate(stats)
-                } else if path.len() == 2 {
-                    modifiable.evaluate_part(path[1], stats)
-                } else {
-                    0.0 // invalid query
-                }
-            },
-            StatType::Complex(complex_modifiable) => {
-                complex_modifiable.evaluate(path, stats)
-            },
-            StatType::Placeholder(_) => 0.0,  // Always return
         }
     }
 
@@ -310,6 +304,15 @@ impl StatLike for StatType {
             StatType::Placeholder(_) => 0.0,
         }
     }
+    
+    fn on_insert(&self, stats: &mut Stats, stat_path: &[&str]) {
+        match self {
+            StatType::Simple(simple) => simple.on_insert(stats, stat_path),
+            StatType::Modifiable(modifiable) => modifiable.on_insert(stats, stat_path),
+            StatType::Complex(complex_modifiable) => complex_modifiable.on_insert(stats, stat_path),
+            StatType::Placeholder(placeholder) => placeholder.on_insert(stats, stat_path),
+        }
+    }
 }
 
 #[derive(Default, Debug)]
@@ -363,6 +366,8 @@ impl StatLike for Simple {
     }
     
     fn evaluate(&self, _stat_path: &[&str], _stats: &Stats) -> f32 { self.value }
+    
+    fn on_insert(&self, _stats: &mut Stats, _stat_path: &[&str]) { /* do nothing */ }
 }
 
 #[derive(Debug)]
@@ -374,17 +379,18 @@ pub struct Modifiable {
 
 impl Modifiable {
     pub fn new(name: &str) -> Self {
-        let total_expr = get_total_expr_from_name(name);
+        let original_expr = get_total_expr_from_name(name);
         let mut modifier_types = HashMap::new();
         
-        // Parse the total expression to get all modifier names
-        let modifier_names: Vec<&str> = total_expr.split(|c: char| !c.is_alphabetic())
+        // Parse the original expression to get all modifier names
+        let modifier_names: Vec<&str> = original_expr.split(|c: char| !c.is_alphabetic())
             .filter(|s| !s.is_empty())
             .collect();
         
-        // Create modifier steps for each name
-        for modifier_name in modifier_names {
+        // Create modifier steps for each name (using original names as keys)
+        for modifier_name in modifier_names.iter() {
             let mut step = StatModifierStep::new(modifier_name);
+            
             // Set initial base value
             step.base = get_initial_value_for_modifier(modifier_name);
             // Add parent as dependent
@@ -393,10 +399,20 @@ impl Modifiable {
             modifier_types.insert(modifier_name.to_string(), step);
         }
         
+        // Transform the expression by prepending the name to each modifier
+        let transformed_expr = original_expr.split(|c: char| !c.is_alphabetic())
+            .fold(original_expr.to_string(), |expr, word| {
+                if modifier_names.contains(&word) {
+                    expr.replace(word, &format!("{}_{}", name, word))
+                } else {
+                    expr
+                }
+            });
+        
         Modifiable { 
             total: Expression { 
-                string: total_expr.to_string(),
-                value: evalexpr::build_operator_tree(total_expr).unwrap(),
+                string: transformed_expr.clone(),
+                value: evalexpr::build_operator_tree(&transformed_expr).unwrap(),
             },
             modifier_types,
             dependents: HashMap::new(),
@@ -496,9 +512,22 @@ impl StatLike for Modifiable  {
                     return 0.0;
                 };
         
-                part.evaluate(stats)
+                part.evaluate(&stats.cached_stats)
             }
             _ => 0.0
+        }
+    }
+    
+    fn on_insert(&self, stats: &mut Stats, stat_path: &[&str]) {
+        let base_name = stat_path[0];
+
+        for (modifier_name, _) in self.modifier_types.iter() {
+            // Ensure the modifier step exists in the definitions
+            let full_modifier_path = format!("{}_{}", base_name, modifier_name);
+            if stats.cached_stats.get_value(&full_modifier_path).is_none() {
+                let val = self.modifier_types.get(modifier_name).unwrap().evaluate(&stats.cached_stats);
+                stats.cached_stats.set_value(full_modifier_path, Value::<DefaultNumericTypes>::Float(val as f64)).unwrap();
+            }
         }
     }
 }
@@ -605,7 +634,10 @@ impl StatLike for ComplexModifiable {
         // Attempt to parse the query from the first segment.
         let search_bitflags = match stat_path.get(2) {
             Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
-            None => return 0.0,
+            None => match stat_path.get(1) {
+                Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
+                None => todo!(),
+            },
         };
     
         let mut context = HashMapContext::new();
@@ -623,7 +655,7 @@ impl StatLike for ComplexModifiable {
                 .filter_map(|(&mod_bitflags, value)| {
                     // Only include modifiers that match ALL the requested flags
                     if (mod_bitflags & search_bitflags) == search_bitflags {
-                        Some(value.evaluate(stats))
+                        Some(value.evaluate(&stats.cached_stats))
                     } else {
                         None
                     }
@@ -639,11 +671,12 @@ impl StatLike for ComplexModifiable {
             .total
             .value
             .eval_with_context(&context)
-            .ok()
-            .and_then(|v| v.as_number().ok())
-            .map(|num| num as f32)
-            .unwrap_or(0.0)
+            .unwrap()
+            .as_number()
+            .unwrap() as f32
     }
+    
+    fn on_insert(&self, _stats: &mut Stats, _stat_path: &[&str]) { /* do nothing */ }
 }
 
 #[derive(Debug, Default)]
@@ -681,6 +714,8 @@ impl StatLike for Placeholder {
     fn remove_modifier<V: Into<ValueType>>(&mut self, _stat_path: &[&str], _value: V) { /* do nothing */ }
     
     fn evaluate(&self, _stat_path: &[&str], _stats: &Stats) -> f32 { 0.0 }
+    
+    fn on_insert(&self, _stats: &mut Stats, _stat_path: &[&str]) { /* do nothing */ }
 }
 
 #[derive(Debug)]
@@ -697,12 +732,12 @@ impl StatModifierStep {
         Self { relationship: ModType::Add, base, mods: Vec::new(), dependents: HashMap::new() }
     }
 
-    pub fn evaluate(&self, stats: &Stats) -> f32 {
-        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats)).collect();
+    pub fn evaluate(&self, context: &HashMapContext) -> f32 {
+        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(context)).collect();
 
         match self.relationship {
             ModType::Add => self.base + computed.iter().sum::<f32>(),
-            ModType::Mul => 1.0 + (self.base + computed.iter().sum::<f32>()),
+            ModType::Mul => 1.0 + (self.base + computed.iter().sum::<f32>()), // TODO Broken
         }
     }
 
@@ -763,9 +798,9 @@ pub struct Expression {
 }
 
 impl Expression {
-    pub fn evaluate(&self, stats: &Stats) -> f32 {
+    pub fn evaluate(&self, context: &HashMapContext) -> f32 {
         self.value
-            .eval_with_context(&stats.cached_stats)
+            .eval_with_context(context)
             .unwrap_or(Value::Float(0.0))
             .as_number()
             .unwrap_or(0.0) as f32
@@ -869,13 +904,13 @@ mod tests {
         
         // Modifiable stats
         stats.add_modifier("Life_Added", 20.0);
-        stats.add_modifier("Life_Increased", 1.1); // 10% increase
+        stats.add_modifier("Life_Increased", 0.1); // 10% increase
         
         // Complex stats with damage types - using Damage enum variants
         stats.add_modifier(&format!("Damage_Added_{}", (u32::MAX &!Damage::DAMAGE_TYPE) | Damage::FIRE), 5.0);
         stats.add_modifier(&format!("Damage_Added_{}", (u32::MAX &!Damage::DAMAGE_TYPE) | Damage::CHAOS), 8.0);
         stats.add_modifier(&format!("Damage_Added_{}", (u32::MAX &!Damage::WEAPON_TYPE) | Damage::SWORD), 3.0);
-        stats.add_modifier(&format!("Damage_Increased_{}", (u32::MAX &!Damage::DAMAGE_TYPE) | Damage::FIRE), 1.2);
+        stats.add_modifier(&format!("Damage_Increased_{}", (u32::MAX &!Damage::DAMAGE_TYPE) | Damage::FIRE), 1.2); // TODO need to init inc and more values on Complex with a 1
         stats.add_modifier(&format!("Damage_Increased_{}", (u32::MAX &!Damage::WEAPON_TYPE) | Damage::SWORD), 1.15);
         
         stats
@@ -912,7 +947,7 @@ mod tests {
         let mut stats = test_stats();
 
         stats.add_modifier("Life_Added", 10.0);
-        stats.add_modifier("Life_More", 1.1);
+        stats.add_modifier("Life_More", 0.1);
         assert_approx_eq(stats.evaluate("Life"), 30.0 * 1.1 * 1.1);
         
         stats.remove_modifier("Life_Increased", 0.05);
@@ -938,7 +973,7 @@ mod tests {
         stats.add_modifier("Life_More", "Life_Added / 2.0"); // 5% more life per point of Life_Added
         
         // Should be: (20.0) * 1.1 * (1 + (20.0 * 0.05))
-        assert_approx_eq(stats.evaluate("Life"), 20.0 * 1.1 * (20.0 / 2.0));
+        assert_approx_eq(stats.evaluate("Life"), 20.0 * 1.1 * (1.0 + (20.0 / 2.0)));
     }
     
     #[test]
