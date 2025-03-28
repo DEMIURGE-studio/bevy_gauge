@@ -99,7 +99,7 @@ impl Stats {
     
             // If the stat doesn't exist, create it as DependentOnly
             if !self.definitions.contains_key(depends_on_base) {
-                self.definitions.insert(stat_path.to_string(), StatType::DependentOnly(DependentOnly::default()));
+                self.definitions.insert(stat_path.to_string(), StatType::Placeholder(Placeholder::default()));
             }
     
             // Add the dependent relationship
@@ -131,7 +131,7 @@ pub enum StatType {
     Simple(Simple),
     Modifiable(Modifiable),
     Complex(ComplexModifiable),
-    DependentOnly(DependentOnly),
+    Placeholder(Placeholder),
 }
 
 impl StatType {
@@ -185,7 +185,7 @@ impl StatType {
             StatType::Complex(complex_modifiable) => {
                 complex_modifiable.evaluate(path, stat_definitions)
             },
-            StatType::DependentOnly(_) => 0.0,  // Always return
+            StatType::Placeholder(_) => 0.0,  // Always return
         }
     }
 
@@ -207,7 +207,7 @@ impl StatType {
             StatType::Complex(complex_modifiable) => {
                 complex_modifiable.add_modifier(path[1], path[2].parse::<u32>().unwrap(), value);
             },
-            StatType::DependentOnly(_) => {}
+            StatType::Placeholder(_) => {}
         }
     }
 
@@ -229,7 +229,7 @@ impl StatType {
             StatType::Complex(complex_modifiable) => {
                 complex_modifiable.remove_modifier(path[1], path[2].parse::<u32>().unwrap(), value);
             },
-            StatType::DependentOnly(_) => {}
+            StatType::Placeholder(_) => {}
         }
     }
 }
@@ -240,7 +240,7 @@ impl StatLike for StatType {
             StatType::Simple(simple) => simple.add_dependent(stat_path, depends_on),
             StatType::Modifiable(modifiable) => modifiable.add_dependent(stat_path, depends_on),
             StatType::Complex(complex_modifiable) => complex_modifiable.add_dependent(stat_path, depends_on),
-            StatType::DependentOnly(dependent_only) => dependent_only.add_dependent(stat_path, depends_on),
+            StatType::Placeholder(dependent_only) => dependent_only.add_dependent(stat_path, depends_on),
         }
     }
     
@@ -249,7 +249,7 @@ impl StatLike for StatType {
             StatType::Simple(simple) => simple.remove_dependent(stat_path, depends_on),
             StatType::Modifiable(modifiable) => modifiable.remove_dependent(stat_path, depends_on),
             StatType::Complex(complex_modifiable) => complex_modifiable.remove_dependent(stat_path, depends_on),
-            StatType::DependentOnly(dependent_only) => dependent_only.remove_dependent(stat_path, depends_on),
+            StatType::Placeholder(placeholder) => placeholder.remove_dependent(stat_path, depends_on),
         }
     }
 }
@@ -568,11 +568,11 @@ impl StatLike for ComplexModifiable {
 }
 
 #[derive(Debug, Default)]
-pub struct DependentOnly {
+pub struct Placeholder {
     pub dependents: HashMap<String, u32>,
 }
 
-impl StatLike for DependentOnly {
+impl StatLike for Placeholder {
     fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
         // DependentOnly stats only track dependents at the root level
         if stat_path.len() == 1 {
