@@ -1,4 +1,4 @@
-use bevy_gauge::stat_modifiers::StatDefinitions;
+use bevy_gauge::stat_modifiers::Stats;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use bevy::prelude::*;
 use bevy::ecs::component::Component;
@@ -57,21 +57,21 @@ struct SimpleStat(f32);
 
 fn benchmark_group(c: &mut Criterion) {
     let mut group = c.benchmark_group("Stat System");
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(1000);
     group.warm_up_time(Duration::from_secs(1));
 
     // Test insertion speeds
     group.bench_function("insert_simple_stat", |b| {
         b.iter(|| {
-            let mut stats = StatDefinitions::default();
+            let mut stats = Stats::default();
             stats.add_modifier("Speed", black_box(10.0));
         })
     });
 
     group.bench_function("insert_modifiable_stat", |b| {
         b.iter(|| {
-            let mut stats = StatDefinitions::default();
+            let mut stats = Stats::default();
             stats.add_modifier("Damage_Added", black_box(10.0));
             stats.add_modifier("Damage_Increased", black_box(1.1));
         })
@@ -79,7 +79,7 @@ fn benchmark_group(c: &mut Criterion) {
 
     group.bench_function("insert_complex_stat", |b| {
         b.iter(|| {
-            let mut stats = StatDefinitions::default();
+            let mut stats = Stats::default();
             stats.add_modifier(
                 &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
                 black_box(5.0)
@@ -89,14 +89,14 @@ fn benchmark_group(c: &mut Criterion) {
 
     group.bench_function("insert_expression_stat", |b| {
         b.iter(|| {
-            let mut stats = StatDefinitions::default();
+            let mut stats = Stats::default();
             stats.add_modifier("Damage_More", black_box("Damage_Added * 0.1"));
         })
     });
 
     // Test removal speeds
     group.bench_function("remove_simple_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier("Speed", 10.0);
         b.iter(|| {
             stats.remove_modifier("Speed", black_box(5.0));
@@ -104,7 +104,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("remove_modifiable_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier("Damage_Added", 10.0);
         stats.add_modifier("Damage_Increased", 1.1);
         b.iter(|| {
@@ -113,7 +113,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("remove_complex_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier(
             &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
             5.0
@@ -128,7 +128,7 @@ fn benchmark_group(c: &mut Criterion) {
 
     // Test evaluation speeds
     group.bench_function("evaluate_simple_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier("Speed", 10.0);
         b.iter(|| {
             black_box(stats.evaluate("Speed"));
@@ -136,7 +136,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("evaluate_modifiable_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier("Damage_Added", 10.0);
         stats.add_modifier("Damage_Increased", 1.1);
         stats.add_modifier("Damage_More", 1.05);
@@ -146,7 +146,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("evaluate_complex_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier(
             &format!("Damage_Added_{}", damage::FIRE | damage::SWORD),
             5.0
@@ -161,7 +161,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("evaluate_expression_stat", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         stats.add_modifier("BaseDamage", 10.0);
         stats.add_modifier("Damage_Added", "BaseDamage * 0.1 + 1.0");
         b.iter(|| {
@@ -175,7 +175,7 @@ fn benchmark_group(c: &mut Criterion) {
             &format!("evaluate_with_{}_modifiers", count),
             count,
             |b, &count| {
-                let mut stats = StatDefinitions::default();
+                let mut stats = Stats::default();
                 stats.add_modifier("Base", 10.0);
                 
                 let mut rng = rand::rng();
@@ -206,7 +206,7 @@ fn benchmark_group(c: &mut Criterion) {
     });
 
     group.bench_function("evaluate_expression_dependencies", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         
         // Setup base stats
         stats.add_modifier("Strength", 50.0); // Simple stat
@@ -242,7 +242,7 @@ fn benchmark_group(c: &mut Criterion) {
     }); 
 
     group.bench_function("evaluate_complex_expression_dependencies", |b| {
-        let mut stats = StatDefinitions::default();
+        let mut stats = Stats::default();
         
         // Setup base stats
         stats.add_modifier("Strength", 50.0); // Simple stat
@@ -275,10 +275,128 @@ fn benchmark_group(c: &mut Criterion) {
             },
             BatchSize::PerIteration // Treat the whole 100 as one "iteration"
         );
-    }); 
+    });
+
+    // const ITERS: u32 = 10000;
+
+    // #[derive(Event)]
+    // struct AddTrigger(f32);
+
+    // #[derive(Component)]
+    // struct Accumulator(f32);
+
+    // fn trigger_system(mut commands: Commands, query: Query<Entity, With<Accumulator>>) {
+    //     let target = query.get_single().unwrap();
+    //     for _ in 0..ITERS {
+    //         commands.trigger_targets(AddTrigger(5.0), target);
+    //     }
+    // }
+
+    // fn listen_system(trigger: Trigger<AddTrigger>, mut query: Query<&mut Accumulator>) {
+    //     let entity = trigger.entity();
+    //     let Ok(mut accumulator) = query.get_mut(entity) else {
+    //         return;
+    //     };
+    //     accumulator.0 += trigger.0;
+    // }
+
+    // group.bench_function("observer_speed", |b| {
+    //     b.iter_batched(
+    //         || {
+    //             let mut binding = App::new();
+    //             let app = binding
+    //                 .add_systems(Update, trigger_system)
+    //                 .add_observer(listen_system);
+
+    //             app
+    //                 .world_mut()
+    //                 .spawn(Accumulator(0.0));
+
+    //             binding
+    //         }, // Clone/reuse the prepared stats
+    //         |mut app| {
+    //             for _ in 0..100 {
+    //                 app.update();
+    //             }
+    //         },
+    //         BatchSize::PerIteration // Treat the whole 100 as one "iteration"
+    //     );
+    // });
+
+    // group.bench_function("observe_entity_speed", |b| {
+    //     b.iter_batched(
+    //         || {
+    //             let mut binding = App::new();
+    //             let app = binding
+    //                 .add_systems(Update, trigger_system);
+
+    //             app
+    //                 .world_mut()
+    //                 .spawn(Accumulator(0.0))
+    //                 .observe(listen_system);
+
+    //             binding
+    //         }, // Clone/reuse the prepared stats
+    //         |mut app| {
+    //             for _ in 0..100 {
+    //                 app.update();
+    //             }
+    //         },
+    //         BatchSize::PerIteration // Treat the whole 100 as one "iteration"
+    //     );
+    // });
+
+    // fn direct_update(mut query: Query<&mut Accumulator>) {
+    //     let Ok(mut accumulator) = query.get_single_mut() else {
+    //         return;
+    //     };
+    //     for _ in 0..ITERS {
+    //         accumulator.0 += 5.0;
+    //     }
+    // }
+
+    // group.bench_function("direct_access_speed", |b| {
+    //     b.iter_batched(
+    //         || {
+    //             let mut binding = App::new();
+    //             let app = binding
+    //                 .add_systems(Update, direct_update);
+
+    //             app
+    //                 .world_mut()
+    //                 .spawn(Accumulator(0.0));
+
+    //             binding
+    //         }, // Clone/reuse the prepared stats
+    //         |mut app| {
+    //             for _ in 0..100 {
+    //                 app.update();
+    //             }
+    //         },
+    //         BatchSize::PerIteration // Treat the whole 100 as one "iteration"
+    //     );
+    // });
 
     group.finish();
 }
 
+// ```
+// Test                     | ITER  | time 
+// observer_speed           | 10000 | 46.8ms
+//                          | 1000  | 6.2ms
+//                          | 100   | 2.0ms
+//                          | 10    | 1.5ms
+//                          | 1     | 1.5ms
+// observer_entity_speed    | 10000 | 52.2ms
+//                          | 1000  | 6.9ms
+//                          | 100   | 2.2ms
+//                          | 10    | 1.6ms
+//                          | 1     | 1.5ms
+// direct_access            | 10000 | 3.7ms
+//                          | 1000  | 1.9ms
+//                          | 100   | 1.5ms
+//                          | 10    | 1.5ms
+//                          | 1     | 1.5ms
+// ```
 criterion_group!(benches, benchmark_group);
 criterion_main!(benches);

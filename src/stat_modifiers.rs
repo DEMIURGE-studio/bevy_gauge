@@ -16,9 +16,16 @@ pub enum ModType {
 
 /// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
-pub struct StatDefinitions(pub HashMap<String, StatType>);
+pub struct Stats {
+    pub definitions: HashMap<String, StatType>,
+    pub context: HashMapContext,
+}
 
-impl StatDefinitions {
+impl Stats {
+    pub fn new() -> Self {
+        Self { definitions: HashMap::new(), context: HashMapContext::new() }
+    }
+
     /// Evaluates a stat by gathering all its parts and combining their values.
     pub fn evaluate<S>(&self, path: S) -> f32 
     where
@@ -28,7 +35,7 @@ impl StatDefinitions {
         let segments: Vec<&str> = path_str.split("_").collect();
         let head = segments[0];
 
-        let stat_type = self.0.get(head);
+        let stat_type = self.definitions.get(head);
         let Some(stat_type) = stat_type else { return 0.0; };
 
         stat_type.evaluate(&segments, self)
@@ -43,10 +50,10 @@ impl StatDefinitions {
         let segments: Vec<&str> = path_str.split("_").collect();
         let base_path = segments[0].to_string();
 
-        if let Some(stat) = self.0.get_mut(&base_path) {
+        if let Some(stat) = self.definitions.get_mut(&base_path) {
             stat.add_modifier(&segments, value.clone());
         } else {
-            self.0.insert(base_path.clone(), StatType::new(&path_str, value.clone()));
+            self.definitions.insert(base_path.clone(), StatType::new(&path_str, value.clone()));
         }
 
         let vt: ValueType = value.into();
@@ -67,7 +74,7 @@ impl StatDefinitions {
         let segments: Vec<&str> = path_str.split("_").collect();
         let base_path = segments[0].to_string();
 
-        if let Some(stat) = self.0.get_mut(&base_path) {
+        if let Some(stat) = self.definitions.get_mut(&base_path) {
             stat.remove_modifier(&segments[1..], value.clone());
         }
 
@@ -86,12 +93,12 @@ impl StatDefinitions {
             let var_base = segments[0]; // The root stat name
     
             // If the stat doesn't exist, create it as DependentOnly
-            if !self.0.contains_key(var_base) {
-                self.0.insert(var_base.to_string(), StatType::DependentOnly(DependentOnly::default()));
+            if !self.definitions.contains_key(var_base) {
+                self.definitions.insert(var_base.to_string(), StatType::DependentOnly(DependentOnly::default()));
             }
     
             // Add the dependent relationship
-            if let Some(dep_stat) = self.0.get_mut(var_base) {
+            if let Some(dep_stat) = self.definitions.get_mut(var_base) {
                 dep_stat.add_dependent(dependent_path.to_string());
             }
         }
@@ -102,7 +109,7 @@ impl StatDefinitions {
             let segments: Vec<&str> = var.split("_").collect();
             let var_base = segments[0]; // The root stat name
 
-            if let Some(dep_stat) = self.0.get_mut(var_base) {
+            if let Some(dep_stat) = self.definitions.get_mut(var_base) {
                 dep_stat.remove_dependent(dependent_path);
             }
         }
@@ -158,7 +165,7 @@ impl StatType {
         }
     }
 
-    pub fn evaluate(&self, path: &[&str], stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate(&self, path: &[&str], stat_definitions: &Stats) -> f32 {
         match self {
             StatType::Simple(simple) => simple.value,
             StatType::Modifiable(modifiable) => {
@@ -328,7 +335,7 @@ impl Modifiable {
         part.remove_modifier(value);
     }
 
-    pub fn evaluate(&self, stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate(&self, stat_definitions: &Stats) -> f32 {
         // Evaluate each modifier part and inject them into the context
         let mut context = HashMapContext::new();
         for name in self.total.value.iter_variable_identifiers() {
@@ -351,7 +358,7 @@ impl Modifiable {
             .unwrap() as f32
     }
 
-    pub fn evaluate_part(&self, part: &str, stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate_part(&self, part: &str, stat_definitions: &Stats) -> f32 {
         let Some(part) = self.modifier_types.get(part) else {
             return 0.0;
         };
@@ -394,7 +401,7 @@ impl ComplexModifiable {
         }
     }
 
-    pub fn evaluate(&self, path: &[&str], stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate(&self, path: &[&str], stat_definitions: &Stats) -> f32 {
         // Attempt to parse the query from the first segment.
         let search_bitflags = match path.get(1) {
             Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
@@ -535,7 +542,7 @@ impl StatModifierStep {
         Self { relationship: ModType::Add, base, mods: Vec::new() }
     }
 
-    pub fn evaluate(&self, stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate(&self, stat_definitions: &Stats) -> f32 {
         let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stat_definitions)).collect();
 
         match self.relationship {
@@ -588,7 +595,7 @@ pub struct Expression {
 }
 
 impl Expression {
-    pub fn evaluate(&self, stat_definitions: &StatDefinitions) -> f32 {
+    pub fn evaluate(&self, stat_definitions: &Stats) -> f32 {
         let mut context = HashMapContext::new();
         for var_name in self.value.iter_variable_identifiers() {
             let val = stat_definitions.evaluate(var_name);
@@ -688,8 +695,8 @@ mod tests {
     }
 
     // Helper function to create a fresh StatDefinitions with common stats
-    fn test_stats() -> StatDefinitions {
-        let mut stats = StatDefinitions(HashMap::new());
+    fn test_stats() -> Stats {
+        let mut stats = Stats::new();
         
         // Simple stat
         stats.add_modifier("Movespeed", 10.0);
@@ -776,7 +783,7 @@ mod tests {
         stats.add_modifier("Life_More", "Movespeed * 0.1"); // 10% more per movespeed
         
         // Verify dependency was registered
-        if let StatType::Simple(movespeed) = stats.0.get_mut("Movespeed").unwrap() {
+        if let StatType::Simple(movespeed) = stats.definitions.get_mut("Movespeed").unwrap() {
             assert!(movespeed.dependents.contains_key("Life"));
         } else {
             panic!("Movespeed stat not found");
@@ -809,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_empty_stats() {
-        let stats = StatDefinitions(HashMap::new());
+        let stats = Stats::new();
         
         // Evaluate non-existent stats
         assert_eq!(stats.evaluate("Nonexistent"), 0.0);
