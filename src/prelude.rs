@@ -12,3 +12,7 @@ pub use crate::simple_stat;
 pub use crate::attribute;
 pub use crate::stat_effect;
 pub use crate::requires;
+pub use crate::tags::*;
+pub use crate::value_type::*;
+pub use crate::stats::*;
+pub use crate::modifiers::*;

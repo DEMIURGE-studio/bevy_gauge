@@ -19,8 +19,6 @@ pub mod effects;
 mod value_type;
 mod resource;
 mod stats;
-mod tag_registry;
-
 pub fn plugin(app: &mut App) {
     app.add_plugins((
         schedule::plugin,

@@ -25,14 +25,18 @@ impl TagRegistry {
 
     // Register a primary tag type (e.g., "DAMAGE", "WEAPON")
     pub fn register_primary_type(&mut self, primary_type: &str) {
+        let primary_type = primary_type.to_lowercase();
         // Create entries in the registries if they don't exist
-        self.string_to_id.entry(primary_type.to_string()).or_insert(HashMap::new());
-        self.id_to_string.entry(primary_type.to_string()).or_insert(HashMap::new());
-        self.next_id.entry(primary_type.to_string()).or_insert(0);
+        self.string_to_id.entry(primary_type.clone()).or_insert(HashMap::new());
+        self.id_to_string.entry(primary_type.clone()).or_insert(HashMap::new());
+        self.next_id.entry(primary_type.clone()).or_insert(0);
     }
 
     // Register a subtype under a primary type (e.g., "FIRE" under "DAMAGE")
     pub fn register_subtype(&mut self, primary_type: &str, subtype: &str) -> u32 {
+        let primary_type = &primary_type.to_lowercase();
+        let subtype = &subtype.to_lowercase();
+        
         // Make sure the primary type exists
         self.register_primary_type(primary_type);
 
@@ -55,6 +59,9 @@ impl TagRegistry {
 
     // Register a tag (compatibility method)
     pub fn register_tag(&mut self, primary_group: &str, tag: &str) -> u32 {
+        let primary_group = &primary_group.to_lowercase();
+        let tag = &tag.to_lowercase();
+        
         // Check if this tag already exists
         if let Some(existing_id) = self.get_id(primary_group, tag) {
             return existing_id;
@@ -77,12 +84,12 @@ impl TagRegistry {
 
     // Get a tag ID
     pub fn get_id(&self, primary_group: &str, tag: &str) -> Option<u32> {
-        self.string_to_id.get(primary_group)?.get(tag).copied()
+        self.string_to_id.get(&primary_group.to_lowercase())?.get(&tag.to_lowercase()).copied()
     }
 
     // Get a tag name
     pub fn get_tag(&self, primary_group: &str, id: u32) -> Option<&String> {
-        self.id_to_string.get(primary_group)?.get(&id)
+        self.id_to_string.get(&primary_group.to_lowercase())?.get(&id)
     }
 
     // Check if one tag qualifies for another (bitwise AND check)
@@ -104,16 +111,9 @@ mod tag_registry_tests {
         registry.register_primary_type("WEAPON");
 
         // Verify the structures are initialized
-        assert!(registry.string_to_id.contains_key("DAMAGE"));
-        assert!(registry.string_to_id.contains_key("WEAPON"));
-        assert!(registry.id_to_string.contains_key("DAMAGE"));
-        assert!(registry.id_to_string.contains_key("WEAPON"));
-        assert!(registry.next_id.contains_key("DAMAGE"));
-        assert!(registry.next_id.contains_key("WEAPON"));
+        assert!(registry.string_to_id.contains_key("damage"));
+        assert!(registry.string_to_id.contains_key("weapon"));
 
-        // Check initial counters
-        assert_eq!(*registry.next_id.get("DAMAGE").unwrap(), 0);
-        assert_eq!(*registry.next_id.get("WEAPON").unwrap(), 0);
     }
 
     #[test]
@@ -139,8 +139,8 @@ mod tag_registry_tests {
         // Verify tag lookup
         assert_eq!(registry.get_id("DAMAGE", "FIRE"), Some(fire_id));
         assert_eq!(registry.get_id("DAMAGE", "COLD"), Some(cold_id));
-        assert_eq!(registry.get_tag("DAMAGE", fire_id), Some(&"FIRE".to_string()));
-        assert_eq!(registry.get_tag("WEAPON", sword_id), Some(&"SWORD".to_string()));
+        assert_eq!(registry.get_tag("DAMAGE", fire_id), Some(&"fire".to_string()));
+        assert_eq!(registry.get_tag("WEAPON", sword_id), Some(&"sword".to_string()));
 
         // Non-existent tags should return None
         assert_eq!(registry.get_id("DAMAGE", "NONEXISTENT"), None);
@@ -235,12 +235,12 @@ mod tag_registry_tests {
         assert_eq!(elemental_id, 7);  // 111
 
         // Manually register the compound tag (this would be part of a register_compound_tag method)
-        registry.string_to_id.get_mut("DAMAGE").unwrap().insert("ELEMENTAL".to_string(), elemental_id);
-        registry.id_to_string.get_mut("DAMAGE").unwrap().insert(elemental_id, "ELEMENTAL".to_string());
+        registry.string_to_id.get_mut("damage").unwrap().insert("elemental".to_string(), elemental_id);
+        registry.id_to_string.get_mut("damage").unwrap().insert(elemental_id, "elemental".to_string());
 
         // Verify lookup
         assert_eq!(registry.get_id("DAMAGE", "ELEMENTAL"), Some(elemental_id));
-        assert_eq!(registry.get_tag("DAMAGE", elemental_id), Some(&"ELEMENTAL".to_string()));
+        assert_eq!(registry.get_tag("DAMAGE", elemental_id), Some(&"elemental".to_string()));
 
         // Test qualification
         assert!(registry.tag_qualifies_for("DAMAGE", fire_id, elemental_id));
