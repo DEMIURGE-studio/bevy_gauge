@@ -40,6 +40,10 @@ impl ModifierValueTotal {
     pub fn get_total(&self) -> f32 {
         self.flat * (1.0 + self.increased) * self.more
     }
+    
+    pub fn get_total_with_base(&self, base: f32) -> f32 {
+        (self.flat + base) * (1.0 + self.increased) * self.more
+    }
 }
 
 impl Default for ModifierValueTotal {
@@ -126,6 +130,7 @@ fn on_modifier_added(
     mut commands: Commands,
     tag_registry: Res<TagRegistry>,
 ) {
+    
     if let Ok((modifier, stat_entity)) = modifier_query.get(trigger.target()) {
         if let Ok((entity, mut stat_collection)) =
             stat_query.get_mut(stat_entity.modifier_collection)

@@ -27,7 +27,11 @@ impl AttributeInstance {
     }
     
     pub fn get_value_f32(&self) -> f32 {
-        self.value.get_value_f32()
+        self.value.get_value_f32() 
+    }
+    
+    pub fn get_total_value_f32(&self) -> f32 {
+        self.modifier_total.get_total_with_base(self.value.get_value_f32())
     }
 
     pub fn add_or_replace_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity) {

@@ -115,7 +115,7 @@ impl StatCollection {
 
 
     // Updated add_attribute function to use the simplified structure
-    pub fn add_attribute(&mut self, group: &str, attr_name: &str, value: StatValue, tag_registry: &TagRegistry) {
+    pub fn add_attribute(&mut self, group: &str, attr_name: &str, value: StatValue, tag_registry: &Res<TagRegistry>) {
         let Some(bit_tag) = tag_registry.get_id(group, attr_name) else {
             panic!("Attribute group {} or tag {} is not registered", group, attr_name);
         };
@@ -208,6 +208,7 @@ impl StatCollection {
 
         // Resolve any attributes that were waiting for this one
         self.resolve_pending_dependents(&this_attr_id);
+        self.recalculate_attribute_and_dependents(this_attr_id, &tag_registry)
     }
     
     
@@ -434,6 +435,45 @@ pub fn on_modifier_change(
     if let Ok(mut stats) = stat_query.get_mut(trigger.target()) {
         stats.on_modifiers_change(trigger.modifier_entity, &registry);
     }
+}
+
+
+fn add_stat_to_collection(
+    stat_collection: &mut StatCollection,
+    group: &str,
+    name: &str,
+    value: StatValue,
+    tag_registry: &Res<TagRegistry>
+) {
+    stat_collection.add_attribute(
+        group,
+        name,
+        value,
+        tag_registry
+    );
+}
+pub fn on_stat_added(
+    trigger: Trigger<AttributeAddedEvent>,
+    mut stat_query: Query<&mut StatCollection>,
+    registry: Res<TagRegistry>,
+) {
+    let mut stat_collection = stat_query.get_mut(trigger.target()).unwrap();
+    
+    add_stat_to_collection(&mut stat_collection, &trigger.attribute_group, &trigger.attribute_name, trigger.value.clone(), &registry);
+}
+
+#[derive(Event, Debug)]
+pub struct AttributeAddedEvent {
+    pub attribute_name: String,
+    pub attribute_group: String,
+    pub value: StatValue,
+}
+
+
+pub fn register_stat_triggers(app: &mut App) {
+    app.add_event::<AttributeUpdatedEvent>()
+        .add_event::<ModifierUpdatedEvent>()
+        .add_observer(on_modifier_change);
 }
 
 

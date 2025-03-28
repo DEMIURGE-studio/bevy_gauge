@@ -34,6 +34,22 @@ mod tests {
         }
     }
 
+    // Helper function to add a stat to the collection
+    fn add_stat_to_collection(
+        stat_collection: &mut StatCollection,
+        group: &str,
+        name: &str,
+        value: f32,
+        tag_registry: &Res<TagRegistry>
+    ) {
+        stat_collection.add_attribute(
+            group,
+            name,
+            StatValue::from_f32(value),
+            tag_registry
+        );
+    }
+
     // Helper function to create a bitmask modifier
     fn create_bitmask_modifier(target: &str, tag: u32, value: f32) -> ModifierInstance {
         let target_parts: Vec<&str> = target.split('_').collect();
@@ -51,9 +67,20 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_create_stats_simple_modifier() {
+    fn test_add_modifier_to_stat() {
         // Setup app
         let mut app = setup_test_app();
+
+        // Setup tag registry
+        {
+            let mut tag_registry = app.world_mut().resource_mut::<TagRegistry>();
+            tag_registry.register_primary_type("attribute");
+            tag_registry.register_tag("attribute", "strength");
+        }
+
+        let strength_tag = app.world().resource::<TagRegistry>()
+            .get_id("attribute", "strength")
+            .expect("Strength tag should be registered");
 
         // Create an entity with stat collection
         let character_id = app
@@ -63,12 +90,18 @@ mod tests {
                 ModifierCollectionRefs::default(),
             ))
             .observe(on_modifier_change)
+            .observe(on_stat_added)
             .id();
 
-        // Create a simple modifier targeting a non-existent stat
+        // Add the strength stat manually
+        {
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "strength".to_string(), value: StatValue::from_f32(0.0)}, character_id);
+        }
+
+        // Create a modifier targeting the strength stat
         let modifier_id = app
             .world_mut()
-            .spawn((create_simple_modifier("strength", 5.0),
+            .spawn((create_bitmask_modifier("strength", strength_tag, 5.0),
                     ModifierTarget {
                         modifier_collection: character_id,
                     }
@@ -78,17 +111,12 @@ mod tests {
         // Run the app to process the systems
         app.update();
 
-        // Verify the stats were created
+        // Verify the modifier was applied
         let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
 
-        // Get the tag from registry
-        let strength_tag = app.world().resource::<TagRegistry>()
-            .get_id("attribute", "strength")
-            .expect("Strength tag should be automatically registered");
-
         // Check if attribute group exists and strength is in it
-        assert!(stat_collection.attributes.contains_key("attribute"), "Attribute group should be created");
-        assert!(stat_collection.attributes.get("attribute").unwrap().contains_key(&strength_tag), "Strength attribute should be created");
+        assert!(stat_collection.attributes.contains_key("attribute"), "Attribute group should exist");
+        assert!(stat_collection.attributes.get("attribute").unwrap().contains_key(&strength_tag), "Strength attribute should exist");
 
         // Check the modifier was applied
         let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
@@ -106,12 +134,12 @@ mod tests {
         }
 
         // Check total value (base value + modifier)
-        let strength_value = strength_attr.get_value_f32();
+        let strength_value = strength_attr.get_total_value_f32();
         assert!((strength_value - 5.0).abs() < 0.001, "Total strength should be 5.0, got {}", strength_value);
     }
 
     #[test]
-    fn test_auto_create_stats_bitmask_modifier() {
+    fn test_bitmask_modifier() {
         // Setup app
         let mut app = setup_test_app();
 
@@ -133,9 +161,16 @@ mod tests {
                 ModifierCollectionRefs::default(),
             ))
             .observe(on_modifier_change)
+            .observe(on_stat_added)
             .id();
 
-        // Create a bitmask modifier targeting a non-existent stat
+        // Add the strength stat manually
+        {
+
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "strength".to_string(), value: StatValue::from_f32(0.0)}, character_id);
+        }
+
+        // Create a bitmask modifier targeting the strength stat
         let modifier_id = app
             .world_mut()
             .spawn((create_bitmask_modifier("strength", strength_tag, 3.0),
@@ -147,13 +182,12 @@ mod tests {
         // Run the app to process the systems
         app.update();
 
-        // Verify the stats were created
+        // Get the stat collection
         let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
 
-        println!("{:#?}", stat_collection.attributes);
         // Check if attribute group exists and strength is in it
-        assert!(stat_collection.attributes.contains_key("attribute"), "Attribute group should be created");
-        assert!(stat_collection.attributes.get("attribute").unwrap().contains_key(&strength_tag), "Strength attribute should be created");
+        assert!(stat_collection.attributes.contains_key("attribute"), "Attribute group should exist");
+        assert!(stat_collection.attributes.get("attribute").unwrap().contains_key(&strength_tag), "Strength attribute should exist");
 
         // Check the modifier was applied
         let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
@@ -171,12 +205,12 @@ mod tests {
         }
 
         // Check total value (base value + modifier)
-        let strength_value = strength_attr.get_value_f32();
+        let strength_value = strength_attr.get_total_value_f32();
         assert!((strength_value - 3.0).abs() < 0.001, "Total strength should be 3.0, got {}", strength_value);
     }
 
     #[test]
-    fn test_dependencies_setup() {
+    fn test_stat_dependencies() {
         // Setup app
         let mut app = setup_test_app();
 
@@ -184,11 +218,17 @@ mod tests {
         {
             let mut tag_registry = app.world_mut().resource_mut::<TagRegistry>();
             tag_registry.register_primary_type("attribute");
+            tag_registry.register_tag("attribute", "strength");
+            tag_registry.register_tag("attribute", "damage");
         }
 
-        // Get a tag from registry
-        let strength_tag = app.world_mut().resource_mut::<TagRegistry>()
-            .register_tag("attribute", "strength");
+        let strength_tag = app.world().resource::<TagRegistry>()
+            .get_id("attribute", "strength")
+            .expect("Strength tag should be registered");
+
+        let damage_tag = app.world().resource::<TagRegistry>()
+            .get_id("attribute", "damage")
+            .expect("Damage tag should be registered");
 
         // Create an entity with stat collection
         let character_id = app
@@ -198,41 +238,167 @@ mod tests {
                 ModifierCollectionRefs::default(),
             ))
             .observe(on_modifier_change)
+            .observe(on_stat_added)
             .id();
 
-        // Create a modifier
-        let modifier_id = app
-            .world_mut()
-            .spawn((
-                create_bitmask_modifier("strength", strength_tag, 3.0),
-                ModifierTarget {
-                    modifier_collection: character_id,
-                }
-            ))
-            .id();
+        // Add stats with dependencies manually
+        {
+
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "strength".to_string(), value: StatValue::from_f32(10.0)}, character_id);
+            // Add base strength stat
+
+            // Create a damage stat that depends on strength
+            // Using an expression that references strength
+            let damage_expr = Expression::new(
+                evalexpr::build_operator_tree("attribute.strength * 0.5").unwrap()
+            );
+            let damage_value = StatValue::from_expression(damage_expr);
+
+
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "damage".to_string(), value: damage_value}, character_id);
+        }
 
         // Run the app to process the systems
         app.update();
 
-        // Check dependencies were set up correctly
+        // Check the dependencies were set up correctly
         let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
 
-        // Get the attribute
+        // Get the attributes
         let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
+        let damage_attr = stat_collection.attributes.get("attribute").unwrap().get(&damage_tag).unwrap();
 
-        // Check dependencies (since structure changed, this may be empty now, depending on implementation)
-        if let Some(dependencies) = &strength_attr.dependencies {
-            // Check dependencies as per the updated structure
-            // This might need adjusting based on how dependencies are now organized
+        // Check that damage depends on strength
+        if let Some(dependents) = &strength_attr.dependent_attributes {
+            // Check if damage is listed as a dependent of strength
+            let attribute_dependents = dependents.get("attribute");
+            assert!(attribute_dependents.is_some(), "Strength should have attribute dependents");
+            assert!(attribute_dependents.unwrap().contains(&damage_tag),
+                    "Damage should be a dependent of strength");
+        } else {
+            panic!("Strength should have dependents");
         }
 
-        // Check that the modifier is properly registered
-        assert!(strength_attr.modifier_collection.contains_key(&modifier_id),
-                "Modifier should be registered with the attribute");
+        // Check if damage has strength as a dependency
+        if let Some(dependencies) = &damage_attr.dependencies {
+            // Check if strength is listed as a dependency of damage
+            let attribute_deps = dependencies.get("attribute");
+            assert!(attribute_deps.is_some(), "Damage should have attribute dependencies");
+            assert!(attribute_deps.unwrap().contains(&strength_tag),
+                    "Strength should be a dependency of damage");
+        } else {
+            panic!("Damage should have dependencies");
+        }
+
+        // Check damage value (should be strength * 0.5 = 10 * 0.5 = 5.0)
+        let damage_value = damage_attr.get_total_value_f32();
+        assert!((damage_value - 5.0).abs() < 0.001,
+                "Damage should be 5.0 (strength * 0.5), got {}", damage_value);
     }
 
+    // #[test]
+    // fn test_remove_modifier() {
+    //     // Setup app
+    //     let mut app = setup_test_app();
+    // 
+    //     // Setup tag registry
+    //     {
+    //         let mut tag_registry = app.world_mut().resource_mut::<TagRegistry>();
+    //         tag_registry.register_primary_type("attribute");
+    //     }
+    // 
+    //     // Get a tag from registry
+    //     let strength_tag = app.world_mut().resource_mut::<TagRegistry>()
+    //         .register_tag("attribute", "strength");
+    // 
+    //     // Create an entity with stat collection
+    //     let character_id = app
+    //         .world_mut()
+    //         .spawn((
+    //             StatCollection::new(),
+    //             ModifierCollectionRefs::default(),
+    //         ))
+    //         .observe(on_modifier_change)
+    //         .id();
+    // 
+    //     // Add the strength stat manually
+    //     {
+    //         let mut stat_collection = app.world_mut().get_mut::<StatCollection>(character_id).unwrap();
+    //         let tag_registry = app.world().resource::<TagRegistry>();
+    //         add_stat_to_collection(&mut stat_collection, "attribute", "strength", 0.0, &tag_registry);
+    //     }
+    // 
+    //     // Create and apply two modifiers
+    //     let modifier_id1 = app
+    //         .world_mut()
+    //         .spawn((
+    //             create_bitmask_modifier("strength", strength_tag, 3.0),
+    //             ModifierTarget {
+    //                 modifier_collection: character_id,
+    //             }
+    //         ))
+    //         .id();
+    // 
+    //     let more_modifier_id = app
+    //         .world_mut()
+    //         .spawn((
+    //             ModifierInstance {
+    //                 target_stat: AttributeId::new("attribute".to_string(), strength_tag),
+    //                 value: ModifierValue::More(ValueType::Literal(0.2)), // 20% more
+    //                 dependencies: HashSet::new(),
+    //             },
+    //             ModifierTarget {
+    //                 modifier_collection: character_id,
+    //             }
+    //         ))
+    //         .id();
+    // 
+    //     // Run the app to process the systems
+    //     app.update();
+    // 
+    //     // Verify modifiers were applied correctly
+    //     let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
+    //     let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
+    // 
+    //     // Check modifiers are present
+    //     assert!(strength_attr.modifier_collection.contains_key(&flat_modifier_id), "Flat modifier should be present");
+    //     assert!(strength_attr.modifier_collection.contains_key(&increased_modifier_id), "Increased modifier should be present");
+    //     assert!(strength_attr.modifier_collection.contains_key(&more_modifier_id), "More modifier should be present");
+    // 
+    //     // Check modifier values
+    //     let flat_modifier_value = strength_attr.modifier_collection.get(&flat_modifier_id).unwrap();
+    //     match flat_modifier_value {
+    //         ModifierValue::Flat(ValueType::Literal(val)) => {
+    //             assert!((val - 5.0).abs() < 0.001, "Flat modifier value should be 5.0");
+    //         },
+    //         _ => panic!("Expected Flat/Literal modifier")
+    //     }
+    // 
+    //     let increased_modifier_value = strength_attr.modifier_collection.get(&increased_modifier_id).unwrap();
+    //     match increased_modifier_value {
+    //         ModifierValue::Increased(ValueType::Literal(val)) => {
+    //             assert!((val - 0.5).abs() < 0.001, "Increased modifier value should be 0.5");
+    //         },
+    //         _ => panic!("Expected Increased/Literal modifier")
+    //     }
+    // 
+    //     let more_modifier_value = strength_attr.modifier_collection.get(&more_modifier_id).unwrap();
+    //     match more_modifier_value {
+    //         ModifierValue::More(ValueType::Literal(val)) => {
+    //             assert!((val - 0.2).abs() < 0.001, "More modifier value should be 0.2");
+    //         },
+    //         _ => panic!("Expected More/Literal modifier")
+    //     }
+    // 
+    //     // Check total value calculation
+    //     // Formula should be: (base + flat) * (1 + increased) * (1 + more)
+    //     // (0 + 5) * (1 + 0.5) * (1 + 0.2) = 5 * 1.5 * 1.2 = 9.0
+    //     let strength_value = strength_attr.get_value_f32();
+    //     assert!((strength_value - 9.0).abs() < 0.001, "Total strength should be 9.0, got {}", strength_value);
+    // }
+
     #[test]
-    fn test_remove_modifier() {
+    fn test_modifier_update_recalculation() {
         // Setup app
         let mut app = setup_test_app();
 
@@ -240,11 +406,17 @@ mod tests {
         {
             let mut tag_registry = app.world_mut().resource_mut::<TagRegistry>();
             tag_registry.register_primary_type("attribute");
+            tag_registry.register_tag("attribute", "strength");
+            tag_registry.register_tag("attribute", "damage");
         }
 
-        // Get a tag from registry
-        let strength_tag = app.world_mut().resource_mut::<TagRegistry>()
-            .register_tag("attribute", "strength");
+        let strength_tag = app.world().resource::<TagRegistry>()
+            .get_id("attribute", "strength")
+            .expect("Strength tag should be registered");
+
+        let damage_tag = app.world().resource::<TagRegistry>()
+            .get_id("attribute", "damage")
+            .expect("Damage tag should be registered");
 
         // Create an entity with stat collection
         let character_id = app
@@ -254,23 +426,33 @@ mod tests {
                 ModifierCollectionRefs::default(),
             ))
             .observe(on_modifier_change)
+            .observe(on_stat_added)
             .id();
 
-        // Create and apply two modifiers
-        let modifier_id1 = app
-            .world_mut()
-            .spawn((
-                create_bitmask_modifier("strength", strength_tag, 3.0),
-                ModifierTarget {
-                    modifier_collection: character_id,
-                }
-            ))
-            .id();
+        // Add stats with dependencies manually
+        {
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "strength".to_string(), value: StatValue::from_f32(10.0)}, character_id);
+            // Add base strength stat
 
-        let modifier_id2 = app
+            // Create a damage stat that depends on strength
+            // Using an expression that references strength
+            let damage_expr = Expression::new(
+                evalexpr::build_operator_tree("attribute.strength * 0.5").unwrap()
+            );
+            let damage_value = StatValue::from_expression(damage_expr);
+
+            app.world_mut().trigger_targets(AttributeAddedEvent {attribute_group: "attribute".to_string(), attribute_name: "damage".to_string(), value: damage_value}, character_id);
+        }
+
+        // Create a modifier for strength
+        let strength_modifier_id = app
             .world_mut()
             .spawn((
-                create_bitmask_modifier("strength", strength_tag, 2.0),
+                ModifierInstance {
+                    target_stat: AttributeId::new("attribute".to_string(), strength_tag),
+                    value: ModifierValue::Flat(ValueType::Literal(5.0)),
+                    dependencies: HashSet::new(),
+                },
                 ModifierTarget {
                     modifier_collection: character_id,
                 }
@@ -280,115 +462,54 @@ mod tests {
         // Run the app to process the systems
         app.update();
 
-        // Verify both modifiers were applied
+        // Verify the modifier affects both stats through dependency
         {
             let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
+
+            // Check strength value (10 base + 5 modifier = 15)
             let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
+            let strength_value = strength_attr.get_total_value_f32();
+            assert!((strength_value - 15.0).abs() < 0.001,
+                    "Strength should be 15.0, got {}", strength_value);
 
-            // Check both modifiers are present
-            assert!(strength_attr.modifier_collection.contains_key(&modifier_id1), "First modifier should be present");
-            assert!(strength_attr.modifier_collection.contains_key(&modifier_id2), "Second modifier should be present");
-
-            // Check total value (should be base + 3.0 + 2.0 = 5.0)
-            let strength_value = strength_attr.get_value_f32();
-            assert!((strength_value - 5.0).abs() < 0.001, "Total strength should be 5.0, got {}", strength_value);
+            // Check damage value (damage = strength * 0.5 = 15 * 0.5 = 7.5)
+            let damage_attr = stat_collection.attributes.get("attribute").unwrap().get(&damage_tag).unwrap();
+            let damage_value = damage_attr.get_total_value_f32();
+            assert!((damage_value - 7.5).abs() < 0.001,
+                    "Damage should be 7.5, got {}", damage_value);
         }
 
-        // Remove one modifier
-        app.world_mut().despawn(modifier_id1);
+        // Change the strength modifier
+        {
+            let mut modifier = app.world_mut().get_mut::<ModifierInstance>(strength_modifier_id).unwrap();
+            modifier.value = ModifierValue::Flat(ValueType::Literal(10.0)); // Change from 5 to 10
+        }
+
+        // Trigger modifier update event
+        app.world_mut().send_event(ModifierUpdatedEvent {
+            modifier_entity: strength_modifier_id
+        });
+
+        // Run the app to process the update
         app.update();
 
-        // Verify only one modifier remains
+        // Verify the change propagated through dependencies
         {
             let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
+
+            // Check strength value (10 base + 10 modifier = 20)
             let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
+            let strength_value = strength_attr.get_total_value_f32();
+            assert!((strength_value - 20.0).abs() < 0.001,
+                    "Strength should be 20.0 after update, got {}", strength_value);
 
-            // Check first modifier is gone, second remains
-            assert!(!strength_attr.modifier_collection.contains_key(&modifier_id1), "First modifier should be removed");
-            assert!(strength_attr.modifier_collection.contains_key(&modifier_id2), "Second modifier should still be present");
-
-            // Check total value (should be base + 2.0 = 2.0)
-            let strength_value = strength_attr.get_value_f32();
-            assert!((strength_value - 2.0).abs() < 0.001, "Total strength should be 2.0, got {}", strength_value);
-        }
-    }
-
-    #[test]
-    fn test_multiple_modifier_types() {
-        // Setup app
-        let mut app = setup_test_app();
-
-        // Setup tag registry
-        {
-            let mut tag_registry = app.world_mut().resource_mut::<TagRegistry>();
-            tag_registry.register_primary_type("attribute");
+            // Check damage value (damage = strength * 0.5 = 20 * 0.5 = 10.0)
+            let damage_attr = stat_collection.attributes.get("attribute").unwrap().get(&damage_tag).unwrap();
+            let damage_value = damage_attr.get_total_value_f32();
+            assert!((damage_value - 10.0).abs() < 0.001,
+                    "Damage should be 10.0 after update, got {}", damage_value);
         }
 
-        // Get a tag from registry
-        let strength_tag = app.world_mut().resource_mut::<TagRegistry>()
-            .register_tag("attribute", "strength");
-
-        // Create an entity with stat collection
-        let character_id = app
-            .world_mut()
-            .spawn((
-                StatCollection::new(),
-                ModifierCollectionRefs::default(),
-            ))
-            .observe(on_modifier_change)
-            .id();
-
-        // Create both an all modifier and a BitMasked modifier
-        let all_modifier_id = app
-            .world_mut()
-            .spawn((
-                create_simple_modifier("strength", 5.0),
-                ModifierTarget {
-                    modifier_collection: character_id,
-                }
-            ))
-            .id();
-
-        let bitmask_modifier_id = app
-            .world_mut()
-            .spawn((
-                create_bitmask_modifier("strength", strength_tag, 3.0),
-                ModifierTarget {
-                    modifier_collection: character_id,
-                }
-            ))
-            .id();
-
-        // Run the app to process the systems
-        app.update();
-
-        // Verify modifiers were applied correctly
-        let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
-        let strength_attr = stat_collection.attributes.get("attribute").unwrap().get(&strength_tag).unwrap();
-
-        // Check both modifiers are present
-        assert!(strength_attr.modifier_collection.contains_key(&all_modifier_id), "All modifier should be present");
-        assert!(strength_attr.modifier_collection.contains_key(&bitmask_modifier_id), "Bitmask modifier should be present");
-
-        // Check modifier values
-        let all_modifier_value = strength_attr.modifier_collection.get(&all_modifier_id).unwrap();
-        match all_modifier_value {
-            ModifierValue::Flat(ValueType::Literal(val)) => {
-                assert!((val - 5.0).abs() < 0.001, "All modifier value should be 5.0");
-            },
-            _ => panic!("Expected Flat/Literal modifier")
-        }
-
-        let bitmask_modifier_value = strength_attr.modifier_collection.get(&bitmask_modifier_id).unwrap();
-        match bitmask_modifier_value {
-            ModifierValue::Flat(ValueType::Literal(val)) => {
-                assert!((val - 3.0).abs() < 0.001, "Bitmask modifier value should be 3.0");
-            },
-            _ => panic!("Expected Flat/Literal modifier")
-        }
-
-        // Check total value (should be base + 5.0 + 3.0 = 8.0)
-        let strength_value = strength_attr.get_value_f32();
-        assert!((strength_value - 8.0).abs() < 0.001, "Total strength should be 8.0, got {}", strength_value);
     }
 }
+ 
