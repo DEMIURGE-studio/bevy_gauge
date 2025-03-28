@@ -17,8 +17,6 @@ pub enum ModType {
 // TODO ContextDrivenStats type that wraps stats, but contains a context (Hashmap of strings to entities). Can only call evaluate on it if you pass
 // in a StatContextRefs
 
-// TODO Move dependents into the "leaves" of stats. For a simple that's just the stat. For a modifiable and complex that's the StatModifierStep
-
 /// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
 pub struct Stats {
@@ -48,26 +46,26 @@ impl Stats {
         stat_type.evaluate(&segments, self)
     }
 
-    pub fn add_modifier<V, S>(&mut self, path: S, value: V)
+    pub fn add_modifier<V, S>(&mut self, stat_path: S, value: V)
     where
         S: Into<String>,
         V: Into<ValueType> + Clone,
     {
-        let path_str = path.into();
-        let segments: Vec<&str> = path_str.split("_").collect();
-        let base_path = segments[0].to_string();
+        let stat_path_str = stat_path.into();
+        let stat_path_segments: Vec<&str> = stat_path_str.split("_").collect();
+        let base_stat = stat_path_segments[0].to_string();
 
-        if let Some(stat) = self.definitions.get_mut(&base_path) {
-            stat.add_modifier(&segments, value.clone());
+        if let Some(stat) = self.definitions.get_mut(&base_stat) {
+            stat.add_modifier(&stat_path_segments, value.clone());
         } else {
-            self.definitions.insert(base_path.clone(), StatType::new(&path_str, value.clone()));
+            self.definitions.insert(base_stat.clone(), StatType::new(&stat_path_str, value.clone()));
         }
 
         let vt: ValueType = value.into();
         match vt {
             ValueType::Literal(_) => (),
-            ValueType::Expression(expression) => {
-                self.add_dependent(&base_path, &expression);
+            ValueType::Expression(depends_on_expression) => {
+                self.add_dependent(&base_stat, &depends_on_expression);
             },
         }
     }
@@ -82,7 +80,7 @@ impl Stats {
         let base_path = segments[0].to_string();
 
         if let Some(stat) = self.definitions.get_mut(&base_path) {
-            stat.remove_modifier(&segments[1..], value.clone());
+            stat.remove_modifier(&segments, value.clone());
         }
 
         let vt: ValueType = value.into();
@@ -94,38 +92,38 @@ impl Stats {
         }
     }
 
-    fn add_dependent(&mut self, dependent_path: &str, expression: &Expression) {
-        for var in expression.value.iter_variable_identifiers() {
-            let segments: Vec<&str> = var.split("_").collect();
-            let var_base = segments[0]; // The root stat name
+    fn add_dependent(&mut self, stat_path: &str, depends_on_expression: &Expression) {
+        for depends_on in depends_on_expression.value.iter_variable_identifiers() {
+            let depends_on_segments: Vec<&str> = depends_on.split("_").collect();
+            let depends_on_base = depends_on_segments[0]; // The root stat name
     
             // If the stat doesn't exist, create it as DependentOnly
-            if !self.definitions.contains_key(var_base) {
-                self.definitions.insert(var_base.to_string(), StatType::DependentOnly(DependentOnly::default()));
+            if !self.definitions.contains_key(depends_on_base) {
+                self.definitions.insert(stat_path.to_string(), StatType::DependentOnly(DependentOnly::default()));
             }
     
             // Add the dependent relationship
-            if let Some(dep_stat) = self.definitions.get_mut(var_base) {
-                dep_stat.add_dependent(dependent_path.to_string());
+            if let Some(dep_stat) = self.definitions.get_mut(depends_on_base) {
+                dep_stat.add_dependent(&depends_on_segments, stat_path);
             }
         }
     }
 
-    fn remove_dependent(&mut self, dependent_path: &str, expression: &Expression) {
-        for var in expression.value.iter_variable_identifiers() {
-            let segments: Vec<&str> = var.split("_").collect();
-            let var_base = segments[0]; // The root stat name
+    fn remove_dependent(&mut self, stat_path: &str, depends_on_expression: &Expression) {
+        for depends_on in depends_on_expression.value.iter_variable_identifiers() {
+            let depends_on_segments: Vec<&str> = depends_on.split("_").collect();
+            let depends_on_base = depends_on_segments[0]; // The root stat name
 
-            if let Some(dep_stat) = self.definitions.get_mut(var_base) {
-                dep_stat.remove_dependent(dependent_path);
+            if let Some(dep_stat) = self.definitions.get_mut(depends_on_base) {
+                dep_stat.remove_dependent(&depends_on_segments, stat_path);
             }
         }
     }
 }
 
 pub trait StatLike {
-    fn add_dependent(&mut self, dependent: String);
-    fn remove_dependent(&mut self, dependent: &str);
+    fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str);
+    fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str);
 }
 
 #[derive(Debug)]
@@ -226,10 +224,10 @@ impl StatType {
                 }
             },
             StatType::Modifiable(modifiable) => {
-                modifiable.remove_modifier(path[0], value);
+                modifiable.remove_modifier(path[1], value);
             },
             StatType::Complex(complex_modifiable) => {
-                complex_modifiable.remove_modifier(path[0], path[1].parse::<u32>().unwrap(), value);
+                complex_modifiable.remove_modifier(path[1], path[2].parse::<u32>().unwrap(), value);
             },
             StatType::DependentOnly(_) => {}
         }
@@ -237,21 +235,21 @@ impl StatType {
 }
 
 impl StatLike for StatType {
-    fn add_dependent(&mut self, dependent: String) {
+    fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
         match self {
-            StatType::Simple(simple) => simple.add_dependent(dependent),
-            StatType::Modifiable(modifiable) => modifiable.add_dependent(dependent),
-            StatType::Complex(complex_modifiable) => complex_modifiable.add_dependent(dependent),
-            StatType::DependentOnly(placeholder) => placeholder.add_dependent(dependent),
+            StatType::Simple(simple) => simple.add_dependent(stat_path, depends_on),
+            StatType::Modifiable(modifiable) => modifiable.add_dependent(stat_path, depends_on),
+            StatType::Complex(complex_modifiable) => complex_modifiable.add_dependent(stat_path, depends_on),
+            StatType::DependentOnly(dependent_only) => dependent_only.add_dependent(stat_path, depends_on),
         }
     }
-
-    fn remove_dependent(&mut self, dependent: &str) {
+    
+    fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
         match self {
-            StatType::Simple(simple) => simple.remove_dependent(dependent),
-            StatType::Modifiable(modifiable) => modifiable.remove_dependent(dependent),
-            StatType::Complex(complex_modifiable) => complex_modifiable.remove_dependent(dependent),
-            StatType::DependentOnly(placeholder) => placeholder.remove_dependent(dependent),
+            StatType::Simple(simple) => simple.remove_dependent(stat_path, depends_on),
+            StatType::Modifiable(modifiable) => modifiable.remove_dependent(stat_path, depends_on),
+            StatType::Complex(complex_modifiable) => complex_modifiable.remove_dependent(stat_path, depends_on),
+            StatType::DependentOnly(dependent_only) => dependent_only.remove_dependent(stat_path, depends_on),
         }
     }
 }
@@ -281,15 +279,15 @@ impl Simple {
 }
 
 impl StatLike for Simple {
-    fn add_dependent(&mut self, dependent: String) {
-        *self.dependents.entry(dependent).or_insert(0) += 1;
+    fn add_dependent(&mut self, _stat_path: &[&str], depends_on: &str) {
+        *self.dependents.entry(depends_on.to_string()).or_insert(0) += 1;
     }
 
-    fn remove_dependent(&mut self, dependent: &str) {
-        if let Some(count) = self.dependents.get_mut(dependent) {
+    fn remove_dependent(&mut self, _stat_path: &[&str], depends_on: &str) {
+        if let Some(count) = self.dependents.get_mut(depends_on) {
             *count -= 1;
             if *count == 0 {
-                self.dependents.remove(dependent);
+                self.dependents.remove(depends_on);
             }
         }
     }
@@ -375,15 +373,43 @@ impl Modifiable {
 }
 
 impl StatLike for Modifiable  {
-    fn add_dependent(&mut self, dependent: String) {
-        *self.dependents.entry(dependent).or_insert(0) += 1;
+    fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        match stat_path.len() {
+            1 => {
+                // Depending on total stat
+                *self.dependents.entry(depends_on.to_string()).or_insert(0) += 1;
+            }
+            2 => {
+                // Depending on specific modifier type
+                let step = stat_path[1];
+                let step_entry = self.modifier_types
+                    .entry(step.to_string())
+                    .or_insert(StatModifierStep::new(step));
+                step_entry.add_dependent(depends_on);
+            }
+            _ => {
+                // Invalid path length - could log a warning here
+            }
+        }
     }
 
-    fn remove_dependent(&mut self, dependent: &str) {
-        if let Some(count) = self.dependents.get_mut(dependent) {
-            *count -= 1;
-            if *count == 0 {
-                self.dependents.remove(dependent);
+    fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        match stat_path.len() {
+            1 => {
+                if let Some(count) = self.dependents.get_mut(depends_on) {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.dependents.remove(depends_on);
+                    }
+                }
+            }
+            2 => {
+                if let Some(step) = self.modifier_types.get_mut(stat_path[1]) {
+                    step.remove_dependent(depends_on);
+                }
+            }
+            _ => {
+                // Invalid path length
             }
         }
     }
@@ -393,7 +419,6 @@ impl StatLike for Modifiable  {
 pub struct ComplexModifiable {
     pub total: Expression, // "(Added * Increased * More) override"
     pub modifier_types: HashMap<String, HashMap<u32, StatModifierStep>>,
-    pub dependents: HashMap<String, u32>, // Added simple dependents map like other types
 }
 
 impl ComplexModifiable {
@@ -404,7 +429,6 @@ impl ComplexModifiable {
                 value: evalexpr::build_operator_tree(get_total_expr_from_name(name)).unwrap() 
             }, 
             modifier_types: HashMap::new(),
-            dependents: HashMap::new(), // Initialize empty dependents
         }
     }
 
@@ -502,17 +526,44 @@ impl ComplexModifiable {
 }
 
 impl StatLike for ComplexModifiable {
-    fn add_dependent(&mut self, dependent: String) {
-        *self.dependents.entry(dependent).or_insert(0) += 1;
+    fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        if stat_path.len() != 3 {
+            return;
+        } // log a warning?
+        
+        // Format should be "Damage_Added_123" where 123 is the tag
+        let modifier_type = stat_path[1];
+        if let Ok(tag) = stat_path[2].parse::<u32>() {
+            let step_map = self.modifier_types
+                .entry(modifier_type.to_string())
+                .or_insert(HashMap::new());
+            
+            let step = step_map
+                .entry(tag)
+                .or_insert(StatModifierStep::new(modifier_type));
+            
+            step.add_dependent(depends_on);
+        }
     }
 
-    fn remove_dependent(&mut self, dependent: &str) {
-        if let Some(count) = self.dependents.get_mut(dependent) {
-            *count -= 1;
-            if *count == 0 {
-                self.dependents.remove(dependent);
-            }
-        }
+    fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        if stat_path.len() != 3 {
+            return;
+        } // log a warning?
+
+        let Some(step_map) = self.modifier_types.get_mut(stat_path[1]) else {
+            return;
+        }; // log a warning?
+        
+        let Ok(tag) = stat_path[2].parse::<u32>() else {
+            return;
+        }; // log a warning?
+        
+        let Some(step) = step_map.get_mut(&tag) else {
+            return;
+        }; // log a warning?
+
+        step.remove_dependent(depends_on);
     }
 }
 
@@ -522,15 +573,20 @@ pub struct DependentOnly {
 }
 
 impl StatLike for DependentOnly {
-    fn add_dependent(&mut self, dependent: String) {
-        *self.dependents.entry(dependent).or_insert(0) += 1;
+    fn add_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        // DependentOnly stats only track dependents at the root level
+        if stat_path.len() == 1 {
+            *self.dependents.entry(depends_on.to_string()).or_insert(0) += 1;
+        }
     }
 
-    fn remove_dependent(&mut self, dependent: &str) {
-        if let Some(count) = self.dependents.get_mut(dependent) {
-            *count -= 1;
-            if *count == 0 {
-                self.dependents.remove(dependent);
+    fn remove_dependent(&mut self, stat_path: &[&str], depends_on: &str) {
+        if stat_path.len() == 1 {
+            if let Some(count) = self.dependents.get_mut(depends_on) {
+                *count -= 1;
+                if *count == 0 {
+                    self.dependents.remove(depends_on);
+                }
             }
         }
     }
@@ -541,12 +597,13 @@ pub struct StatModifierStep {
     pub relationship: ModType,
     pub base: f32,
     pub mods: Vec<Expression>,
+    pub dependents: HashMap<String, u32>,
 }
 
 impl StatModifierStep {
     pub fn new(name: &str) -> Self {
         let base = 0.0; // get_initial_value_for_modifier(name);
-        Self { relationship: ModType::Add, base, mods: Vec::new() }
+        Self { relationship: ModType::Add, base, mods: Vec::new(), dependents: HashMap::new() }
     }
 
     pub fn evaluate(&self, stat_definitions: &Stats) -> f32 {
@@ -593,6 +650,19 @@ impl StatModifierStep {
             }
         }
     }
+
+    fn add_dependent(&mut self, dependent: &str) {
+        *self.dependents.entry(dependent.to_string()).or_insert(0) += 1;
+    }
+
+    fn remove_dependent(&mut self, dependent: &str) {
+        if let Some(count) = self.dependents.get_mut(dependent) {
+            *count -= 1;
+            if *count == 0 {
+                self.dependents.remove(dependent);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -603,12 +673,11 @@ pub struct Expression {
 
 impl Expression {
     pub fn evaluate(&self, stat_definitions: &Stats) -> f32 {
-        let mut context = HashMapContext::new();
-        for var_name in self.value.iter_variable_identifiers() {
-            let val = stat_definitions.evaluate(var_name);
-            context.set_value(var_name.to_string(), Value::Float(val as f64)).unwrap();
-        }
-        self.value.eval_with_context(&context).unwrap().as_number().unwrap() as f32
+        self.value
+            .eval_with_context(&stat_definitions.cached_stats)
+            .unwrap_or(Value::Float(0.0))
+            .as_number()
+            .unwrap_or(0.0) as f32
     }
 }
 
