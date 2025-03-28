@@ -1,5 +1,5 @@
 use bevy::{ecs::component::Component, utils::HashMap};
-use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
+use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 
 #[derive(Debug, Clone, Default)]
 pub enum ModType {
@@ -14,16 +14,23 @@ pub enum ModType {
 // TODO Fix overuse of .unwrap(). It's fine for now (maybe preferable during development) but in the future we'll want proper errors, panics, and 
 // warnings.
 
+// TODO ContextDrivenStats type that wraps stats, but contains a context (Hashmap of strings to entities). Can only call evaluate on it if you pass
+// in a StatContextRefs
+
+// TODO Move dependents into the "leaves" of stats. For a simple that's just the stat. For a modifiable and complex that's the StatModifierStep
+
 /// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
 pub struct Stats {
+    // Holds the definitions of stats. This includes default values, their modifiers, and their dependents
     pub definitions: HashMap<String, StatType>,
+    pub cached_stats: HashMapContext,
     pub context: HashMapContext,
 }
 
 impl Stats {
     pub fn new() -> Self {
-        Self { definitions: HashMap::new(), context: HashMapContext::new() }
+        Self { definitions: HashMap::new(), cached_stats: HashMapContext::new(), context: HashMapContext::new() }
     }
 
     /// Evaluates a stat by gathering all its parts and combining their values.
@@ -688,7 +695,6 @@ stat_macros::define_tags! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::utils::HashMap;
 
     fn assert_approx_eq(a: f32, b: f32) {
         assert!((a - b).abs() < f32::EPSILON * 100.0, "left: {}, right: {}", a, b);
