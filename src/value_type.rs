@@ -44,7 +44,7 @@ impl StatValue {
         }
     }
     
-    pub fn extract_dependencies(&self) -> Option<HashMap<String, String>> {
+    pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
         let bound_deps = if let Some(bounds) = &self.bounds {
             bounds.extract_dependencies()
         } else { None };
@@ -53,7 +53,7 @@ impl StatValue {
         if bound_deps.is_none() && deps.is_none() {
             return None;
         }
-        let mut dependencies = HashMap::new();
+        let mut dependencies = Vec::new();
         
         if let Some(bound_deps) = &bound_deps {
             dependencies.extend(bound_deps.clone());
@@ -77,7 +77,7 @@ impl StatValue {
         }
     }
 
-    pub fn update_value_with_context(&mut self, stats: &StatCollection, tag_registry: &TagRegistry) {
+    pub fn update_value_with_context(&mut self, value_context: &HashMap<String, f32>) {
         // Collect all variable names/values for both the main expression
         // and any expressions in the bounds
         let mut all_variable_names = HashSet::new();
@@ -149,23 +149,20 @@ impl StatValue {
             let tag_str = parts[1];
 
             // Try to get the tag ID - first try to parse as numeric ID, then use the registry
-            let tag_id = if let Ok(id) = tag_str.parse::<u32>() {
-                Some(id)
-            } else {
-                // If not a numeric ID, try to look it up in the registry
-                tag_registry.get_id(group.clone(), tag_str)
-            };
+            // let tag_id = if let Ok(id) = tag_str.parse::<u32>() {
+            //     Some(id)
+            // } else {
+            //     // If not a numeric ID, try to look it up in the registry
+            //     tag_registry.get_id(group.clone(), tag_str)
+            // };
 
             // If we have a valid tag ID, try to get the attribute value
-            let val = if let Some(id) = tag_id {
-                match stats.get_f32(AttributeId {group: group.to_string() , tag: id}) {
-                    Ok(value) => value as f64,
-                    Err(_) => 0.0,
-                }
-            } else {
-                // If we couldn't resolve the tag ID, default to 0
-                0.0
-            };
+            let val = 
+                match value_context.get(format!("{}.{}", group, tag_str).as_str()) {
+                    Some(&value) => value as f64,
+                    None => 0.0,
+                };
+
 
             variable_values.insert(var_name.clone(), val);
 
@@ -280,8 +277,8 @@ impl ValueBounds {
         Self { min, max }
     }
     
-    pub fn extract_dependencies(&self) -> Option<HashMap<String, String>> {
-        let mut bound_dependencies = HashMap::new();
+    pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
+        let mut bound_dependencies = Vec::new();
         if let Some(min) = &self.min {
             if let Some(min_deps) = min.extract_dependencies(){
                 bound_dependencies.extend(min_deps);
@@ -320,7 +317,7 @@ impl ValueType {
     }
     
     
-    pub fn extract_dependencies(&self) -> Option<HashMap<String, String>> {
+    pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
         match self {
             ValueType::Literal(_) => { None }
             ValueType::Expression(expr) => { Some(expr.extract_dependencies()) }
@@ -359,15 +356,15 @@ impl Expression {
         }
     }
 
-    pub fn extract_dependencies(&self) -> HashMap<String, String> {
+    pub fn extract_dependencies(&self) -> Vec<(String, String)> {
         let identifiers: Vec<_> = self.iter_variable_identifiers()
             .map(|val| String::from(val))
             .collect();
         
-        let mut dependencies = HashMap::new();
+        let mut dependencies:Vec<(String, String)> = Vec::new();
         for identifier in identifiers {
             let group_type = identifier.split('.').collect::<Vec<&str>>();
-            dependencies.insert(group_type[0].to_string(), group_type[1].to_string());
+            dependencies.push((group_type[0].to_string(), group_type[1].to_string()));
         };
         dependencies
     }

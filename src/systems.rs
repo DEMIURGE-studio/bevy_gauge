@@ -864,12 +864,17 @@ mod tests {
                 attribute_name: "strength".to_string(),
                 value: StatValue::from_f32(10.0)
             }, character_id);
+            
+            println!("strength added");
 
             app.world_mut().trigger_targets(AttributeAddedEvent {
                 attribute_group: "attribute".to_string(),
                 attribute_name: "damage".to_string(),
                 value: StatValue::from_f32(5.0)
             }, character_id);
+
+
+            println!("damage added");
         }
 
         // Create a modifier that depends on strength
@@ -894,9 +899,12 @@ mod tests {
             ))
             .id();
 
+        println!("dynamic modifier added");
+
         // Run the app to process the systems
         app.update();
 
+        app.update();
         // Verify the initial modifier effect
         {
             let stat_collection = app.world().get::<StatCollection>(character_id).unwrap();
@@ -905,7 +913,7 @@ mod tests {
             // Expression should evaluate to strength * 0.1 = 10 * 0.1 = 1.0
             // Damage should be 5 * (1 + 1.0) = 10.0
             let damage_value = stat_collection.get_f32(AttributeId::new("attribute".to_string(), damage_tag)).unwrap();
-            assert!((damage_value - 6.0).abs() < 0.001, "Damage should be 6.0, got {}", damage_value);
+            assert!((damage_value - 10.0).abs() < 0.001, "Damage should be 10.0, got {}", damage_value);
         }
 
         // Update strength

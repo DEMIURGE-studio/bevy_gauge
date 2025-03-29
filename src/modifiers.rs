@@ -13,11 +13,11 @@ pub enum ModifierValue {
 }
 
 impl ModifierValue {
-    pub fn update_value_with_ctx(&mut self, stat_collection: &StatCollection, tag_registry: &Res<TagRegistry>) {
+    pub fn update_value_with_ctx(&mut self, stat_context: HashMap<String, f32>, tag_registry: &Res<TagRegistry>) {
         match self {
-            ModifierValue::Flat(vt) => {vt.update_value_with_context(stat_collection, tag_registry);}
-            ModifierValue::Increased(vt) => {vt.update_value_with_context(stat_collection, tag_registry);}
-            ModifierValue::More(vt) => {vt.update_value_with_context(stat_collection, tag_registry);}
+            ModifierValue::Flat(vt) => {vt.update_value_with_context(&stat_context);}
+            ModifierValue::Increased(vt) => {vt.update_value_with_context(&stat_context);}
+            ModifierValue::More(vt) => {vt.update_value_with_context(&stat_context);}
         }
     }
     
@@ -146,10 +146,13 @@ fn on_modifier_added(
     tag_registry: Res<TagRegistry>,
 ) {
     
+    println!("on_modifier_added");
     if let Ok((modifier, stat_entity)) = modifier_query.get(trigger.target()) {
         if let Ok((entity, mut stat_collection)) =
             stat_query.get_mut(stat_entity.modifier_collection)
         {
+
+            println!("add_replace");
             stat_collection.add_or_replace_modifier(modifier, trigger.target(), &tag_registry, &mut commands);
             commands.trigger_targets(
                 AttributeUpdatedEvent {
@@ -178,13 +181,31 @@ fn on_modifier_removed(
     if let Ok((entity, mut stat_collection)) = stat_query.single_mut() {
         if let Ok((modifier, stat_entity)) = modifier_query.get(trigger.target()) {
             stat_collection.remove_modifier(trigger.target(), &tag_registry, &mut commands);
-            commands.trigger_targets(
-                AttributeUpdatedEvent {
-                    stat_id: modifier.target_stat.clone(),
-                    value: stat_collection.get_stat_value(modifier.target_stat.clone()),
-                },
-                entity,
-            );
+
+            let mut modifier_deps = Vec::new();
+
+            if let Some(target_group) = stat_collection.attributes.get_mut(&modifier.target_stat.group) {
+                for (key, value) in target_group {
+                    if key & modifier.target_stat.tag > 0 {
+                        modifier_deps = modifier.dependencies.clone().iter().collect();
+                        value.remove_modifier(trigger.target());
+                        // NEED TO REMOVE FROM COLLECTION TODO
+                        
+                        //value.add_or_replace_modifier(modifier, modifier_entity);
+                        //self.attribute_modifiers.entry(modifier_entity).or_insert_with(HashSet::new).insert(modifier.target_stat.clone());
+
+                    }
+                }
+                // self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
+            }
+            stat_collection.recalculate_attribute_and_dependents(modifier.target_stat.clone(), &tag_registry, &mut commands);
+            // commands.trigger_targets(
+            //     AttributeUpdatedEvent {
+            //         stat_id: modifier.target_stat.clone(),
+            //         value: stat_collection.get_stat_value(modifier.target_stat.clone()),
+            //     },
+            //     entity,
+            // );
         }
     }
 }
@@ -206,8 +227,11 @@ pub fn on_modifier_change(
             modifier_instance.value = new_val.clone();
         }
         if let Ok(mut stats) = stat_query.get_mut(modifier_target.modifier_collection) {
-            modifier_instance.value.update_value_with_ctx(&stats, &registry);
-            println!("modifier change: {:?}", &modifier_instance.value);
+            if let Some(dependencies) = modifier_instance.value.get_value().extract_dependencies() {
+                let context = stats.get_stat_relevant_context(&dependencies, &registry);
+                modifier_instance.value.update_value_with_ctx(context, &registry);
+                println!("modifier change: {:?}", &modifier_instance.value);
+            }
             let mut attributes_to_recalculate = Vec::new();
             if let Some(attribute_ids) = stats.attribute_modifiers.get(&trigger.target()) {
                 for attribute_id in attribute_ids {

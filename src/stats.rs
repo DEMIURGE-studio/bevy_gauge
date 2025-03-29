@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
+use bevy_mod_debugdump::print_render_graph;
+use rand::{thread_rng, Rng};
 use crate::prelude::{AttributeInstance};
 use crate::resource::ResourceInstance;
 use crate::tags::TagRegistry;
@@ -25,6 +27,11 @@ pub struct AttributeId {
 impl AttributeId {
     pub fn new(group: String, tag: u32) -> Self {
         Self { group, tag }
+    }
+    
+    pub fn to_string(&self, tag_registry: &TagRegistry) -> String {
+        let attribute_string = format!("{}.{}", self.group, tag_registry.get_tag(&self.group, self.tag).unwrap());
+        attribute_string
     }
 }
 
@@ -228,6 +235,8 @@ impl StatCollection {
     // Tree walk to recalculate attributes and their dependents
 
     fn tree_walk_calculate(&mut self, attr_id: AttributeId, processed: &mut HashSet<AttributeId>, processed_modifiers: &mut EntityHashSet, tag_registry: &Res<TagRegistry>, commands: &mut Commands) {
+        println!("Walking: {:?} {:?}", attr_id, tag_registry.get_tag(&attr_id.group, attr_id.tag));
+        
         // Skip if already processed
         if processed.contains(&attr_id){
             return;
@@ -250,53 +259,21 @@ impl StatCollection {
                 }
             }
 
-            println!("HELLO1");
-            for dependent_modifier in &attribute_instance.dependent_modifiers {
+            println!("getting dependent modifiers for {:?}", tag_registry.get_tag(&attr_id.group, attr_id.tag));
+            for dependent_modifier in attribute_instance.dependent_modifiers.iter() {
+                print!("dependent modifier loop");
                 if !processed_modifiers.contains(dependent_modifier) {
                     dependent_modifiers.push(*dependent_modifier);
-                    processed_modifiers.insert(*dependent_modifier);
                 }
+
             }
             
         }
         
-        // let (dependents, dependent_modifiers) = if let Some(attr_group) = self.attributes.get(&attr_id.group) {
-        //     if let Some(attribute) = attr_group.get(&attr_id.tag) {
-        //         // Collect dependent attributes
-        //         let mut all_dependents = Vec::new();
-        //         if let Some(ref dependent_attrs) = attribute.dependent_attributes {
-        // 
-        //             for (dep_group, dep_tags) in dependent_attrs {
-        //                 for &dep_tag in dep_tags {
-        // 
-        //                     all_dependents.push(AttributeId::new(dep_group.clone(), dep_tag));
-        //                 }
-        //             }
-        //         }
-        // 
-        //         // Collect dependent modifiers
-        //         let mut all_dependent_modifiers = Vec::new();
-        //         for entity in &attribute.dependent_modifiers {
-        //             println!("dependent modifier found");
-        //             if !processed_modifiers.contains(entity) {
-        //                 all_dependent_modifiers.push(*entity);
-        //                 processed_modifiers.insert(*entity);
-        //             }
-        //         }
-        // 
-        //         (all_dependents, all_dependent_modifiers)
-        //     } else {
-        //         (Vec::new(), Vec::new())
-        //     }
-        // } else {
-        //     (Vec::new(), Vec::new())
-        // };
-
-        // Update this attribute's value
         self.update_dependent_attribute(attr_id.clone(), tag_registry, commands);
 
 
-        println!("{:?} {:?}", dependent_attributes, dependent_modifiers);
+        println!("{:?} {:?}", dependent_attributes, dependent_modifiers.clone());
         
         // Process dependent modifiers and collect affected attributes
         // let mut modifier_affected_attributes = Vec::new();
@@ -304,10 +281,14 @@ impl StatCollection {
         // Process dependents without holding mutable borrow
         for dependent in dependent_attributes {
             self.tree_walk_calculate(dependent, processed, processed_modifiers, tag_registry, commands);
-        }
 
-        println!("trigger_update_update_dependent");
+        }
+        
+        println!("Walk ended: {:?}", attr_id);
+
+        // println!("trigger_update_update_dependent");
         for modifier_entity in dependent_modifiers {
+            processed_modifiers.insert(modifier_entity);
             commands.trigger_targets(ModifierUpdatedEvent{ new_value: None }, modifier_entity);
             //self.update_modifier(modifier_entity, tag_registry, commands); 
         }
@@ -326,6 +307,7 @@ impl StatCollection {
     //         }
     //     }
     }
+    
 
     // Get a stat value by group and tag
     pub fn get_f32(&self, attribute_id: AttributeId) -> Result<f32, StatError> {
@@ -353,6 +335,16 @@ impl StatCollection {
         }
         None
     }
+
+    fn get_stat_value_mut(&mut self, attribute_id: AttributeId) -> Option<&mut StatValue> {
+        if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
+            if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
+                return Some(&mut attribute.value)
+            }
+            return None
+        }
+        None
+    }
     
     pub fn get_attribute_instance(&self, attribute_id: AttributeId) -> Option<&AttributeInstance> {
         if let Some(attribute_group) = self.attributes.get(&attribute_id.group) {
@@ -374,80 +366,100 @@ impl StatCollection {
         }
         None
     }
+    
+    pub fn get_stat_relevant_context(&self, attribute_group_tag: &[(String, String)], tag_registry: &TagRegistry) -> HashMap<String, f32> {
+        let mut stat_relevant_context = HashMap::new();
+        for (group, tag) in attribute_group_tag {
+            let attribute_id = AttributeId { group: group.clone(), tag: tag_registry.get_id(group, tag).unwrap() };
+            stat_relevant_context.insert(format!("{}.{}", group.clone(), tag.clone()), self.get_f32(attribute_id).unwrap());
+            // for (group, tags) in self.get_attribute_instance(attribute_id.clone()).unwrap().dependencies.clone().unwrap().iter() {
+            //     for stat in tags {
+            //         stat_relevant_context.insert(attribute_id.to_string(tag_registry), self.get_f32(AttributeId {group: group.clone(), tag: *stat}).unwrap());
+            //     }
+            // }
+        }
+        stat_relevant_context
+    }
 
 
     // Update a dependent attribute's value
     pub fn update_dependent_attribute(&mut self, attribute_id: AttributeId, tag_registry: &TagRegistry, commands: &mut Commands) {
+        let value = thread_rng().gen_range(0..1000);
+        println!("updating dependent: {:?} {:?}", attribute_id, value);
         // Two-step process to avoid borrowing issues:
         // 1. Clone the StatValue from the attribute (if it exists)
-        let mut stat_value = if let Some(attr_group) = self.attributes.get(&attribute_id.group) {
-            if let Some(attribute) = attr_group.get(&attribute_id.tag) {
-                Some(attribute.value.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
-        // 2. If we have a stat value, update it with the current stat collection
-        if let Some(ref mut value) = stat_value {
-            value.update_value_with_context(self, tag_registry);
-
-            // 3. Now place the updated value back in the attribute
-            if let Some(attr_group) = self.attributes.get_mut(&attribute_id.group) {
-                if let Some(attribute) = attr_group.get_mut(&attribute_id.tag) {
-                    let new_val = value.clone();
-                    if (attribute.value.get_value_f32() - new_val.get_value_f32()).abs() > 0.001 {
-                        for (&modifier, value) in attribute.modifier_collection.iter() {
-                            println!("trigger_update_update_dependent");
-                            commands.trigger_targets(ModifierUpdatedEvent{ new_value: Some(value.clone())}, modifier);
-                        }
-                    }
-                    attribute.value = new_val;
+        let mut dependency_strings: Vec<(String, String)> = Vec::new();
+        if let Some(stat_value) = self.get_stat_value_mut(attribute_id.clone()) {
+            if let Some(dependencies) = stat_value.extract_dependencies() {
+                for (dependency_group, dependency_tag ) in dependencies {
+                    dependency_strings.push((dependency_group, dependency_tag));
                 }
             }
         }
+
+        let stat_snapshot = self.get_stat_relevant_context(&dependency_strings, tag_registry).clone();
+
+        // 2. If we have a stat value, update it with the current stat collection
+        if let Some(value) = self.get_stat_value_mut(attribute_id.clone()) {
+            println!("current value: {:?}", value);
+            value.update_value_with_context(&stat_snapshot);
+            println!("current value: {:?}", value);
+        
+            // println!("trigger_update_update_dependent");
+            // 3. Now place the updated value back in the attribute
+            if let Some(attr_group) = self.attributes.get_mut(&attribute_id.group) {
+                if let Some(attribute) = attr_group.get_mut(&attribute_id.tag) {
+        
+                    //println!("trigger_update_update_dependent");
+                    for modifier in &attribute.dependent_modifiers {
+                        commands.trigger_targets(ModifierUpdatedEvent { new_value: None }, *modifier);
+                    }
+                }
+            }
+        }
+
+        println!("end update dependent: {:?} {:?}", attribute_id, value);
 
 
         
     }
 
     // Recalculate all stats using tree-walking
-    pub fn recalculate_all(&mut self, registry: &Res<TagRegistry>, commands: &mut Commands) {
-        // Find all attributes with no dependencies (roots of the tree)
-        let mut root_attrs = Vec::new();
-
-        for (group, attr_group) in &self.attributes {
-            for (&tag, attribute) in attr_group {
-                if attribute.dependencies.is_none() || attribute.dependencies.as_ref().unwrap().is_empty() {
-                    root_attrs.push(AttributeId::new(group.clone(), tag));
-                }
-            }
-        }
-
-        // Process each root attribute first
-        let mut processed = HashSet::new();
-        let mut processed_modifiers = EntityHashSet::default();
-        for root_attr in root_attrs {
-            self.tree_walk_calculate(root_attr, &mut processed, &mut processed_modifiers, registry, commands);
-        }
-
-        // Then process any remaining attributes that weren't reached
-        let mut all_attrs = Vec::new();
-        for (group, attr_group) in &self.attributes {
-            for (&tag, _) in attr_group {
-                all_attrs.push(AttributeId::new(group.clone(), tag));
-            }
-        }
-
-        for attr in all_attrs {
-            if !processed.contains(&attr) {
-                self.tree_walk_calculate(attr, &mut processed, &mut processed_modifiers, registry, commands);
-            }
-        }
-    }
-
+    // pub fn recalculate_all(&mut self, registry: &Res<TagRegistry>, commands: &mut Commands) {
+    //     // Find all attributes with no dependencies (roots of the tree)
+    //     let mut root_attrs = Vec::new();
+    // 
+    //     for (group, attr_group) in &self.attributes {
+    //         for (&tag, attribute) in attr_group {
+    //             if attribute.dependencies.is_none() || attribute.dependencies.as_ref().unwrap().is_empty() {
+    //                 root_attrs.push(AttributeId::new(group.clone(), tag));
+    //             }
+    //         }
+    //     }
+    // 
+    //     // Process each root attribute first
+    //     let mut processed = HashSet::new();
+    //     let mut processed_modifiers = EntityHashSet::default();
+    //     for root_attr in root_attrs {
+    //         self.tree_walk_calculate(root_attr, &mut processed, &mut processed_modifiers, registry, commands);
+    //     }
+    // 
+    //     // Then process any remaining attributes that weren't reached
+    //     let mut all_attrs = Vec::new();
+    //     for (group, attr_group) in &self.attributes {
+    //         for (&tag, _) in attr_group {
+    //             all_attrs.push(AttributeId::new(group.clone(), tag));
+    //         }
+    //     }
+    // 
+    //     for attr in all_attrs {
+    //         if !processed.contains(&attr) {
+    //             self.tree_walk_calculate(attr, &mut processed, &mut processed_modifiers, registry, commands);
+    //         }
+    //     }
+    // }
+    // 
 
 
     pub fn get_hanging_attributes(&self) -> &HashMap<AttributeId, HashSet<AttributeId>> {
@@ -456,6 +468,8 @@ impl StatCollection {
 
 
     pub fn add_or_replace_modifier(&mut self, modifier: &ModifierInstance, modifier_entity: Entity, tag_registry: &Res<TagRegistry>, commands: &mut Commands) {
+        println!("add_or_replace_modifier: {:?}", modifier);
+        
         let mut modifier_deps = Vec::new();
         
         if let Some(target_group) = self.attributes.get_mut(&modifier.target_stat.group) {
@@ -469,22 +483,28 @@ impl StatCollection {
                     }
                 }
             }
-            self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
+            // self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
         }
 
         for modifier_dep in &modifier_deps {
             if let Some(attribute_instance) = self.get_attribute_instance_mut(modifier_dep.clone()){
+                println!("dependent modifier added to {:?}", tag_registry.get_tag(modifier_dep.group.as_ref(), modifier_dep.tag));
                 attribute_instance.dependent_modifiers.insert(modifier_entity);
             }
+        }
+
+        for dependency in &modifier.dependencies {
+            self.recalculate_attribute_and_dependents(dependency.clone(), tag_registry, commands)
         }
 
         self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
     }
 
     pub fn remove_modifier(&mut self, modifier_entity: Entity, tag_registry: &Res<TagRegistry>, commands: &mut Commands) {
+        println!("remove_modifier: {:?}", modifier_entity);
         let mut attributes_to_recalculate = Vec::new();
         if let Some(attribute_ids) = self.attribute_modifiers.get_mut(&modifier_entity) {
-            for attribute_id in attribute_ids.drain() {
+            for attribute_id in attribute_ids.iter() {
                 if let Some(attribute_tags) = self.attributes.get_mut(&attribute_id.group) {
                     if let Some(attribute) = attribute_tags.get_mut(&attribute_id.tag) {
                         attribute.remove_modifier(modifier_entity);
@@ -513,6 +533,7 @@ impl StatCollection {
             self.recalculate_attribute_and_dependents(attribute_id.clone(), &registry, commands);
         }
     }
+
 }
 
 
@@ -544,6 +565,21 @@ pub fn on_stat_added(
     add_stat_to_collection(&mut stat_collection, &trigger.attribute_group, &trigger.attribute_name, trigger.value.clone(), &registry, commands);
 }
 
+
+pub fn on_stat_updated(
+    trigger: Trigger<AttributeUpdatedEvent>,
+    mut stat_query: Query<&mut StatCollection>,
+    registry: Res<TagRegistry>,
+    mut commands: Commands,
+) {
+    let mut stat_collection = stat_query.get_mut(trigger.target()).unwrap();
+    if let Some(value) = stat_collection.get_attribute_instance_mut(trigger.stat_id.clone()) {
+        value.value = trigger.value.clone().unwrap();
+        stat_collection.recalculate_attribute_and_dependents(trigger.stat_id.clone(), &registry, &mut commands);
+    }
+    // add_stat_to_cVollection(&mut stat_collection, &trigger.attribute_group, &trigger.attribute_name, trigger.value.clone(), &registry, commands);
+}
+
 #[derive(Event, Debug)]
 pub struct AttributeAddedEvent {
     pub attribute_name: String,
@@ -560,6 +596,7 @@ pub struct AttributeUpdatedEvent {
 pub fn register_stat_triggers(app: &mut App) {
     app.add_event::<AttributeAddedEvent>()
         .add_event::<AttributeUpdatedEvent>()
+        .add_observer(on_stat_updated)
         .add_observer(on_stat_added);
 }
 
