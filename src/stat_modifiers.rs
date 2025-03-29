@@ -1,6 +1,6 @@
+use std::cell::SyncUnsafeCell;
 use bevy::{ecs::component::Component, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
-
 use crate::error::StatError;
 
 #[derive(Debug, Clone, Default)]
@@ -21,20 +21,43 @@ pub enum ModType {
 pub struct Stats {
     // Holds the definitions of stats. This includes default values, their modifiers, and their dependents
     pub definitions: HashMap<String, StatType>,
-    pub cached_stats: HashMapContext,
+    pub cached_stats: SyncContext,
+}
+
+#[derive(Debug, Default)]
+pub struct SyncContext(pub SyncUnsafeCell<HashMapContext>);
+
+impl SyncContext {
+    pub fn new() -> Self {
+        Self(SyncUnsafeCell::new(HashMapContext::new()))
+    }
+
+    pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
+        unsafe {
+            if let Some(stat_value) = (*self.0.get()).get_value(stat_path.into()) {
+                return Ok(stat_value.as_float().unwrap_or(0.0) as f32);
+            }
+        }
+
+        return Err(StatError::NotFound("Stat not found in get".to_string()));
+    }
+
+    pub fn set(&self, stat_path: &str, value: f32) {
+        unsafe { (*self.0.get()).set_value(stat_path.to_string(), Value::Float(value as f64)).unwrap() }
+    }
+
+    pub fn context(&self) -> &HashMapContext {
+        unsafe { &*self.0.get() }
+    }
 }
 
 impl Stats {
     pub fn new() -> Self {
-        Self { definitions: HashMap::new(), cached_stats: HashMapContext::new() }
+        Self { definitions: HashMap::new(), cached_stats: SyncContext::new() }
     }
 
     pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
-        if let Some(stat_value) = self.cached_stats.get_value(stat_path.into()) {
-            return Ok(stat_value.as_float().unwrap_or(0.0) as f32);
-        }
-
-        return Err(StatError::NotFound("Stat not found in get".to_string()));
+        return self.cached_stats.get(stat_path);
     }
 
     /// Evaluates a stat by gathering all its parts and combining their values.
@@ -71,7 +94,7 @@ impl Stats {
         let value = self.evaluate(stat_path);
 
         // Update the cached value
-        self.cached_stats.set_value(stat_path.to_string(), Value::Float(value as f64)).unwrap();
+        self.cached_stats.set(stat_path, value);
     }
 
     pub fn add_modifier<V, S>(&mut self, stat_path: S, value: V)
@@ -502,7 +525,7 @@ impl StatLike for Modifiable  {
                 self
                     .total
                     .value
-                    .eval_with_context(&stats.cached_stats)
+                    .eval_with_context(stats.cached_stats.context())
                     .unwrap()
                     .as_number()
                     .unwrap() as f32
@@ -512,7 +535,7 @@ impl StatLike for Modifiable  {
                     return 0.0;
                 };
         
-                part.evaluate(&stats.cached_stats)
+                part.evaluate(stats.cached_stats.context())
             }
             _ => 0.0
         }
@@ -524,9 +547,9 @@ impl StatLike for Modifiable  {
         for (modifier_name, _) in self.modifier_types.iter() {
             // Ensure the modifier step exists in the definitions
             let full_modifier_path = format!("{}_{}", base_name, modifier_name);
-            if stats.cached_stats.get_value(&full_modifier_path).is_none() {
-                let val = self.modifier_types.get(modifier_name).unwrap().evaluate(&stats.cached_stats);
-                stats.cached_stats.set_value(full_modifier_path, Value::<DefaultNumericTypes>::Float(val as f64)).unwrap();
+            if stats.cached_stats.get(&full_modifier_path).is_err() {
+                let val = self.modifier_types.get(modifier_name).unwrap().evaluate(&stats.cached_stats.context());
+                stats.cached_stats.set(&full_modifier_path, val);
             }
         }
     }
@@ -631,10 +654,15 @@ impl StatLike for ComplexModifiable {
     }
     
     fn evaluate(&self, stat_path: &[&str], stats: &Stats) -> f32 {
+        let full_path = stat_path.join("_");
+        if let Ok(value) = stats.cached_stats.get(&full_path) {
+            return value;
+        }
+
         // Attempt to parse the query from the first segment.
-        let search_bitflags = match stat_path.get(2) {
+        let search_bitflags = match stat_path.get(1) {
             Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
-            None => match stat_path.get(1) {
+            None => match stat_path.get(2) {
                 Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
                 None => todo!(),
             },
@@ -655,7 +683,8 @@ impl StatLike for ComplexModifiable {
                 .filter_map(|(&mod_bitflags, value)| {
                     // Only include modifiers that match ALL the requested flags
                     if (mod_bitflags & search_bitflags) == search_bitflags {
-                        Some(value.evaluate(&stats.cached_stats))
+                        //value.add_dependent(&full_path);
+                        Some(value.evaluate(stats.cached_stats.context()))
                     } else {
                         None
                     }
@@ -667,13 +696,17 @@ impl StatLike for ComplexModifiable {
         }
     
         // Evaluate the total expression with the built-up context.
-        self
+        let total = self
             .total
             .value
             .eval_with_context(&context)
             .unwrap()
             .as_number()
-            .unwrap() as f32
+            .unwrap() as f32;
+
+        stats.cached_stats.set(&full_path, total);
+        
+        total
     }
     
     fn on_insert(&self, _stats: &mut Stats, _stat_path: &[&str]) { /* do nothing */ }

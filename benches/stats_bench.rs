@@ -5,6 +5,8 @@ use bevy::ecs::component::Component;
 use std::time::Duration;
 use rand::prelude::*;
 
+// TODO Separate benches for testing initial query speed vs repeat query speed
+
 pub mod damage {
     pub const FIRE: u32 = 1 << 0u32; 
     pub const COLD: u32 = 1 << 1u32;
@@ -162,35 +164,36 @@ fn benchmark_group(c: &mut Criterion) {
 
     group.bench_function("evaluate_expression_stat", |b| {
         let mut stats = Stats::default();
-        stats.add_modifier("BaseDamage", 10.0);
-        stats.add_modifier("Damage_Added", "BaseDamage * 0.1 + 1.0");
+        stats.add_modifier("BaseLife", 10.0);
+        stats.add_modifier("Life_Added", "BaseLife * 0.1 + 1.0");
         b.iter(|| {
-            black_box(stats.evaluate("Damage"));
+            black_box(stats.evaluate("Life"));
         })
     });
 
+    // TODO test is invalid because you can't just query for "Damage" like you can with Life. You need a specific query.
     // Test with varying numbers of modifiers
-    for count in [10, 100, 1000].iter() {
-        group.bench_with_input(
-            &format!("evaluate_with_{}_modifiers", count),
-            count,
-            |b, &count| {
-                let mut stats = Stats::default();
-                stats.add_modifier("Base", 10.0);
+    // for count in [10, 100, 1000].iter() {
+    //     group.bench_with_input(
+    //         &format!("evaluate_with_{}_modifiers", count),
+    //         count,
+    //         |b, &count| {
+    //             let mut stats = Stats::default();
+    //             stats.add_modifier("Base", 10.0);
                 
-                let mut rng = rand::rng();
-                for i in 0..count {
-                    let modifier_type = if rng.random_bool(0.5) { "Added" } else { "Increased" };
-                    let value: f32 = rng.random_range(0.5..2.0);
-                    stats.add_modifier(format!("Damage_{}_{}", modifier_type, i), value);
-                }
+    //             let mut rng = rand::rng();
+    //             for i in 0..count {
+    //                 let modifier_type = if rng.random_bool(0.5) { "Added" } else { "Increased" };
+    //                 let value: f32 = rng.random_range(0.5..2.0);
+    //                 stats.add_modifier(format!("Damage_{}_{}", modifier_type, i), value);
+    //             }
                 
-                b.iter(|| {
-                    black_box(stats.evaluate("Damage"));
-                })
-            },
-        );
-    }
+    //             b.iter(|| {
+    //                 black_box(stats.evaluate("Damage"));
+    //             })
+    //         },
+    //     );
+    // }
 
     // Compare with simple Bevy component access
     group.bench_function("bevy_component_access", |b| {

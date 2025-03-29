@@ -1,4 +1,4 @@
-
+#![feature(sync_unsafe_cell)]
 use bevy::app::App;
 
 pub mod app_extension;

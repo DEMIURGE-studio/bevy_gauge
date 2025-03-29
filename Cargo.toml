@@ -14,7 +14,7 @@ path = "src/lib.rs"
 stat_macros = { path = "./stat_macros" }
 
 # Bevy 1st party
-bevy = { version = "0.15.0" }
+bevy = { version = "0.15.3" }
 
 # Serialization
 evalexpr = "12.0.2"
