@@ -70,23 +70,27 @@ impl SyncDependents {
     }
     
     fn remove_dependent(&self, stat_path: &str, dependent: &str) {
-        if let Ok(mut graph) = self.0.write() {
-            if let Some(dependents) = graph.get_mut(stat_path) {
-                if let Some(weight) = dependents.get_mut(dependent) {
-                    // Decrement the counter
-                    *weight -= 1;
-                    
-                    // If counter reaches 0, remove the dependency
-                    if *weight == 0 {
-                        dependents.remove(dependent);
-                    }
-                }
-                
-                // Clean up empty entries
-                if dependents.is_empty() {
-                    graph.remove(stat_path);
-                }
+        let Ok(mut graph) = self.0.write() else {
+            return;
+        };
+        
+        let Some(dependents) = graph.get_mut(stat_path) else {
+            return;
+        };
+        
+        if let Some(weight) = dependents.get_mut(dependent) {
+            // Decrement the counter
+            *weight -= 1;
+            
+            // If counter reaches 0, remove the dependency
+            if *weight == 0 {
+                dependents.remove(dependent);
             }
+        }
+        
+        // Clean up empty entries
+        if dependents.is_empty() {
+            graph.remove(stat_path);
         }
     }
     
@@ -419,29 +423,30 @@ impl Modifiable {
 
 impl StatLike for Modifiable  {
     fn add_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
-        if stat_path.len() == 2 {
-            let key = stat_path[1].to_string();
-            let part = self.modifier_steps.entry(key.clone())
-                .or_insert(Simple::new(&key));
-            part.add_modifier(stat_path, value);
+        if stat_path.len() != 2 {
         }
+        
+        let key = stat_path[1].to_string();
+        let part = self.modifier_steps.entry(key.clone())
+            .or_insert(Simple::new(&key));
+        part.add_modifier(stat_path, value);
     }
 
     fn remove_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
-        if stat_path.len() == 2 {
-            let key = stat_path[1].to_string();
-            let part = self.modifier_steps.entry(key.clone())
-                .or_insert(Simple::new(&key));
-            part.remove_modifier(stat_path, value);
+        if stat_path.len() != 2 {
+            return;
         }
+
+        let key = stat_path[1].to_string();
+        let part = self.modifier_steps.entry(key.clone())
+            .or_insert(Simple::new(&key));
+        part.remove_modifier(stat_path, value);
     }
     
     fn evaluate(&self, stat_path: &[&str], stats: &Stats) -> f32 {
         match stat_path.len() {
             1 => {
-                self
-                    .total
-                    .value
+                self.total.value
                     .eval_with_context(stats.cached_stats.context())
                     .unwrap()
                     .as_number()
@@ -492,30 +497,42 @@ impl ComplexModifiable {
 
 impl StatLike for ComplexModifiable {
     fn add_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
-        if stat_path.len() == 3 {
-            let modifier_type = stat_path[1];
-            if let Ok(tag) = stat_path[2].parse::<u32>() {
-                let step_map = self.modifier_types.entry(modifier_type.to_string())
-                    .or_insert(HashMap::new());
-                
-                let step = step_map.entry(tag)
-                    .or_insert(Simple::new(modifier_type));
-                
-                step.add_modifier(stat_path, value);
-            }
+        if stat_path.len() != 3 {
+            return;
         }
+        
+        let modifier_type = stat_path[1];
+        let Ok(tag) = stat_path[2].parse::<u32>() else {
+            return;
+        };
+        
+        let step_map = self.modifier_types.entry(modifier_type.to_string())
+            .or_insert(HashMap::new());
+    
+        let step = step_map.entry(tag)
+            .or_insert(Simple::new(modifier_type));
+        
+        step.add_modifier(stat_path, value);
     }
 
     fn remove_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
-        if stat_path.len() == 3 {
-            if let Some(step_map) = self.modifier_types.get_mut(stat_path[1]) {
-                if let Ok(tag) = stat_path[2].parse::<u32>() {
-                    if let Some(step) = step_map.get_mut(&tag) {
-                        step.remove_modifier(stat_path, value);
-                    }
-                }
-            }
+        if stat_path.len() != 3 {
+            return;
         }
+        
+        let Some(step_map) = self.modifier_types.get_mut(stat_path[1]) else {
+            return;
+        };
+        
+        let Ok(tag) = stat_path[2].parse::<u32>() else {
+            return;
+        };
+        
+        let Some(step) = step_map.get_mut(&tag) else {
+            return;
+        };
+
+        step.remove_modifier(stat_path, value);
     }
     
     fn evaluate(&self, stat_path: &[&str], stats: &Stats) -> f32 {
@@ -566,9 +583,7 @@ impl StatLike for ComplexModifiable {
         }
     
         // Evaluate the total expression with the built-up context.
-        let total = self
-            .total
-            .value
+        let total = self.total.value
             .eval_with_context(&context)
             .unwrap()
             .as_number()
