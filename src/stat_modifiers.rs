@@ -244,7 +244,7 @@ pub trait StatLike {
 
 #[derive(Debug)]
 pub enum StatType {
-    Simple(StatModifierStep),
+    Simple(Simple),
     Modifiable(Modifiable),
     Complex(ComplexModifiable),
 }
@@ -259,7 +259,7 @@ impl StatType {
         match stat_path_segments.len() {
             1 => {
                 // Simple stat
-                let mut stat = StatModifierStep::new(stat_path_segments[0]);
+                let mut stat = Simple::new(stat_path_segments[0]);
                 stat.add_modifier(&stat_path_segments, value);
                 StatType::Simple(stat)
             },
@@ -315,9 +315,66 @@ impl StatLike for StatType {
 }
 
 #[derive(Debug)]
+pub struct Simple {
+    pub relationship: ModType,
+    pub base: f32,
+    pub mods: Vec<Expression>,
+}
+
+impl Simple {
+    pub fn new(_name: &str) -> Self {
+        let base = 0.0; // get_initial_value_for_modifier(name);
+        Self { relationship: ModType::Add, base, mods: Vec::new() }
+    }
+}
+
+impl StatLike for Simple {
+    fn add_modifier<V: Into<ValueType>>(&mut self, _stat_path: &[&str], value: V) {
+        let vt: ValueType = value.into();
+        match vt {
+            ValueType::Literal(vals) => {
+                self.base += vals;
+            }
+            ValueType::Expression(expression) => {
+                self.mods.push(expression.clone());
+            }
+        }
+    }
+
+    fn remove_modifier<V: Into<ValueType>>(&mut self, _stat_path: &[&str], value: V) {
+        let vt: ValueType = value.into();
+        match vt {
+            ValueType::Literal(vals) => {
+                self.base -= vals;
+            }
+            ValueType::Expression(expression) => {
+                if let Some(pos) = self
+                    .mods
+                    .iter()
+                    .position(|e| *e == expression)
+                {
+                    self.mods.remove(pos);
+                }
+            }
+        }
+    }
+
+    fn evaluate(&self, _stat_path: &[&str], stats: &Stats) -> f32 {
+        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats.cached_stats.context())).collect();
+
+        match self.relationship {
+            ModType::Add => self.base + computed.iter().sum::<f32>(),
+            ModType::Mul => 1.0 + (self.base + computed.iter().sum::<f32>()), // TODO Broken
+        }
+    }
+
+    fn on_insert(&self, _stats: &Stats, _stat_path: &[&str]) { /* do nothing */ }
+}
+
+#[derive(Debug)]
 pub struct Modifiable {
     pub total: Expression, // "(Added * Increased * More) override"
-    pub modifier_types: HashMap<String, StatModifierStep>,
+    pub modifier_types: HashMap<String, Simple>,
 }
 
 impl Modifiable {
@@ -332,7 +389,7 @@ impl Modifiable {
         
         // Create modifier steps for each name (using original names as keys)
         for modifier_name in modifier_names.iter() {
-            let mut step = StatModifierStep::new(modifier_name);
+            let mut step = Simple::new(modifier_name);
             
             // Set initial base value
             step.base = get_initial_value_for_modifier(modifier_name);
@@ -365,7 +422,7 @@ impl StatLike for Modifiable  {
         if stat_path.len() == 2 {
             let key = stat_path[1].to_string();
             let part = self.modifier_types.entry(key.clone())
-                .or_insert(StatModifierStep::new(&key));
+                .or_insert(Simple::new(&key));
             part.add_modifier(stat_path, value);
         }
     }
@@ -374,7 +431,7 @@ impl StatLike for Modifiable  {
         if stat_path.len() == 2 {
             let key = stat_path[1].to_string();
             let part = self.modifier_types.entry(key.clone())
-                .or_insert(StatModifierStep::new(&key));
+                .or_insert(Simple::new(&key));
             part.remove_modifier(stat_path, value);
         }
     }
@@ -418,7 +475,7 @@ impl StatLike for Modifiable  {
 #[derive(Debug)]
 pub struct ComplexModifiable {
     pub total: Expression, // "(Added * Increased * More) override"
-    pub modifier_types: HashMap<String, HashMap<u32, StatModifierStep>>,
+    pub modifier_types: HashMap<String, HashMap<u32, Simple>>,
 }
 
 impl ComplexModifiable {
@@ -442,7 +499,7 @@ impl StatLike for ComplexModifiable {
                     .or_insert(HashMap::new());
                 
                 let step = step_map.entry(tag)
-                    .or_insert(StatModifierStep::new(modifier_type));
+                    .or_insert(Simple::new(modifier_type));
                 
                 step.add_modifier(stat_path, value);
             }
@@ -522,63 +579,6 @@ impl StatLike for ComplexModifiable {
         total
     }
     
-    fn on_insert(&self, _stats: &Stats, _stat_path: &[&str]) { /* do nothing */ }
-}
-
-#[derive(Debug)]
-pub struct StatModifierStep {
-    pub relationship: ModType,
-    pub base: f32,
-    pub mods: Vec<Expression>,
-}
-
-impl StatModifierStep {
-    pub fn new(_name: &str) -> Self {
-        let base = 0.0; // get_initial_value_for_modifier(name);
-        Self { relationship: ModType::Add, base, mods: Vec::new() }
-    }
-}
-
-impl StatLike for StatModifierStep {
-    fn add_modifier<V: Into<ValueType>>(&mut self, _stat_path: &[&str], value: V) {
-        let vt: ValueType = value.into();
-        match vt {
-            ValueType::Literal(vals) => {
-                self.base += vals;
-            }
-            ValueType::Expression(expression) => {
-                self.mods.push(expression.clone());
-            }
-        }
-    }
-
-    fn remove_modifier<V: Into<ValueType>>(&mut self, _stat_path: &[&str], value: V) {
-        let vt: ValueType = value.into();
-        match vt {
-            ValueType::Literal(vals) => {
-                self.base -= vals;
-            }
-            ValueType::Expression(expression) => {
-                if let Some(pos) = self
-                    .mods
-                    .iter()
-                    .position(|e| *e == expression)
-                {
-                    self.mods.remove(pos);
-                }
-            }
-        }
-    }
-
-    fn evaluate(&self, _stat_path: &[&str], stats: &Stats) -> f32 {
-        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats.cached_stats.context())).collect();
-
-        match self.relationship {
-            ModType::Add => self.base + computed.iter().sum::<f32>(),
-            ModType::Mul => 1.0 + (self.base + computed.iter().sum::<f32>()), // TODO Broken
-        }
-    }
-
     fn on_insert(&self, _stats: &Stats, _stat_path: &[&str]) { /* do nothing */ }
 }
 
@@ -900,7 +900,6 @@ mod thread_safety_tests {
     fn test_concurrent_stat_evaluation() {
         let stats = setup_stats();
         let mut handles = vec![];
-        let dps = stats.evaluate("FireSwordDPS");
 
         // Spawn threads that evaluate different stats
         for _ in 0..10 {
