@@ -1,7 +1,7 @@
 use std::{cell::SyncUnsafeCell, sync::{Arc, RwLock}};
 use bevy::{ecs::component::Component, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
-use crate::error::StatError;
+use crate::{error::StatError, tags::TagLike};
 
 #[derive(Debug, Clone, Default)]
 pub enum ModType {
@@ -13,6 +13,33 @@ pub enum ModType {
 // TODO Fix overuse of .unwrap(). It's fine for now (maybe preferable during development) but in the future we'll want proper errors, panics, and warnings.
 
 // TODO ContextDrivenStats type that wraps stats, but contains a context (Hashmap of strings to entities). Can only call evaluate on it if you pass in a StatContextRefs
+
+// TODO Stats.definitions should match String -> T where T implements StatLike. Convert the current StatType into DefaultStatType.
+
+// TODO Systemetize asset-like definitions.
+//     - get_total_expr_from_name
+//     - get_initial_value_for_modifier
+//     - match strings to sets of tags, i.e., "damage" -> Damage
+
+// TODO wrapper for u32 that lets us conveniently do queries (HasTag, HasAny, HasAll). Possibly change ComplexModifiable to take type T where T implements TagLike
+
+// TODO Implement fasteval instead of evalexpr
+
+// TODO Consider some scheme to avoid having to parse and reparse these strings. FName could be some inspiration. Why am I splitting and un-splitting these strings
+// during stat operations? 
+//     - One thing to consider is a type that behaves like an address. Basically turn strings into u32's with some FName-like implementation, and an array of u32s
+//       is a 'path.' Then you could key the context (and everything else that currently uses strings) on this vec-of-u32s type.
+
+// TODO Build some examples 
+//     - Path of Exile
+//     - World of Warcraft
+//     - Dungeons and Dragons
+//     - Halo
+
+// TODO Reintegrate with other stats code
+//     - StatContext
+//     - StatEffect
+//     - StatRequirements
 
 /// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
@@ -474,7 +501,7 @@ impl StatLike for ComplexModifiable {
         if let Ok(value) = stats.get_cached(&full_path) {
             return value;
         }
-        let search_bitflags = match stat_path.get(1) {
+        let search_tags = match stat_path.get(1) {
             Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
             None => match stat_path.get(2) {
                 Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
@@ -489,10 +516,10 @@ impl StatLike for ComplexModifiable {
         for (category, values) in &self.modifier_types {
             let category_sum: f32 = values
                 .iter()
-                .filter_map(|(&mod_bitflags, value)| {
-                    if (mod_bitflags & search_bitflags) == search_bitflags {
+                .filter_map(|(&mod_tags, value)| {
+                    if mod_tags.has_all(search_tags) {
                         if stat_path.len() == 2 {
-                            stats.add_dependent(&format!("{}_{}_{}", stat_path[0], category, mod_bitflags.to_string()), &full_path);
+                            stats.add_dependent(&format!("{}_{}_{}", stat_path[0], category, mod_tags.to_string()), &full_path);
                         }
                         Some(value.evaluate(stat_path, stats))
                     } else {
@@ -578,6 +605,10 @@ impl From<u32> for ValueType {
     }
 }
 
+// ******************************************************************
+// Asset-like
+// ******************************************************************
+
 fn get_total_expr_from_name(name: &str) -> &'static str {
     match name {
         "Damage" => "Added * Increased * More",
@@ -609,12 +640,17 @@ stat_macros::define_tags! {
     }
 }
 
+// ******************************************************************
+// Tests
+// ******************************************************************
+
 #[cfg(test)]
 mod stat_operation_tests {
     use super::*;
     fn assert_approx_eq(a: f32, b: f32) {
         assert!((a - b).abs() < f32::EPSILON * 100.0, "left: {}, right: {}", a, b);
     }
+
     fn test_stats() -> Stats {
         let mut stats = Stats::new();
         stats.add_modifier("Movespeed", 10.0);
