@@ -374,7 +374,7 @@ impl StatLike for Simple {
 #[derive(Debug)]
 pub struct Modifiable {
     pub total: Expression, // "(Added * Increased * More) override"
-    pub modifier_types: HashMap<String, Simple>,
+    pub modifier_steps: HashMap<String, Simple>,
 }
 
 impl Modifiable {
@@ -412,7 +412,7 @@ impl Modifiable {
                 string: transformed_expr.clone(),
                 value: evalexpr::build_operator_tree(&transformed_expr).unwrap(),
             },
-            modifier_types,
+            modifier_steps: modifier_types,
         }
     }
 }
@@ -421,7 +421,7 @@ impl StatLike for Modifiable  {
     fn add_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
         if stat_path.len() == 2 {
             let key = stat_path[1].to_string();
-            let part = self.modifier_types.entry(key.clone())
+            let part = self.modifier_steps.entry(key.clone())
                 .or_insert(Simple::new(&key));
             part.add_modifier(stat_path, value);
         }
@@ -430,7 +430,7 @@ impl StatLike for Modifiable  {
     fn remove_modifier<V: Into<ValueType>>(&mut self, stat_path: &[&str], value: V) {
         if stat_path.len() == 2 {
             let key = stat_path[1].to_string();
-            let part = self.modifier_types.entry(key.clone())
+            let part = self.modifier_steps.entry(key.clone())
                 .or_insert(Simple::new(&key));
             part.remove_modifier(stat_path, value);
         }
@@ -448,7 +448,7 @@ impl StatLike for Modifiable  {
                     .unwrap() as f32
             }
             2 => {
-                let Some(part) = self.modifier_types.get(stat_path[1]) else {
+                let Some(part) = self.modifier_steps.get(stat_path[1]) else {
                     return 0.0;
                 };
         
@@ -461,11 +461,11 @@ impl StatLike for Modifiable  {
     fn on_insert(&self, stats: &Stats, stat_path: &[&str]) {
         let base_name = stat_path[0];
 
-        for (modifier_name, _) in self.modifier_types.iter() {
+        for (modifier_name, _) in self.modifier_steps.iter() {
             // Ensure the modifier step exists in the definitions
             let full_modifier_path = format!("{}_{}", base_name, modifier_name);
             if stats.cached_stats.get(&full_modifier_path).is_err() {
-                let val = self.modifier_types.get(modifier_name).unwrap().evaluate(stat_path, &stats);
+                let val = self.modifier_steps.get(modifier_name).unwrap().evaluate(stat_path, &stats);
                 stats.cached_stats.set(&full_modifier_path, val);
             }
         }
