@@ -1,5 +1,3 @@
-
-
 #[macro_export]
 macro_rules! simple_generic_stat {
     ($struct_name:ident, $ty:ty) => {
@@ -44,23 +42,15 @@ macro_rules! simple_stat {
             }
 
             fn should_update(&self, stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
-                stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0)
-                    != self.0
+                stats.get(stringify!($struct_name)).unwrap_or(0.0) != self.0
             }
 
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
-                self.0 = stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0);
+                self.0 = stats.get(stringify!($struct_name)).unwrap_or(0.0);
             }
 
             fn is_valid(stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
-                stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0)
-                    != 0.0
+                stats.get(stringify!($struct_name)).unwrap_or(0.0) != 0.0
             }
         }
     };

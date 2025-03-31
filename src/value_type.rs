@@ -1,11 +1,8 @@
-use std::collections::{HashMap, HashSet};
 use bevy::prelude::{Deref, DerefMut};
 use evalexpr::{
-    ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue
+    ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue,
 };
-use crate::prelude::AttributeId;
-use crate::stats::{StatCollection};
-use crate::tags::TagRegistry;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub enum StatError {
@@ -18,7 +15,6 @@ pub enum ValueType {
     Literal(f32),
     Expression(Expression),
 }
-
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StatValue {
@@ -43,37 +39,38 @@ impl StatValue {
             bounds: None,
         }
     }
-    
+
     pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
         let bound_deps = if let Some(bounds) = &self.bounds {
             bounds.extract_dependencies()
-        } else { None };
+        } else {
+            None
+        };
         let deps = &self.value.extract_dependencies();
-        
+
         if bound_deps.is_none() && deps.is_none() {
             return None;
         }
         let mut dependencies = Vec::new();
-        
+
         if let Some(bound_deps) = &bound_deps {
             dependencies.extend(bound_deps.clone());
         }
-        
+
         if let Some(deps) = &deps {
             dependencies.extend(deps.clone());
         }
-        
+
         Some(dependencies)
     }
-    
+
     pub fn set_value(&mut self, value: f32) {
-        match &self.value { 
+        match &self.value {
             ValueType::Literal(_) => {
                 let (min, max) = self.get_bounds();
                 self.value = ValueType::Literal(value.clamp(min, max));
             }
-            ValueType::Expression(_) => {
-            }
+            ValueType::Expression(_) => {}
         }
     }
 
@@ -85,25 +82,22 @@ impl StatValue {
         // Collect variable names from main expression
         if let ValueType::Expression(expression) = &self.value {
             all_variable_names.extend(
-                expression.iter_variable_identifiers()
-                    .map(|s| s.to_string())
+                expression
+                    .iter_variable_identifiers()
+                    .map(|s| s.to_string()),
             );
         }
 
         // Collect variable names from bounds if they exist
         if let Some(bounds) = &self.bounds {
             if let Some(ValueType::Expression(min_expr)) = &bounds.min {
-                all_variable_names.extend(
-                    min_expr.iter_variable_identifiers()
-                        .map(|s| s.to_string())
-                );
+                all_variable_names
+                    .extend(min_expr.iter_variable_identifiers().map(|s| s.to_string()));
             }
 
             if let Some(ValueType::Expression(max_expr)) = &bounds.max {
-                all_variable_names.extend(
-                    max_expr.iter_variable_identifiers()
-                        .map(|s| s.to_string())
-                );
+                all_variable_names
+                    .extend(max_expr.iter_variable_identifiers().map(|s| s.to_string()));
             }
         }
 
@@ -114,16 +108,14 @@ impl StatValue {
 
         // Use thread-local to track stack for cycle detection
         thread_local! {
-        static EVAL_STACK: std::cell::RefCell<HashSet<String>> = 
-            std::cell::RefCell::new(HashSet::new());
-    }
+            static EVAL_STACK: std::cell::RefCell<HashSet<String>> =
+                std::cell::RefCell::new(HashSet::new());
+        }
 
         // Collect all variable values once
         let mut variable_values = HashMap::new();
         for var_name in all_variable_names {
-            let is_cyclic = EVAL_STACK.with(|stack| {
-                stack.borrow().contains(&var_name)
-            });
+            let is_cyclic = EVAL_STACK.with(|stack| stack.borrow().contains(&var_name));
 
             if is_cyclic {
                 variable_values.insert(var_name, 0.0); // Break cycles
@@ -131,17 +123,13 @@ impl StatValue {
             }
 
             // Add to stack to detect cycles
-            EVAL_STACK.with(|stack| {
-                stack.borrow_mut().insert(var_name.clone())
-            });
+            EVAL_STACK.with(|stack| stack.borrow_mut().insert(var_name.clone()));
 
             // Parse the variable name to get group and tag ID or name
             let parts: Vec<&str> = var_name.split('.').collect();
             if parts.len() != 2 {
                 variable_values.insert(var_name.clone(), 0.0); // Default for invalid variable names
-                EVAL_STACK.with(|stack| {
-                    stack.borrow_mut().remove(&var_name)
-                });
+                EVAL_STACK.with(|stack| stack.borrow_mut().remove(&var_name));
                 continue;
             }
 
@@ -157,19 +145,15 @@ impl StatValue {
             // };
 
             // If we have a valid tag ID, try to get the attribute value
-            let val = 
-                match value_context.get(format!("{}.{}", group, tag_str).as_str()) {
-                    Some(&value) => value as f64,
-                    None => 0.0,
-                };
-
+            let val = match value_context.get(format!("{}.{}", group, tag_str).as_str()) {
+                Some(&value) => value as f64,
+                None => 0.0,
+            };
 
             variable_values.insert(var_name.clone(), val);
 
             // Remove from stack
-            EVAL_STACK.with(|stack| {
-                stack.borrow_mut().remove(&var_name)
-            });
+            EVAL_STACK.with(|stack| stack.borrow_mut().remove(&var_name));
         }
 
         // Create evaluation context once with all collected variables
@@ -233,18 +217,17 @@ impl StatValue {
             *val = val.clamp(min_value, max_value);
         }
     }
-    
+
     pub fn get_value_f32(&self) -> f32 {
         let val = self.value.evaluate();
         let (min, max) = self.get_bounds();
-        
+
         val.clamp(min, max)
-        
     }
-    
+
     pub fn get_bounds(&self) -> (f32, f32) {
         let mut val_bounds = (f32::MIN, f32::MAX);
-        
+
         if let Some(bounds) = &self.bounds {
             if let Some(min_bound) = &bounds.min {
                 val_bounds.0 = min_bound.evaluate();
@@ -254,17 +237,16 @@ impl StatValue {
                 val_bounds.1 = max_bound.evaluate();
             }
         }
-        
+
         val_bounds
     }
-    
+
     pub fn set_bounds(&mut self, bounds: Option<ValueBounds>) {
         self.bounds = bounds;
     }
 }
 
 // Need to be able to optionally pass in a stat_collection or value to be added to the evalexpression context
-
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ValueBounds {
@@ -276,11 +258,11 @@ impl ValueBounds {
     pub fn new(min: Option<ValueType>, max: Option<ValueType>) -> Self {
         Self { min, max }
     }
-    
+
     pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
         let mut bound_dependencies = Vec::new();
         if let Some(min) = &self.min {
-            if let Some(min_deps) = min.extract_dependencies(){
+            if let Some(min_deps) = min.extract_dependencies() {
                 bound_dependencies.extend(min_deps);
             }
         }
@@ -289,7 +271,7 @@ impl ValueBounds {
                 bound_dependencies.extend(max_deps);
             }
         }
-        
+
         if bound_dependencies.is_empty() {
             None
         } else {
@@ -311,16 +293,14 @@ impl ValueType {
         }
     }
 
-
     pub fn from_expression(value: Expression) -> Self {
         ValueType::Expression(value)
     }
-    
-    
+
     pub fn extract_dependencies(&self) -> Option<Vec<(String, String)>> {
         match self {
-            ValueType::Literal(_) => { None }
-            ValueType::Expression(expr) => { Some(expr.extract_dependencies()) }
+            ValueType::Literal(_) => None,
+            ValueType::Expression(expr) => Some(expr.extract_dependencies()),
         }
     }
 }
@@ -332,12 +312,11 @@ impl Default for ValueType {
 }
 
 #[derive(Debug, Clone, PartialEq, Deref, DerefMut)]
-pub struct Expression { 
+pub struct Expression {
     #[deref]
     pub expression: Node<DefaultNumericTypes>,
-    pub cached_value: f32
+    pub cached_value: f32,
 }
-
 
 impl Default for Expression {
     fn default() -> Self {
@@ -352,22 +331,21 @@ impl Expression {
     pub fn new(node: Node<DefaultNumericTypes>) -> Self {
         Self {
             expression: node,
-            cached_value: 0.0
+            cached_value: 0.0,
         }
     }
 
     pub fn extract_dependencies(&self) -> Vec<(String, String)> {
-        let identifiers: Vec<_> = self.iter_variable_identifiers()
+        let identifiers: Vec<_> = self
+            .iter_variable_identifiers()
             .map(|val| String::from(val))
             .collect();
-        
-        let mut dependencies:Vec<(String, String)> = Vec::new();
+
+        let mut dependencies: Vec<(String, String)> = Vec::new();
         for identifier in identifiers {
             let group_type = identifier.split('.').collect::<Vec<&str>>();
             dependencies.push((group_type[0].to_string(), group_type[1].to_string()));
-        };
+        }
         dependencies
     }
 }
-
-

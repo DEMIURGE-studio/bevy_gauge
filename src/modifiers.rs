@@ -1,9 +1,9 @@
+use crate::prelude::{AttributeUpdatedEvent, StatValue};
 use crate::stats::{AttributeId, StatCollection};
+use crate::tags::TagRegistry;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
-use crate::prelude::{AttributeUpdatedEvent, StatValue};
-use crate::tags::TagRegistry;
 
 #[derive(Debug, Clone)]
 pub enum ModifierValue {
@@ -13,22 +13,31 @@ pub enum ModifierValue {
 }
 
 impl ModifierValue {
-    pub fn update_value_with_ctx(&mut self, stat_context: HashMap<String, f32>, tag_registry: &Res<TagRegistry>) {
+    pub fn update_value_with_ctx(
+        &mut self,
+        stat_context: HashMap<String, f32>,
+        tag_registry: &Res<TagRegistry>,
+    ) {
         match self {
-            ModifierValue::Flat(vt) => {vt.update_value_with_context(&stat_context);}
-            ModifierValue::Increased(vt) => {vt.update_value_with_context(&stat_context);}
-            ModifierValue::More(vt) => {vt.update_value_with_context(&stat_context);}
+            ModifierValue::Flat(vt) => {
+                vt.update_value_with_context(&stat_context);
+            }
+            ModifierValue::Increased(vt) => {
+                vt.update_value_with_context(&stat_context);
+            }
+            ModifierValue::More(vt) => {
+                vt.update_value_with_context(&stat_context);
+            }
         }
     }
-    
+
     pub fn get_value(&self) -> &StatValue {
         match self {
-            ModifierValue::Flat(val) => {val}
-            ModifierValue::Increased(value) => {value}
-            ModifierValue::More(value) => {value}
+            ModifierValue::Flat(val) => val,
+            ModifierValue::Increased(value) => value,
+            ModifierValue::More(value) => value,
         }
     }
-    
 }
 
 impl Default for ModifierValue {
@@ -36,7 +45,6 @@ impl Default for ModifierValue {
         ModifierValue::Flat(StatValue::default())
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModifierValueTotal {
@@ -49,7 +57,7 @@ impl ModifierValueTotal {
     pub fn get_total(&self) -> f32 {
         self.flat * (1.0 + self.increased) * self.more
     }
-    
+
     pub fn get_total_with_base(&self, base: f32) -> f32 {
         (self.flat + base) * (1.0 + self.increased) * self.more
     }
@@ -129,7 +137,6 @@ impl ModifierInstance {
     }
 }
 
-
 // /// A component on an entity to keep track of all Modifier Entities affecting this entity
 #[derive(Component, Debug, Default)]
 #[relationship_target(relationship = ModifierTarget)]
@@ -145,15 +152,18 @@ fn on_modifier_added(
     mut commands: Commands,
     tag_registry: Res<TagRegistry>,
 ) {
-    
     println!("on_modifier_added");
     if let Ok((modifier, stat_entity)) = modifier_query.get(trigger.target()) {
         if let Ok((entity, mut stat_collection)) =
             stat_query.get_mut(stat_entity.modifier_collection)
         {
-
             println!("add_replace");
-            stat_collection.add_or_replace_modifier(modifier, trigger.target(), &tag_registry, &mut commands);
+            stat_collection.add_or_replace_modifier(
+                modifier,
+                trigger.target(),
+                &tag_registry,
+                &mut commands,
+            );
             commands.trigger_targets(
                 AttributeUpdatedEvent {
                     stat_id: modifier.target_stat.clone(),
@@ -184,21 +194,27 @@ fn on_modifier_removed(
 
             let mut modifier_deps = Vec::new();
 
-            if let Some(target_group) = stat_collection.attributes.get_mut(&modifier.target_stat.group) {
+            if let Some(target_group) = stat_collection
+                .attributes
+                .get_mut(&modifier.target_stat.group)
+            {
                 for (key, value) in target_group {
                     if key & modifier.target_stat.tag > 0 {
                         modifier_deps = modifier.dependencies.clone().iter().collect();
                         value.remove_modifier(trigger.target());
                         // NEED TO REMOVE FROM COLLECTION TODO
-                        
+
                         //value.add_or_replace_modifier(modifier, modifier_entity);
                         //self.attribute_modifiers.entry(modifier_entity).or_insert_with(HashSet::new).insert(modifier.target_stat.clone());
-
                     }
                 }
                 // self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
             }
-            stat_collection.recalculate_attribute_and_dependents(modifier.target_stat.clone(), &tag_registry, &mut commands);
+            stat_collection.recalculate_attribute_and_dependents(
+                modifier.target_stat.clone(),
+                &tag_registry,
+                &mut commands,
+            );
             // commands.trigger_targets(
             //     AttributeUpdatedEvent {
             //         stat_id: modifier.target_stat.clone(),
@@ -210,7 +226,6 @@ fn on_modifier_removed(
     }
 }
 
-
 pub fn on_modifier_change(
     trigger: Trigger<ModifierUpdatedEvent>,
     mut modifier_query: Query<(&mut ModifierInstance, &ModifierTarget)>,
@@ -218,7 +233,6 @@ pub fn on_modifier_change(
     registry: Res<TagRegistry>,
     mut commands: Commands,
 ) {
-
     println!("on_modifier_change");
     // modifier.value.update_value_with_ctx(&stats, &tag_registry);
     // stats.update_modifier(trigger.target(), &tag_registry, &mut commands);
@@ -229,7 +243,9 @@ pub fn on_modifier_change(
         if let Ok(mut stats) = stat_query.get_mut(modifier_target.modifier_collection) {
             if let Some(dependencies) = modifier_instance.value.get_value().extract_dependencies() {
                 let context = stats.get_stat_relevant_context(&dependencies, &registry);
-                modifier_instance.value.update_value_with_ctx(context, &registry);
+                modifier_instance
+                    .value
+                    .update_value_with_ctx(context, &registry);
                 println!("modifier change: {:?}", &modifier_instance.value);
             }
             let mut attributes_to_recalculate = Vec::new();
@@ -240,13 +256,14 @@ pub fn on_modifier_change(
             }
 
             for attribute_id in attributes_to_recalculate {
-                if let Some(attribute_instance) = stats.get_attribute_instance_mut(attribute_id.clone()) {
+                if let Some(attribute_instance) =
+                    stats.get_attribute_instance_mut(attribute_id.clone())
+                {
                     attribute_instance.modify_modifier(&modifier_instance, trigger.target());
                     //assert_eq!(attribute_instance.modifier_collection.get(&trigger.target()).unwrap().get_value(), trigger.new_value.get_value());
                 }
             }
             stats.update_modifier(trigger.target(), &registry, &mut commands);
-
         }
     }
 }
@@ -254,11 +271,10 @@ pub fn on_modifier_change(
 // commands.trigger_targets(
 // ModifierUpdatedEvent {
 // modifier_entity,
-// 
+//
 // },
 // entity,
 // );
-
 
 // pub fn on_modifier_changed(
 //     trigger: Trigger<ModifierUpdatedEvent>,
@@ -280,7 +296,6 @@ pub fn on_modifier_change(
 //     }
 // }
 
-
 // pub fn on_modifier_should_update(
 //     trigger: Trigger<ModifierShouldUpdate>,
 //     mut modifier_query: Query<(&mut ModifierInstance, &ModifierTarget)>,
@@ -296,9 +311,6 @@ pub fn on_modifier_change(
 //     }
 // }
 
-
-
-
 /// Event sent when a stat is updated
 
 #[derive(Event)]
@@ -308,8 +320,7 @@ pub struct ModifierUpdatedEvent {
 
 /// Register the trigger handlers
 pub fn register_modifier_triggers(app: &mut App) {
-    app
-        .add_event::<ModifierUpdatedEvent>()
+    app.add_event::<ModifierUpdatedEvent>()
         .add_observer(on_modifier_added)
         .add_observer(on_modifier_removed)
         .add_observer(on_modifier_change);

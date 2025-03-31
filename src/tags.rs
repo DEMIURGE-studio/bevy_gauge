@@ -1,7 +1,6 @@
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-
 
 // String to tag ID mapping
 #[derive(Resource, Debug, Default, Clone)]
@@ -27,8 +26,12 @@ impl TagRegistry {
     pub fn register_primary_type(&mut self, primary_type: &str) {
         let primary_type = primary_type.to_lowercase();
         // Create entries in the registries if they don't exist
-        self.string_to_id.entry(primary_type.clone()).or_insert(HashMap::new());
-        self.id_to_string.entry(primary_type.clone()).or_insert(HashMap::new());
+        self.string_to_id
+            .entry(primary_type.clone())
+            .or_insert(HashMap::new());
+        self.id_to_string
+            .entry(primary_type.clone())
+            .or_insert(HashMap::new());
         self.next_id.entry(primary_type.clone()).or_insert(0);
     }
 
@@ -36,7 +39,7 @@ impl TagRegistry {
     pub fn register_subtype(&mut self, primary_type: &str, subtype: &str) -> u32 {
         let primary_type = &primary_type.to_lowercase();
         let subtype = &subtype.to_lowercase();
-        
+
         // Make sure the primary type exists
         self.register_primary_type(primary_type);
 
@@ -51,8 +54,14 @@ impl TagRegistry {
         *id_counter += 1;
 
         // Register the tag
-        self.string_to_id.get_mut(primary_type).unwrap().insert(subtype.to_string(), id);
-        self.id_to_string.get_mut(primary_type).unwrap().insert(id, subtype.to_string());
+        self.string_to_id
+            .get_mut(primary_type)
+            .unwrap()
+            .insert(subtype.to_string(), id);
+        self.id_to_string
+            .get_mut(primary_type)
+            .unwrap()
+            .insert(id, subtype.to_string());
 
         id
     }
@@ -61,7 +70,7 @@ impl TagRegistry {
     pub fn register_tag(&mut self, primary_group: &str, tag: &str) -> u32 {
         let primary_group = &primary_group.to_lowercase();
         let tag = &tag.to_lowercase();
-        
+
         // Check if this tag already exists
         if let Some(existing_id) = self.get_id(primary_group, tag) {
             return existing_id;
@@ -76,24 +85,40 @@ impl TagRegistry {
         *id_counter += 1;
 
         // Register the tag
-        self.string_to_id.get_mut(primary_group).unwrap().insert(tag.to_string(), id);
-        self.id_to_string.get_mut(primary_group).unwrap().insert(id, tag.to_string());
+        self.string_to_id
+            .get_mut(primary_group)
+            .unwrap()
+            .insert(tag.to_string(), id);
+        self.id_to_string
+            .get_mut(primary_group)
+            .unwrap()
+            .insert(id, tag.to_string());
 
         id
     }
 
     // Get a tag ID
     pub fn get_id(&self, primary_group: &str, tag: &str) -> Option<u32> {
-        self.string_to_id.get(&primary_group.to_lowercase())?.get(&tag.to_lowercase()).copied()
+        self.string_to_id
+            .get(&primary_group.to_lowercase())?
+            .get(&tag.to_lowercase())
+            .copied()
     }
 
     // Get a tag name
     pub fn get_tag(&self, primary_group: &str, id: u32) -> Option<&String> {
-        self.id_to_string.get(&primary_group.to_lowercase())?.get(&id)
+        self.id_to_string
+            .get(&primary_group.to_lowercase())?
+            .get(&id)
     }
 
     // Check if one tag qualifies for another (bitwise AND check)
-    pub fn tag_qualifies_for(&self, primary_group: &str, modifier_tag_id: u32, target_tag_id: u32) -> bool {
+    pub fn tag_qualifies_for(
+        &self,
+        primary_group: &str,
+        modifier_tag_id: u32,
+        target_tag_id: u32,
+    ) -> bool {
         modifier_tag_id & target_tag_id > 0
     }
 }
@@ -113,7 +138,6 @@ mod tag_registry_tests {
         // Verify the structures are initialized
         assert!(registry.string_to_id.contains_key("damage"));
         assert!(registry.string_to_id.contains_key("weapon"));
-
     }
 
     #[test]
@@ -129,18 +153,24 @@ mod tag_registry_tests {
         let axe_id = registry.register_subtype("WEAPON", "AXE");
 
         // Verify ID values with bit patterns
-        assert_eq!(fire_id, 1);           // 2^0 = 1 (binary: 001)
-        assert_eq!(cold_id, 2);           // 2^1 = 2 (binary: 010)
-        assert_eq!(lightning_id, 4);      // 2^2 = 4 (binary: 100)
+        assert_eq!(fire_id, 1); // 2^0 = 1 (binary: 001)
+        assert_eq!(cold_id, 2); // 2^1 = 2 (binary: 010)
+        assert_eq!(lightning_id, 4); // 2^2 = 4 (binary: 100)
 
-        assert_eq!(sword_id, 1);          // 2^0 = 1 (binary: 001)
-        assert_eq!(axe_id, 2);            // 2^1 = 2 (binary: 010)
+        assert_eq!(sword_id, 1); // 2^0 = 1 (binary: 001)
+        assert_eq!(axe_id, 2); // 2^1 = 2 (binary: 010)
 
         // Verify tag lookup
         assert_eq!(registry.get_id("DAMAGE", "FIRE"), Some(fire_id));
         assert_eq!(registry.get_id("DAMAGE", "COLD"), Some(cold_id));
-        assert_eq!(registry.get_tag("DAMAGE", fire_id), Some(&"fire".to_string()));
-        assert_eq!(registry.get_tag("WEAPON", sword_id), Some(&"sword".to_string()));
+        assert_eq!(
+            registry.get_tag("DAMAGE", fire_id),
+            Some(&"fire".to_string())
+        );
+        assert_eq!(
+            registry.get_tag("WEAPON", sword_id),
+            Some(&"sword".to_string())
+        );
 
         // Non-existent tags should return None
         assert_eq!(registry.get_id("DAMAGE", "NONEXISTENT"), None);
@@ -156,8 +186,8 @@ mod tag_registry_tests {
         let cold_id = registry.register_tag("DAMAGE", "COLD");
 
         // Verify they have the expected bit patterns
-        assert_eq!(fire_id, 1);  // 2^0 = 1
-        assert_eq!(cold_id, 2);  // 2^1 = 2
+        assert_eq!(fire_id, 1); // 2^0 = 1
+        assert_eq!(cold_id, 2); // 2^1 = 2
 
         // Registering again should return the same ID
         let fire_id_again = registry.register_tag("DAMAGE", "FIRE");
@@ -169,13 +199,13 @@ mod tag_registry_tests {
         let mut registry = TagRegistry::new();
 
         // Register various tags
-        let fire_id = registry.register_subtype("DAMAGE", "FIRE");    // 001
-        let cold_id = registry.register_subtype("DAMAGE", "COLD");    // 010
+        let fire_id = registry.register_subtype("DAMAGE", "FIRE"); // 001
+        let cold_id = registry.register_subtype("DAMAGE", "COLD"); // 010
         let lightning_id = registry.register_subtype("DAMAGE", "LIGHTNING"); // 100
 
         // Manual registration of "compound" tags
-        let elemental_id = fire_id | cold_id | lightning_id;  // 111 (combines fire, cold, lightning)
-        let fire_cold_id = fire_id | cold_id;                // 011 (combines fire and cold)
+        let elemental_id = fire_id | cold_id | lightning_id; // 111 (combines fire, cold, lightning)
+        let fire_cold_id = fire_id | cold_id; // 011 (combines fire and cold)
 
         // Fire should qualify for elemental
         assert!(registry.tag_qualifies_for("DAMAGE", fire_id, elemental_id));
@@ -229,18 +259,29 @@ mod tag_registry_tests {
         let elemental_id = fire_id | cold_id | lightning_id;
 
         // Verify the bit patterns
-        assert_eq!(fire_id, 1);       // 001
-        assert_eq!(cold_id, 2);       // 010
-        assert_eq!(lightning_id, 4);  // 100
-        assert_eq!(elemental_id, 7);  // 111
+        assert_eq!(fire_id, 1); // 001
+        assert_eq!(cold_id, 2); // 010
+        assert_eq!(lightning_id, 4); // 100
+        assert_eq!(elemental_id, 7); // 111
 
         // Manually register the compound tag (this would be part of a register_compound_tag method)
-        registry.string_to_id.get_mut("damage").unwrap().insert("elemental".to_string(), elemental_id);
-        registry.id_to_string.get_mut("damage").unwrap().insert(elemental_id, "elemental".to_string());
+        registry
+            .string_to_id
+            .get_mut("damage")
+            .unwrap()
+            .insert("elemental".to_string(), elemental_id);
+        registry
+            .id_to_string
+            .get_mut("damage")
+            .unwrap()
+            .insert(elemental_id, "elemental".to_string());
 
         // Verify lookup
         assert_eq!(registry.get_id("DAMAGE", "ELEMENTAL"), Some(elemental_id));
-        assert_eq!(registry.get_tag("DAMAGE", elemental_id), Some(&"elemental".to_string()));
+        assert_eq!(
+            registry.get_tag("DAMAGE", elemental_id),
+            Some(&"elemental".to_string())
+        );
 
         // Test qualification
         assert!(registry.tag_qualifies_for("DAMAGE", fire_id, elemental_id));

@@ -2,18 +2,18 @@
 // use serde::Deserialize;
 // use crate::prelude::*;
 // use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue};
-// 
+//
 // // ------------------------------------------------------------------
 // //  Example comparison for "requirements"
 // // ------------------------------------------------------------------
-// 
+//
 // #[derive(Debug, Clone)]
 // pub struct StatRequirement(pub Node<DefaultNumericTypes>);
-// 
+//
 // impl StatRequirement {
 //     pub fn met(&self, stats: &StatContextRefs) -> bool {
 //         let mut context = HashMapContext::new();
-// 
+//
 //         // Gather variable references from the expression
 //         for var in self.0.iter_variable_identifiers() {
 //             // If the referenced stat is missing, we'll default to 0.0
@@ -27,35 +27,35 @@
 //         false
 //     }
 // }
-// 
+//
 // impl From<String> for StatRequirement {
 //     fn from(value: String) -> Self {
 //         let expr = evalexpr::build_operator_tree(&value).unwrap();
 //         Self(expr)
 //     }
 // }
-// 
+//
 // impl From<&str> for StatRequirement {
 //     fn from(value: &str) -> Self {
 //         let expr = evalexpr::build_operator_tree(&value).unwrap();
 //         Self(expr)
 //     }
 // }
-// 
+//
 // #[derive(Component, Debug, Default, Clone)]
 // #[require(StatContext)]
 // pub struct StatRequirements(pub Vec<StatRequirement>);
-// 
+//
 // impl StatRequirements {
 //     pub fn new() -> Self {
 //         Self(Vec::new())
 //     }
-// 
+//
 //     /// Merges in constraints from another set
 //     pub fn combine(&mut self, other: &StatRequirements) {
 //         self.0.append(&mut other.0.clone());
 //     }
-// 
+//
 //     /// Returns true if all constraints hold.
 //     pub fn met(&self, stats: &StatContextRefs) -> bool {
 //         for req in self.0.iter() {
@@ -63,11 +63,11 @@
 //                 return false;
 //             }
 //         }
-// 
+//
 //         return true;
 //     }
 // }
-// 
+//
 // impl From<Vec<String>> for StatRequirements {
 //     fn from(value: Vec<String>) -> Self {
 //         let mut result: Vec<StatRequirement> = Vec::new();
