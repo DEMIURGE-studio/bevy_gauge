@@ -14,6 +14,11 @@ pub mod systems;
 pub mod tags;
 pub mod traits;
 mod value_type;
+mod expressions;
+mod stat_value;
+mod stat_events;
+mod modifier_events;
+
 pub fn plugin(app: &mut App) {
     app.add_plugins((schedule::plugin,));
 }

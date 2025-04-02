@@ -294,25 +294,14 @@ mod tag_registry_tests {
     fn test_integration_with_modifier_system() {
         let mut registry = TagRegistry::new();
 
-        // Register tags
         let fire_id = registry.register_subtype("DAMAGE", "FIRE");
         let cold_id = registry.register_subtype("DAMAGE", "COLD");
         let elemental_id = fire_id | cold_id;
 
-        // This would simulate a system where:
-        // - A stat has the "FIRE" tag
-        // - A modifier has the "ELEMENTAL" tag
-        // - The modifier should apply to the stat because FIRE is part of ELEMENTAL
 
         let stat_tag = fire_id;
         let modifier_tag = elemental_id;
 
-        // The modifier should qualify for the stat
         assert!(registry.tag_qualifies_for("DAMAGE", modifier_tag, stat_tag));
-
-        // This would allow code like:
-        // if registry.tag_qualifies_for(primary_type, modifier.tag, stat.tag) {
-        //     apply_modifier(modifier, stat);
-        // }
     }
 }

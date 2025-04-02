@@ -3,6 +3,10 @@ mod tests {
     use crate::prelude::*;
     use bevy::prelude::*;
     use std::collections::HashSet;
+    use crate::expressions::Expression;
+    use crate::modifier_events::{on_modifier_change, register_modifier_triggers, ModifierUpdatedEvent};
+    use crate::stat_events::{on_stat_added, register_stat_triggers, AttributeAddedEvent, AttributeUpdatedEvent};
+    use crate::stat_value::StatValue;
 
     fn setup_test_app() -> App {
         let mut app = App::new();

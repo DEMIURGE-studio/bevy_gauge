@@ -1,10 +1,10 @@
 use crate::modifiers::{ModifierInstance, ModifierValue, ModifierValueTotal};
-use crate::value_type::StatValue;
 use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::Entity;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use crate::stat_value::StatValue;
 
 #[derive(Debug, Clone, Default)]
 pub struct AttributeInstance {
