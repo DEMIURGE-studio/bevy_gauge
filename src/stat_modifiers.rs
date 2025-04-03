@@ -1,5 +1,5 @@
 use std::{cell::SyncUnsafeCell, sync::{Arc, RwLock}};
-use bevy::{ecs::system::SystemParam, prelude::*, utils::HashMap};
+use bevy::{ecs::system::SystemParam, prelude::*, scene::ron::value, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 use crate::{error::StatError, tags::TagLike};
 
@@ -78,13 +78,54 @@ pub struct StatAccessor<'w, 's> {
 
 impl StatAccessor<'_, '_> {
     // get the value of a stat, probably just pulled from the cache but may need to be evaluated.
-    pub fn get() {}
+    pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
+        let Ok(stats) = self.stats_query.get(target_entity) else {
+            return 0.0;
+        };
+
+        stats.get(stat_path).unwrap_or(0.0)
+    }
 
     // add a modifier. If it's dependent on another entity, we get the values from that entity and register the dependency
-    pub fn add_modifier() {}
+    pub fn add_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+        let vt: ValueType = modifier.into();
+
+        let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) else {
+            return;
+        };
+
+        match vt {
+            ValueType::Literal(value) => {
+
+                // just add the value to the stats
+            },
+            ValueType::Expression(expression) => {
+                for depends_on in expression.value.iter_variable_identifiers() {
+                    let depends_on_segments: Vec<&str> = depends_on.split("_").collect();
+                    let head = depends_on_segments[0];
+
+                    if let Some(depends_on_entity) = target_stats.dependent_on.get(head) {
+                        // get the other entities ("Invoker") stats
+                        let Ok(depends_on_stats) = self.stats_query.get(*depends_on_entity) else {
+                            return;
+                        };
+
+                        // get the value of the depended-on stat "Invoker's Life_Added"
+                        // cache the stat in target_stats as "Invoker@Life_Added"
+                        // add a dependent to the "Invoker" entity. "Life_Added" has a dependent of `entity` where `entity` is the target
+                        // add a dependent to the target entity. "Invoker@Life_Added" has a dependent of stat_path
+                    }
+
+                    // add the modifier to the child. This step may encompass 
+                }
+            },
+        }
+    }
 
     // unregister the dependency, remove the modifier
-    pub fn remove_modifier() {}
+    pub fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+
+    }
 }
 
 /// A collection of stats keyed by their names.
@@ -94,6 +135,7 @@ pub struct Stats {
     pub definitions: HashMap<String, StatType>,
     cached_stats: SyncContext,
     dependency_graph: SyncDependents,
+    dependent_on: HashMap<String, Entity>,
 }
 
 #[derive(Debug, Default)]
@@ -171,6 +213,7 @@ impl Stats {
             definitions: HashMap::new(),
             cached_stats: SyncContext::new(),
             dependency_graph: SyncDependents::new(),
+            dependent_on: HashMap::new(),
         }
     }
 
