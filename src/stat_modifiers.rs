@@ -1,5 +1,5 @@
 use std::{cell::SyncUnsafeCell, sync::{Arc, RwLock}};
-use bevy::{ecs::component::Component, utils::{HashMap, HashSet}};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::HashMap};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 use crate::{error::StatError, tags::TagLike};
 
@@ -40,6 +40,52 @@ pub enum ModType {
 //     - StatContext
 //     - StatEffect
 //     - StatRequirements
+
+/// StatContext can be rolled into the SyncDependents.
+/// When an entity has something like "owner.Life.max" added as a modifier, it will find the owner entity
+/// and add itself as a StatDependent to the owner entity. 
+
+/// When the owners stat values update, it will check its stat dependents for any changes that need to be
+/// synced. Then it will push the new value to the dependent entities cached stats. In the above case it 
+/// would update the dependents cache for "owner.Life.max"
+
+/// When a stats value is updated, we iter its dependents and update all of the dependent stats. 
+/// If a stats value is updated and it has a dependent on another entity, we wait for a sync step that
+///     can update the cached value and its dependents on the dependent entity
+/// If a modifier is added that depends on another entity (like Owner.Life.max for instance), we have
+///     to take a step to communicate that dependency to the "Owner/Parent/Invoker" whatever. Basically,
+///     we add
+/// 
+/// OR OR OR OR OR
+/// 
+/// When adding a modifier, we need access to Query<&mut Stats>, which means we can "reach across" to other 
+/// entities and evaluate their values or even add/update dependent stats
+
+
+
+
+
+
+
+
+
+
+
+#[derive(SystemParam)]
+pub struct StatAccessor<'w, 's> {
+    stats_query: Query<'w, 's, &'static mut Stats>,
+}
+
+impl StatAccessor<'_, '_> {
+    // get the value of a stat, probably just pulled from the cache but may need to be evaluated.
+    pub fn get() {}
+
+    // add a modifier. If it's dependent on another entity, we get the values from that entity and register the dependency
+    pub fn add_modifier() {}
+
+    // unregister the dependency, remove the modifier
+    pub fn remove_modifier() {}
+}
 
 /// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
