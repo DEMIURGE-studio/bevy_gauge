@@ -1,5 +1,3 @@
-use bevy::prelude::{Deref, DerefMut};
-use std::collections::{HashMap, HashSet};
 use crate::expressions::Expression;
 
 #[derive(Debug)]
@@ -13,7 +11,6 @@ pub enum ValueType {
     Literal(f32),
     Expression(Expression),
 }
-
 
 // Need to be able to optionally pass in a stat_collection or value to be added to the evalexpression context
 
@@ -79,4 +76,3 @@ impl Default for ValueType {
         Self::Literal(0.0)
     }
 }
-

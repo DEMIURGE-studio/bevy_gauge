@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use crate::stats::AttributeId;
 
 // String to tag ID mapping
 #[derive(Resource, Debug, Default, Clone)]
@@ -121,6 +122,16 @@ impl TagRegistry {
     ) -> bool {
         modifier_tag_id & target_tag_id > 0
     }
+}
+
+pub fn attribute_tag_matches(
+    attribute_id: &AttributeId, 
+    other_attr: &AttributeId
+) -> bool {
+    if attribute_id.group == other_attr.group && attribute_id.tag & other_attr.tag > 0 {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -297,7 +308,6 @@ mod tag_registry_tests {
         let fire_id = registry.register_subtype("DAMAGE", "FIRE");
         let cold_id = registry.register_subtype("DAMAGE", "COLD");
         let elemental_id = fire_id | cold_id;
-
 
         let stat_tag = fire_id;
         let modifier_tag = elemental_id;

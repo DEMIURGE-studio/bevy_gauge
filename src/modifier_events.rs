@@ -1,8 +1,8 @@
-use bevy::app::App;
-use bevy::prelude::{Commands, Entity, Event, OnAdd, OnRemove, Query, Res, Trigger, With};
 use crate::modifiers::{ModifierCollectionRefs, ModifierInstance, ModifierTarget, ModifierValue};
 use crate::prelude::{StatCollection, TagRegistry};
-use crate::stat_events::AttributeUpdatedEvent;
+use crate::stat_events::{AttributeShouldRecalculate, AttributeUpdatedEvent};
+use bevy::app::App;
+use bevy::prelude::{Commands, Entity, Event, OnAdd, OnRemove, Query, Res, Trigger, With};
 
 fn on_modifier_added(
     trigger: Trigger<OnAdd, ModifierInstance>,
@@ -20,14 +20,22 @@ fn on_modifier_added(
                 trigger.target(),
                 &tag_registry,
                 &mut commands,
+                entity
             );
             commands.trigger_targets(
-                AttributeUpdatedEvent {
-                    stat_id: modifier.target_stat.clone(),
-                    value: stat_collection.get_stat_value(modifier.target_stat.clone()),
+                AttributeShouldRecalculate {
+                    attribute_id: modifier.target_stat.clone(),
                 },
-                entity,
+                entity
             );
+            
+            // commands.trigger_targets(
+            //     AttributeUpdatedEvent {
+            //         stat_id: modifier.target_stat.clone(),
+            //         value: stat_collection.get_stat_value(modifier.target_stat.clone()),
+            //     },
+            //     entity,
+            // );
         }
     }
 }
@@ -42,7 +50,7 @@ fn on_modifier_removed(
 ) {
     if let Ok((entity, mut stat_collection)) = stat_query.single_mut() {
         if let Ok((modifier, stat_entity)) = modifier_query.get(trigger.target()) {
-            stat_collection.remove_modifier(trigger.target(), &tag_registry, &mut commands);
+            stat_collection.remove_modifier(trigger.target(), &tag_registry, &mut commands, entity);
 
             let mut modifier_deps = Vec::new();
 
@@ -62,11 +70,19 @@ fn on_modifier_removed(
                 }
                 // self.recalculate_attribute_and_dependents(modifier.target_stat.clone(), tag_registry, commands)
             }
-            stat_collection.recalculate_attribute_and_dependents(
-                modifier.target_stat.clone(),
-                &tag_registry,
-                &mut commands,
+
+            commands.trigger_targets(
+                AttributeShouldRecalculate {
+                    attribute_id: modifier.target_stat.clone(),
+                },
+                entity
             );
+
+            // stat_collection.recalculate_attribute_and_dependents(
+            //     modifier.target_stat.clone(),
+            //     &tag_registry,
+            //     &mut commands,
+            // );
             // commands.trigger_targets(
             //     AttributeUpdatedEvent {
             //         stat_id: modifier.target_stat.clone(),
@@ -81,7 +97,7 @@ fn on_modifier_removed(
 pub fn on_modifier_change(
     trigger: Trigger<ModifierUpdatedEvent>,
     mut modifier_query: Query<(&mut ModifierInstance, &ModifierTarget)>,
-    mut stat_query: Query<&mut StatCollection, With<ModifierCollectionRefs>>,
+    mut stat_query: Query<(Entity, &mut StatCollection), With<ModifierCollectionRefs>>,
     registry: Res<TagRegistry>,
     mut commands: Commands,
 ) {
@@ -92,7 +108,7 @@ pub fn on_modifier_change(
         if let Some(new_val) = &trigger.new_value {
             modifier_instance.value = new_val.clone();
         }
-        if let Ok(mut stats) = stat_query.get_mut(modifier_target.modifier_collection) {
+        if let Ok((entity, mut stats)) = stat_query.get_mut(modifier_target.modifier_collection) {
             if let Some(dependencies) = modifier_instance.value.get_value().extract_dependencies() {
                 let context = stats.get_stat_relevant_context(&dependencies, &registry);
                 modifier_instance
@@ -115,11 +131,10 @@ pub fn on_modifier_change(
                     //assert_eq!(attribute_instance.modifier_collection.get(&trigger.target()).unwrap().get_value(), trigger.new_value.get_value());
                 }
             }
-            stats.update_modifier(trigger.target(), &registry, &mut commands);
+            stats.update_modifier(trigger.target(), &registry, &mut commands, entity);
         }
     }
 }
-
 
 #[derive(Event)]
 pub struct ModifierUpdatedEvent {

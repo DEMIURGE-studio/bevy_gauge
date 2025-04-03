@@ -1,19 +1,22 @@
 #[cfg(test)]
 mod tests {
+    use crate::expressions::Expression;
+    use crate::modifier_events::{
+        on_modifier_change, register_modifier_triggers, ModifierUpdatedEvent,
+    };
     use crate::prelude::*;
+    use crate::stat_events::{
+        on_stat_added, register_stat_triggers, AttributeAddedEvent, AttributeUpdatedEvent,
+    };
+    use crate::stat_value::StatValue;
     use bevy::prelude::*;
     use std::collections::HashSet;
-    use crate::expressions::Expression;
-    use crate::modifier_events::{on_modifier_change, register_modifier_triggers, ModifierUpdatedEvent};
-    use crate::stat_events::{on_stat_added, register_stat_triggers, AttributeAddedEvent, AttributeUpdatedEvent};
-    use crate::stat_value::StatValue;
 
     fn setup_test_app() -> App {
         let mut app = App::new();
 
         // Add necessary resources
         app.init_resource::<TagRegistry>();
-        app.add_event::<AttributeUpdatedEvent>();
 
         // Add systems
         register_modifier_triggers(&mut app);
@@ -67,8 +70,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add the strength stat manually
@@ -170,8 +171,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add the strength stat manually
@@ -281,8 +280,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add stats with dependencies manually
@@ -395,8 +392,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add the strength stat manually
@@ -606,8 +601,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add stats with dependencies manually
@@ -637,6 +630,7 @@ mod tests {
                 character_id,
             );
         }
+        println!("before modifier");
 
         // Create a modifier for strength
         let strength_modifier_id = app
@@ -653,6 +647,7 @@ mod tests {
             ))
             .id();
 
+        println!("strength modifier: {:?}", strength_modifier_id);
         // Run the app to process the systems
         app.update();
 
@@ -772,8 +767,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add multiple stats
@@ -972,8 +965,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add damage stats
@@ -1134,8 +1125,6 @@ mod tests {
         let character_id = app
             .world_mut()
             .spawn((StatCollection::new(), ModifierCollectionRefs::default()))
-            .observe(on_modifier_change)
-            .observe(on_stat_added)
             .id();
 
         // Add strength stat

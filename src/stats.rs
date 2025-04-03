@@ -1,17 +1,15 @@
-use crate::modifiers::{
-    ModifierCollectionRefs, ModifierInstance,
-    ModifierValueTotal,
-};
+use crate::modifier_events::ModifierUpdatedEvent;
+use crate::modifiers::{ModifierCollectionRefs, ModifierInstance, ModifierValueTotal};
 use crate::prelude::AttributeInstance;
 use crate::resource::ResourceInstance;
-use crate::tags::TagRegistry;
+use crate::stat_value::StatValue;
+use crate::tags::{attribute_tag_matches, TagRegistry};
 use bevy::ecs::entity::hash_map::EntityHashMap;
 use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet};
-use crate::modifier_events::ModifierUpdatedEvent;
-use crate::stat_value::StatValue;
+use crate::stat_events::AttributeShouldRecalculate;
 
 #[derive(Debug)]
 pub enum StatError {
@@ -139,6 +137,7 @@ impl StatCollection {
         value: StatValue,
         tag_registry: &Res<TagRegistry>,
         commands: &mut Commands,
+        entity: Entity
     ) {
         let Some(bit_tag) = tag_registry.get_id(group, attr_name) else {
             panic!(
@@ -146,6 +145,8 @@ impl StatCollection {
                 group, attr_name
             );
         };
+        
+        println!("Attribute added");
 
         // Normalize the group name to lowercase
         let group_lowercase = group.to_lowercase();
@@ -244,59 +245,38 @@ impl StatCollection {
 
         // Resolve any attributes that were waiting for this one
         self.resolve_pending_dependents(&this_attr_id);
-        self.recalculate_attribute_and_dependents(this_attr_id, &tag_registry, commands);
+        self.recalculate_attribute_and_dependents(this_attr_id, &tag_registry, commands, entity);
     }
 
     pub fn insert_resource(&mut self, resource_name: &str, resource_instance: ResourceInstance) {}
-
-    pub fn recalculate_attribute_and_dependents(
+    
+    
+    pub fn recalculate_attributes(
         &mut self,
-        attribute_id: AttributeId,
-        registry: &Res<TagRegistry>,
-        commands: &mut Commands,
-    ) {
-        // Simple set to track which stats we've processed
-        let mut processed: HashSet<AttributeId> = HashSet::new();
-        let mut processed_modifiers: EntityHashSet = EntityHashSet::default();
-        // Start from the given attribute and walk outward to dependents
-        self.tree_walk_calculate(
-            attribute_id,
-            &mut processed,
-            &mut processed_modifiers,
-            &registry,
-            commands,
-        );
-    }
-
-    // Tree walk to recalculate attributes and their dependents
-
-    fn tree_walk_calculate(
-        &mut self,
-        attr_id: AttributeId,
-        processed: &mut HashSet<AttributeId>,
-        processed_modifiers: &mut EntityHashSet,
+        attribute_id: &AttributeId,
         tag_registry: &Res<TagRegistry>,
         commands: &mut Commands,
+        entity: Entity
     ) {
-        println!(
-            "Walking: {:?} {:?}",
-            attr_id,
-            tag_registry.get_tag(&attr_id.group, attr_id.tag)
-        );
-
-        // Skip if already processed
-        if processed.contains(&attr_id) {
-            return;
+        let attributes = self.get_qualified_tags(attribute_id.clone());
+        
+        for attribute in attributes {
+            self.recalculate_attribute(&attribute, tag_registry, commands, entity);
         }
+    }
+    
+    pub fn recalculate_attribute(
+        &mut self, 
+        attribute_id: &AttributeId, 
+        tag_registry: &Res<TagRegistry>, 
+        commands: &mut Commands,
+        entity: Entity,
+    ) {
 
-        // Mark as processed to avoid cycles
-        processed.insert(attr_id.clone());
-
-        // First collect dependents to avoid borrow issues during recursion
         let mut dependent_attributes = Vec::new();
         let mut dependent_modifiers = Vec::new();
 
-        if let Some(attribute_instance) = self.get_attribute_instance_mut(attr_id.clone()) {
+        if let Some(attribute_instance) = self.get_attribute_instance_mut(attribute_id.clone()) {
             if let Some(dependent_attribute_list) = attribute_instance.dependent_attributes.as_mut()
             {
                 for (dependent_attribute_group, dependent_attribute_tags) in
@@ -313,17 +293,15 @@ impl StatCollection {
 
             println!(
                 "getting dependent modifiers for {:?}",
-                tag_registry.get_tag(&attr_id.group, attr_id.tag)
+                tag_registry.get_tag(&attribute_id.group, attribute_id.tag)
             );
             for dependent_modifier in attribute_instance.dependent_modifiers.iter() {
                 print!("dependent modifier loop");
-                if !processed_modifiers.contains(dependent_modifier) {
-                    dependent_modifiers.push(*dependent_modifier);
-                }
+                dependent_modifiers.push(*dependent_modifier);
             }
         }
 
-        self.update_dependent_attribute(attr_id.clone(), tag_registry, commands);
+        self.update_dependent_attribute(attribute_id.clone(), tag_registry, commands);
 
         println!(
             "{:?} {:?}",
@@ -335,24 +313,132 @@ impl StatCollection {
         // let mut modifier_affected_attributes = Vec::new();
 
         // Process dependents without holding mutable borrow
-        for dependent in dependent_attributes {
-            self.tree_walk_calculate(
-                dependent,
-                processed,
-                processed_modifiers,
-                tag_registry,
-                commands,
-            );
+        // for dependent in dependent_attributes {
+        //     self.tree_walk_calculate(
+        //         dependent,
+        //         processed,
+        //         processed_modifiers,
+        //         tag_registry,
+        //         commands,
+        //     );
+        // }
+        for attribute in dependent_attributes {
+            commands.trigger_targets(AttributeShouldRecalculate { attribute_id: attribute.clone() }, entity);
         }
 
-        println!("Walk ended: {:?}", attr_id);
 
         // println!("trigger_update_update_dependent");
         for modifier_entity in dependent_modifiers {
-            processed_modifiers.insert(modifier_entity);
             commands.trigger_targets(ModifierUpdatedEvent { new_value: None }, modifier_entity);
         }
     }
+
+    pub fn recalculate_attribute_and_dependents(
+        &mut self,
+        attribute_id: AttributeId,
+        registry: &Res<TagRegistry>,
+        commands: &mut Commands,
+        entity: Entity,
+    ) {
+        // Simple set to track which stats we've processed
+        let mut processed: HashSet<AttributeId> = HashSet::new();
+        let mut processed_modifiers: EntityHashSet = EntityHashSet::default();
+        // Start from the given attribute and walk outward to dependents
+        self.recalculate_attribute(&attribute_id.clone(), registry, commands, entity);
+        // self.tree_walk_calculate(
+        //     attribute_id,
+        //     &mut processed,
+        //     &mut processed_modifiers,
+        //     &registry,
+        //     commands,
+        // );
+    }
+
+    // Tree walk to recalculate attributes and their dependents
+
+    // fn tree_walk_calculate(
+    //     &mut self,
+    //     attr_id: AttributeId,
+    //     processed: &mut HashSet<AttributeId>,
+    //     processed_modifiers: &mut EntityHashSet,
+    //     tag_registry: &Res<TagRegistry>,
+    //     commands: &mut Commands,
+    // ) {
+    //     println!(
+    //         "Walking: {:?} {:?}",
+    //         attr_id,
+    //         tag_registry.get_tag(&attr_id.group, attr_id.tag)
+    //     );
+    // 
+    //     // Skip if already processed
+    //     if processed.contains(&attr_id) {
+    //         return;
+    //     }
+    // 
+    //     // Mark as processed to avoid cycles
+    //     processed.insert(attr_id.clone());
+    // 
+    //     // First collect dependents to avoid borrow issues during recursion
+    //     let mut dependent_attributes = Vec::new();
+    //     let mut dependent_modifiers = Vec::new();
+    // 
+    //     if let Some(attribute_instance) = self.get_attribute_instance_mut(attr_id.clone()) {
+    //         if let Some(dependent_attribute_list) = attribute_instance.dependent_attributes.as_mut()
+    //         {
+    //             for (dependent_attribute_group, dependent_attribute_tags) in
+    //                 dependent_attribute_list
+    //             {
+    //                 for dependent_attribute in dependent_attribute_tags.iter() {
+    //                     dependent_attributes.push(AttributeId::new(
+    //                         dependent_attribute_group.clone(),
+    //                         *dependent_attribute,
+    //                     ));
+    //                 }
+    //             }
+    //         }
+    // 
+    //         println!(
+    //             "getting dependent modifiers for {:?}",
+    //             tag_registry.get_tag(&attr_id.group, attr_id.tag)
+    //         );
+    //         for dependent_modifier in attribute_instance.dependent_modifiers.iter() {
+    //             print!("dependent modifier loop");
+    //             if !processed_modifiers.contains(dependent_modifier) {
+    //                 dependent_modifiers.push(*dependent_modifier);
+    //             }
+    //         }
+    //     }
+    // 
+    //     self.update_dependent_attribute(attr_id.clone(), tag_registry, commands);
+    // 
+    //     println!(
+    //         "{:?} {:?}",
+    //         dependent_attributes,
+    //         dependent_modifiers.clone()
+    //     );
+    // 
+    //     // Process dependent modifiers and collect affected attributes
+    //     // let mut modifier_affected_attributes = Vec::new();
+    // 
+    //     // Process dependents without holding mutable borrow
+    //     for dependent in dependent_attributes {
+    //         self.tree_walk_calculate(
+    //             dependent,
+    //             processed,
+    //             processed_modifiers,
+    //             tag_registry,
+    //             commands,
+    //         );
+    //     }
+    // 
+    //     println!("Walk ended: {:?}", attr_id);
+    // 
+    //     // println!("trigger_update_update_dependent");
+    //     for modifier_entity in dependent_modifiers {
+    //         processed_modifiers.insert(modifier_entity);
+    //         commands.trigger_targets(ModifierUpdatedEvent { new_value: None }, modifier_entity);
+    //     }
+    // }
 
     // Get a stat value by group and tag
     pub fn get_f32(&self, attribute_id: AttributeId) -> Result<f32, StatError> {
@@ -401,6 +487,22 @@ impl StatCollection {
         }
         None
     }
+    
+    
+    pub fn get_qualified_tags(
+        &mut self,
+        attribute_id: AttributeId,
+    ) -> Vec<AttributeId> {
+        let mut result = Vec::new();
+        if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
+            for (tag, attribute) in attribute_group.iter_mut() {
+                if tag & attribute_id.tag > 0 {
+                    result.push(AttributeId { tag: *tag, group: attribute_id.group.clone() });
+                }
+            }
+        }
+        result
+    }
 
     pub fn get_attribute_instance_mut(
         &mut self,
@@ -446,8 +548,7 @@ impl StatCollection {
         tag_registry: &TagRegistry,
         commands: &mut Commands,
     ) {
-        let value = thread_rng().gen_range(0..1000);
-        println!("updating dependent: {:?} {:?}", attribute_id, value);
+        println!("updating dependent: {:?}", attribute_id);
         // Two-step process to avoid borrowing issues:
         // 1. Clone the StatValue from the attribute (if it exists)
 
@@ -466,9 +567,9 @@ impl StatCollection {
 
         // 2. If we have a stat value, update it with the current stat collection
         if let Some(value) = self.get_stat_value_mut(attribute_id.clone()) {
-            println!("current value: {:?}", value);
+            println!("current value: {:?}", value.get_value_f32());
             value.update_value_with_context(&stat_snapshot);
-            println!("current value: {:?}", value);
+            println!("current value: {:?}", value.get_value_f32());
 
             // println!("trigger_update_update_dependent");
             // 3. Now place the updated value back in the attribute
@@ -483,9 +584,8 @@ impl StatCollection {
             }
         }
 
-        println!("end update dependent: {:?} {:?}", attribute_id, value);
+        println!("end update dependent: {:?}", attribute_id);
     }
-
 
     pub fn get_hanging_attributes(&self) -> &HashMap<AttributeId, HashSet<AttributeId>> {
         &self.pending_attributes
@@ -497,6 +597,7 @@ impl StatCollection {
         modifier_entity: Entity,
         tag_registry: &Res<TagRegistry>,
         commands: &mut Commands,
+        entity: Entity
     ) {
         let mut modifier_deps = Vec::new();
 
@@ -525,13 +626,14 @@ impl StatCollection {
         }
 
         for dependency in &modifier.dependencies {
-            self.recalculate_attribute_and_dependents(dependency.clone(), tag_registry, commands)
+            self.recalculate_attribute_and_dependents(dependency.clone(), tag_registry, commands, entity);
         }
 
         self.recalculate_attribute_and_dependents(
             modifier.target_stat.clone(),
             tag_registry,
             commands,
+            entity
         )
     }
 
@@ -540,6 +642,7 @@ impl StatCollection {
         modifier_entity: Entity,
         tag_registry: &Res<TagRegistry>,
         commands: &mut Commands,
+        entity: Entity
     ) {
         println!("remove_modifier: {:?}", modifier_entity);
         let mut attributes_to_recalculate = Vec::new();
@@ -555,7 +658,7 @@ impl StatCollection {
         }
         self.attribute_modifiers.remove(&modifier_entity);
         for attribute_id in attributes_to_recalculate {
-            self.recalculate_attribute_and_dependents(attribute_id, tag_registry, commands);
+            self.recalculate_attribute_and_dependents(attribute_id, tag_registry, commands, entity);
         }
     }
 
@@ -565,6 +668,7 @@ impl StatCollection {
         modifier_entity: Entity,
         registry: &Res<TagRegistry>,
         commands: &mut Commands,
+        entity: Entity
     ) {
         let mut attributes_to_recalculate = Vec::new();
 
@@ -574,21 +678,12 @@ impl StatCollection {
             }
         }
         for attribute_id in attributes_to_recalculate {
-            self.recalculate_attribute_and_dependents(attribute_id.clone(), &registry, commands);
+            self.recalculate_attribute_and_dependents(attribute_id.clone(), &registry, commands, entity);
         }
     }
+    
 }
 
-fn add_stat_to_collection(
-    stat_collection: &mut StatCollection,
-    group: &str,
-    name: &str,
-    value: StatValue,
-    tag_registry: &Res<TagRegistry>,
-    mut commands: Commands,
-) {
-    stat_collection.add_attribute(group, name, value, tag_registry, &mut commands);
-}
 
 #[cfg(test)]
 mod stat_tests {}

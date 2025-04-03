@@ -1,9 +1,9 @@
-use crate::stats::{AttributeId, StatCollection};
+use crate::stat_value::StatValue;
+use crate::stats::AttributeId;
 use crate::tags::TagRegistry;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
-use crate::stat_value::StatValue;
 
 #[derive(Debug, Clone)]
 pub enum ModifierValue {

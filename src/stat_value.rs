@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
 use crate::expressions::Expression;
 use crate::prelude::{ValueBounds, ValueType};
 use evalexpr::{
-    ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue,
+    ContextWithMutableVariables, HashMapContext, Value as EvalValue,
 };
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StatValue {
     value: ValueType,
@@ -127,7 +127,6 @@ impl StatValue {
 
             let group = parts[0];
             let tag_str = parts[1];
-
 
             // If we have a valid tag ID, try to get the attribute value
             let val = match value_context.get(format!("{}.{}", group, tag_str).as_str()) {
