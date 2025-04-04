@@ -4,6 +4,7 @@ use crate::tags::TagRegistry;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
+use evalexpr::HashMapContext;
 
 #[derive(Debug, Clone)]
 pub enum ModifierValue {
@@ -15,7 +16,7 @@ pub enum ModifierValue {
 impl ModifierValue {
     pub fn update_value_with_ctx(
         &mut self,
-        stat_context: HashMap<String, f32>,
+        stat_context: HashMapContext,
         tag_registry: &Res<TagRegistry>,
     ) {
         match self {

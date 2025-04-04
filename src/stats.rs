@@ -11,6 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use log::debug;
 use crate::stat_events::AttributeShouldRecalculate;
+use evalexpr::{
+    ContextWithMutableVariables, HashMapContext, Value as EvalValue,
+};
 
 #[derive(Debug)]
 pub enum StatError {
@@ -43,7 +46,7 @@ impl AttributeId {
 #[require(ModifierCollectionRefs)]
 pub struct StatCollection {
     #[deref]
-    pub attributes: HashMap<String, HashMap<u32, Arc<RwLock<AttributeInstance>>>>, // primary group -> instance
+    pub attributes: HashMap<String, HashMap<u32, Arc<RwLock<AttributeInstance>>>>, // primary group -> tags -> instance
     pub attribute_modifiers: EntityHashMap<HashSet<AttributeId>>,
     pub resources: HashMap<String, Arc<RwLock<ResourceInstance>>>,
     pub pending_attributes: HashMap<AttributeId, HashSet<AttributeId>>,
@@ -427,17 +430,17 @@ impl StatCollection {
         &self,
         attribute_group_tag: &[(String, String)],
         tag_registry: &TagRegistry,
-    ) -> HashMap<String, f32> {
-        let mut stat_relevant_context = HashMap::new();
+    ) -> HashMapContext {
+        let mut stat_relevant_context = HashMapContext::new();
         for (group, tag) in attribute_group_tag {
             let attribute_id = AttributeId {
                 group: group.clone(),
                 tag: tag_registry.get_id(group, tag).unwrap(),
             };
-            stat_relevant_context.insert(
+            stat_relevant_context.set_value(
                 format!("{}.{}", group.clone(), tag.clone()),
-                self.get_f32(attribute_id).unwrap(),
-            );
+                EvalValue::from_float(self.get_f32(attribute_id).unwrap() as f64),
+            ).unwrap();
         }
         stat_relevant_context
     }

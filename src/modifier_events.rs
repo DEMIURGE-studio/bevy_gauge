@@ -1,6 +1,6 @@
 use crate::modifiers::{ModifierCollectionRefs, ModifierInstance, ModifierTarget, ModifierValue};
 use crate::prelude::{StatCollection, TagRegistry};
-use crate::stat_events::{AttributeShouldRecalculate, AttributeUpdatedEvent};
+use crate::stat_events::{AttributeShouldRecalculate};
 use bevy::app::App;
 use bevy::prelude::{Commands, Entity, Event, OnAdd, OnRemove, Query, Res, Trigger, With};
 
@@ -29,13 +29,6 @@ fn on_modifier_added(
                 entity
             );
             
-            // commands.trigger_targets(
-            //     AttributeUpdatedEvent {
-            //         stat_id: modifier.target_stat.clone(),
-            //         value: stat_collection.get_stat_value(modifier.target_stat.clone()),
-            //     },
-            //     entity,
-            // );
         }
     }
 }
