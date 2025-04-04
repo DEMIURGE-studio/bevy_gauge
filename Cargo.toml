@@ -24,24 +24,27 @@ members = ["bevy_gauge_macros"]
 bevy_gauge_macros = "0.0.1"
 
 # Bevy 1st party
-bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", default-features = false, features = [
+bevy = { version = "0.16.0-rc.3", default-features = false, features = [
     "serialize", 
     "multi_threaded",
     "bevy_core_pipeline",
     "bevy_asset",
-    "bevy_state"
+    "bevy_state",
+    "dynamic_linking"
 ] }
 
 # Serialization
-serde = { version = "1.0.219", features = ["derive"] }
 evalexpr = "12.0.2"
-bevy_mod_debugdump = "0.12.1"
-log = "0.4.27"
-bitvec = "1.0.1"
 rand = "0.9.0"
 
 [dev-dependencies]
 criterion = "0.5.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
 
 [[bench]]
 name = "bit_tags_bench"

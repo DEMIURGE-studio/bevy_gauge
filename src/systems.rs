@@ -14,6 +14,7 @@ mod tests {
 
     fn setup_test_app() -> App {
         let mut app = App::new();
+        println!("Starting app");
 
         // Add necessary resources
         app.init_resource::<TagRegistry>();
