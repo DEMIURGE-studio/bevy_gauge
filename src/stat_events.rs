@@ -30,8 +30,10 @@ pub fn on_stat_updated(
     println!("trigger received");
     let mut stat_collection = stat_query.get_mut(trigger.target()).unwrap();
     if let Some(value) = stat_collection.get_attribute_instance_mut(trigger.stat_id.clone()) {
-        let mut attribute_write = value.write().unwrap();
-        attribute_write.value = trigger.value.clone().unwrap();
+        {
+            let mut attribute_write = value.write().unwrap();
+            attribute_write.value = trigger.value.clone().unwrap();
+        }
         stat_collection.recalculate_attribute_and_dependents(
             trigger.stat_id.clone(),
             &registry,
@@ -39,7 +41,6 @@ pub fn on_stat_updated(
             trigger.target()
         );
     }
-    // add_stat_to_cVollection(&mut stat_collection, &trigger.attribute_group, &trigger.attribute_name, trigger.value.clone(), &registry, commands);
 }
 
 
@@ -51,14 +52,6 @@ pub fn on_attribute_should_recalculate(
 ) {
     let mut stat_collection = stat_query.get_mut(trigger.target()).unwrap();
     stat_collection.recalculate_attributes(&trigger.attribute_id, &registry, &mut commands, trigger.target());
-
-    //     self.update_dependent_attribute(attr_id.clone(), tag_registry, commands);
-    // let stats = stat_collection.get_attribute_instances_mut(trigger.attribute_id.clone());
-    // for attribute in stats {
-    //     attribute.value.update_value_with_context()
-    // }
-    
-    
 }
 
 #[derive(Event, Debug)]
