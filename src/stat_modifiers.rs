@@ -34,26 +34,6 @@ use crate::{error::StatError, tags::TagLike};
 //     - StatEffect
 //     - StatRequirements
 
-/// StatContext can be rolled into the SyncDependents.
-/// When an entity has something like "owner.Life.max" added as a modifier, it will find the owner entity
-/// and add itself as a StatDependent to the owner entity. 
-
-/// When the owners stat values update, it will check its stat dependents for any changes that need to be
-/// synced. Then it will push the new value to the dependent entities cached stats. In the above case it 
-/// would update the dependents cache for "owner.Life.max"
-
-/// When a stats value is updated, we iter its dependents and update all of the dependent stats. 
-/// If a stats value is updated and it has a dependent on another entity, we wait for a sync step that
-///     can update the cached value and its dependents on the dependent entity
-/// If a modifier is added that depends on another entity (like Owner.Life.max for instance), we have
-///     to take a step to communicate that dependency to the "Owner/Parent/Invoker" whatever. Basically,
-///     we add
-/// 
-/// OR OR OR OR OR
-/// 
-/// When adding a modifier, we need access to Query<&mut Stats>, which means we can "reach across" to other 
-/// entities and evaluate their values or even add/update dependent stats
-
 #[derive(Debug, Clone, Default)]
 pub enum ModType {
     #[default]
@@ -178,6 +158,8 @@ impl StatAccessor<'_, '_> {
                 }
             },
         }
+
+        self.update_stat(target_entity, stat_path);
     }
 
     // Public API: Remove a modifier from a stat
@@ -235,6 +217,8 @@ impl StatAccessor<'_, '_> {
                 }
             },
         }
+
+        self.update_stat(target_entity, stat_path);
     }
 
     // Public API: Register an entity dependency
@@ -326,9 +310,6 @@ impl StatAccessor<'_, '_> {
                         }
                     }
                 }
-                
-                // Drop the immutable borrow before we recursively update
-                let _ = drop(dependent_stats);
                 
                 // Now recursively update each affected stat on the dependent entity
                 for local_stat in stats_to_update {
@@ -1180,7 +1161,6 @@ mod tests {
         // Register and run a system to increase Life_Added
         let increase_life_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(entity, "Life_Added", 5.0);
-            stat_accessor.update_stat(entity, "Life_Added"); // Important to trigger update
         });
         let _ = app.world_mut().run_system(increase_life_id);
         
@@ -1223,7 +1203,6 @@ mod tests {
         // Register and run a system to update the source entity
         let update_source_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(source_entity, "Life_Added", 10.0);
-            stat_accessor.update_stat(source_entity, "Life_Added");
         });
         let _ = app.world_mut().run_system(update_source_id);
         
@@ -1331,12 +1310,6 @@ mod tests {
                 stat_accessor.add_modifier(entity, "Level1", "Base * 2");
                 stat_accessor.add_modifier(entity, "Level2", "Level1 + 5");
                 stat_accessor.add_modifier(entity, "Level3", "Level2 * 1.5");
-                
-                // Important: Update all stats to establish initial values
-                stat_accessor.update_stat(entity, "Base");
-                stat_accessor.update_stat(entity, "Level1");
-                stat_accessor.update_stat(entity, "Level2");
-                stat_accessor.update_stat(entity, "Level3");
             }
         });
         let _ = app.world_mut().run_system(setup_chain_id);
@@ -1357,12 +1330,6 @@ mod tests {
         // Register and run a system to update the base value
         let update_base_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(entity, "Base", 5.0);
-            
-            // Important: Update stats explicitly to propagate changes
-            stat_accessor.update_stat(entity, "Base");
-            stat_accessor.update_stat(entity, "Level1");
-            stat_accessor.update_stat(entity, "Level2");
-            stat_accessor.update_stat(entity, "Level3");
         });
         let _ = app.world_mut().run_system(update_base_id);
         
@@ -1390,7 +1357,7 @@ mod tests {
         const FIRE: u32 = 0x01;
         const COLD: u32 = 0x02;
         const SWORD: u32 = 0x0100;
-        const BOW: u32 = 0x0200;
+        //const BOW: u32 = 0x0200;
         
         // Setup app
         let mut app = App::new();
@@ -1414,9 +1381,6 @@ mod tests {
                 // Add increased damage multipliers
                 stat_accessor.add_modifier(entity, &format!("Damage_Increased_{}", (u32::MAX & !DAMAGE_TYPE) | FIRE), 0.2);
                 stat_accessor.add_modifier(entity, &format!("Damage_Increased_{}", (u32::MAX & !WEAPON_TYPE) | SWORD), 0.1);
-                
-                // Update all relevant stats
-                stat_accessor.update_stat(entity, &format!("Damage_{}", FIRE | SWORD));
             }
         });
         let _ = app.world_mut().run_system(add_damage_stats_id);
@@ -1457,9 +1421,6 @@ mod tests {
             // Entity A depends on B
             stat_accessor.register_dependency(entity_a, "Parent", entity_b);
             stat_accessor.add_modifier(entity_a, "Damage_Added", "Parent@Strength_Added * 2.0");
-            
-            // Update stats to propagate values
-            stat_accessor.update_stat(entity_c, "Power_Added");
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1479,7 +1440,6 @@ mod tests {
         // Now modify entity C and verify changes propagate through the chain
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(entity_c, "Power_Added", 10.0); // Increase by 10
-            stat_accessor.update_stat(entity_c, "Power_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1527,10 +1487,6 @@ mod tests {
             
             // Minion's total damage depends on both types
             stat_accessor.add_modifier(minion_entity, "TotalDamage_Added", "SpellDamage_Added + PhysicalDamage_Added");
-            
-            // Update stats to propagate values
-            stat_accessor.update_stat(owner_entity, "Intelligence_Added");
-            stat_accessor.update_stat(weapon_entity, "WeaponDamage_Added");
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1549,9 +1505,6 @@ mod tests {
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(owner_entity, "Intelligence_Added", 10.0);
             stat_accessor.add_modifier(weapon_entity, "WeaponDamage_Added", 15.0);
-            
-            stat_accessor.update_stat(owner_entity, "Intelligence_Added");
-            stat_accessor.update_stat(weapon_entity, "WeaponDamage_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1590,10 +1543,6 @@ mod tests {
             
             // Create a mixed dependency expression
             stat_accessor.add_modifier(minion_entity, "Damage_Added", "Owner@Power_Added * Multiplier_Added");
-            
-            // Update stats to propagate values
-            stat_accessor.update_stat(owner_entity, "Power_Added");
-            stat_accessor.update_stat(minion_entity, "Multiplier_Added");
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1606,7 +1555,6 @@ mod tests {
         // Test updating the local multiplier
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(minion_entity, "Multiplier_Added", 0.5);
-            stat_accessor.update_stat(minion_entity, "Multiplier_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1619,7 +1567,6 @@ mod tests {
         // Test updating the owner stat
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(owner_entity, "Power_Added", 10.0);
-            stat_accessor.update_stat(owner_entity, "Power_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1650,9 +1597,6 @@ mod tests {
             
             // Create a dependency
             stat_accessor.add_modifier(minion_entity, "Damage_Added", "Owner@Power_Added * 1.5");
-            
-            // Update stats to propagate values
-            stat_accessor.update_stat(owner_entity, "Power_Added");
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1681,7 +1625,6 @@ mod tests {
         // Modify the owner entity and verify it no longer affects the minion
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(owner_entity, "Power_Added", 30.0);
-            stat_accessor.update_stat(owner_entity, "Power_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1731,11 +1674,6 @@ mod tests {
             stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", FIRE), format!("Master@Damage_Increased_{}", FIRE));
             stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", COLD), format!("Master@Damage_Increased_{}", COLD));
             stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", LIGHTNING), format!("Master@Damage_Increased_{}", LIGHTNING));
-            
-            // Update all stats
-            stat_accessor.update_stat(master_entity, &format!("Damage_{}", FIRE));
-            stat_accessor.update_stat(master_entity, &format!("Damage_{}", COLD));
-            stat_accessor.update_stat(master_entity, &format!("Damage_{}", LIGHTNING));
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1759,7 +1697,6 @@ mod tests {
         // Now increase the master's fire damage and verify the change propagates
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", FIRE), 10.0);
-            stat_accessor.update_stat(master_entity, &format!("Damage_{}", FIRE));
         });
         let _ = app.world_mut().run_system(system_id);
         
@@ -1799,9 +1736,6 @@ mod tests {
             stat_accessor.add_modifier(recipient_a, "BuffedPower_Added", "Aura@AuraPower_Added * 1.2");
             stat_accessor.add_modifier(recipient_b, "BuffedPower_Added", "Aura@AuraPower_Added * 0.8");
             stat_accessor.add_modifier(recipient_c, "BuffedPower_Added", "Aura@AuraPower_Added * 1.5");
-            
-            // Update stats to propagate values
-            stat_accessor.update_stat(buff_source, "AuraPower_Added");
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1822,7 +1756,6 @@ mod tests {
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             // Strengthen the aura
             stat_accessor.add_modifier(buff_source, "AuraPower_Added", 5.0);
-            stat_accessor.update_stat(buff_source, "AuraPower_Added");
         });
         let _ = app.world_mut().run_system(system_id);
         
