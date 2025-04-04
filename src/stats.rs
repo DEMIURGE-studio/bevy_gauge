@@ -9,6 +9,7 @@ use bevy::ecs::entity::hash_set::EntityHashSet;
 use bevy::prelude::*;
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 use crate::stat_events::AttributeShouldRecalculate;
 
 #[derive(Debug)]
@@ -42,7 +43,7 @@ impl AttributeId {
 #[require(ModifierCollectionRefs)]
 pub struct StatCollection {
     #[deref]
-    pub attributes: HashMap<String, HashMap<u32, AttributeInstance>>, // primary group -> instance
+    pub attributes: HashMap<String, HashMap<u32, Arc<RwLock<AttributeInstance>>>>, // primary group -> instance
     pub attribute_modifiers: EntityHashMap<HashSet<AttributeId>>,
     pub resources: HashMap<String, ResourceInstance>,
     pub pending_attributes: HashMap<AttributeId, HashSet<AttributeId>>,
@@ -113,8 +114,9 @@ impl StatCollection {
         // First, get the attribute
         if let Some(attr_group) = self.attributes.get_mut(&attribute_id.group) {
             if let Some(attribute) = attr_group.get_mut(&attribute_id.tag) {
+                let mut attribute_write = attribute.write().unwrap();
                 // Get or create the dependent_attributes map
-                let attr_dependents = attribute
+                let attr_dependents = attribute_write
                     .dependent_attributes
                     .get_or_insert_with(HashMap::new);
 
@@ -161,6 +163,8 @@ impl StatCollection {
             dependent_modifiers: EntityHashSet::default(),
             modifier_total: ModifierValueTotal::default(),
         };
+        
+        let wrapped_attribute = Arc::new(RwLock::new(attribute));
 
         // Process dependencies if they exist
         if let Some(dependency_list) = value.extract_dependencies() {
@@ -188,7 +192,8 @@ impl StatCollection {
             }
 
             // Set the dependencies in the attribute
-            attribute.dependencies = Some(dependencies_converted.clone());
+            wrapped_attribute.write().unwrap().dependencies = Some(dependencies_converted.clone());
+            // attribute.dependencies = Some(dependencies_converted.clone());
 
             // For each dependency group
             for (dependency_group, dependency_tags) in &dependencies_converted {
@@ -215,9 +220,11 @@ impl StatCollection {
                         .get_mut(dependency_group)
                         .and_then(|group| group.get_mut(&dependency_mask))
                     {
+                        let mut dependent_attribute_write = dependent_attribute.write().unwrap();
+                        
                         // Mark this attr as a dependent in its dependency
                         if let Some(other_attr_dependents) =
-                            &mut dependent_attribute.dependent_attributes
+                            &mut dependent_attribute_write.dependent_attributes
                         {
                             // Get or create the HashSet for this dependent group
                             let dependent_set = other_attr_dependents
@@ -230,7 +237,7 @@ impl StatCollection {
                             // Create a new mapping with a HashSet containing this tag
                             let mut dependent_map = HashMap::new();
                             dependent_map.insert(group_lowercase.clone(), HashSet::from([bit_tag]));
-                            dependent_attribute.dependent_attributes = Some(dependent_map);
+                            dependent_attribute_write.dependent_attributes = Some(dependent_map);
                         }
                     }
                 }
@@ -241,7 +248,7 @@ impl StatCollection {
         self.attributes
             .entry(group_lowercase.clone())
             .or_insert_with(HashMap::new)
-            .insert(bit_tag, attribute);
+            .insert(bit_tag, wrapped_attribute);
 
         // Resolve any attributes that were waiting for this one
         self.resolve_pending_dependents(&this_attr_id);
@@ -277,7 +284,9 @@ impl StatCollection {
         let mut dependent_modifiers = Vec::new();
 
         if let Some(attribute_instance) = self.get_attribute_instance_mut(attribute_id.clone()) {
-            if let Some(dependent_attribute_list) = attribute_instance.dependent_attributes.as_mut()
+            let mut attribute_write = attribute_instance.write().unwrap();
+            
+            if let Some(dependent_attribute_list) = attribute_write.dependent_attributes.as_mut()
             {
                 for (dependent_attribute_group, dependent_attribute_tags) in
                     dependent_attribute_list
@@ -295,7 +304,7 @@ impl StatCollection {
                 "getting dependent modifiers for {:?}",
                 tag_registry.get_tag(&attribute_id.group, attribute_id.tag)
             );
-            for dependent_modifier in attribute_instance.dependent_modifiers.iter() {
+            for dependent_modifier in attribute_write.dependent_modifiers.iter() {
                 print!("dependent modifier loop");
                 dependent_modifiers.push(*dependent_modifier);
             }
@@ -447,7 +456,10 @@ impl StatCollection {
             Some(attr_group) => {
                 // Try to get the specific attribute
                 match attr_group.get(&attribute_id.tag) {
-                    Some(attribute) => Ok(attribute.get_total_value_f32()),
+                    Some(attribute) => {
+                        let attribute_read = attribute.read().unwrap();
+                        Ok(attribute_read.get_total_value_f32())
+                    },
                     None => Err(StatError::NotFound(format!(
                         "{}.{}",
                         &attribute_id.group, &attribute_id.tag
@@ -461,27 +473,41 @@ impl StatCollection {
     pub fn get_stat_value(&self, attribute_id: AttributeId) -> Option<StatValue> {
         if let Some(attribute_group) = self.attributes.get(&attribute_id.group) {
             if let Some(attribute) = attribute_group.get(&attribute_id.tag) {
-                return Some(attribute.value.clone());
+                let attribute_read = attribute.read().unwrap();
+                return Some(attribute_read.value.clone());
             }
             return None;
         }
         None
     }
 
-    fn get_stat_value_mut(&mut self, attribute_id: AttributeId) -> Option<&mut StatValue> {
+    // fn get_stat_value_mut(&mut self, attribute_id: AttributeId) -> Option<&mut StatValue> {
+    //     if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
+    //         if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
+    //             return Some(&mut attribute.value);
+    //         }
+    //         return None;
+    //     }
+    //     None
+    // }
+    
+    fn modify_stat_value<F>(&mut self, attribute_id: AttributeId, modify_fn: F)
+    where 
+        F: FnOnce(&mut StatValue) 
+    {
         if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
             if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
-                return Some(&mut attribute.value);
+                let mut attribute_write = attribute.write().unwrap();
+                modify_fn(&mut attribute_write.value);
             }
-            return None;
         }
-        None
     }
+    
 
-    pub fn get_attribute_instance(&self, attribute_id: AttributeId) -> Option<&AttributeInstance> {
+    pub fn get_attribute_instance(&self, attribute_id: AttributeId) -> Option<Arc<RwLock<AttributeInstance>>> {
         if let Some(attribute_group) = self.attributes.get(&attribute_id.group) {
             if let Some(attribute) = attribute_group.get(&attribute_id.tag) {
-                return Some(attribute);
+                return Some(Arc::clone(attribute));
             }
             return None;
         }
@@ -507,10 +533,10 @@ impl StatCollection {
     pub fn get_attribute_instance_mut(
         &mut self,
         attribute_id: AttributeId,
-    ) -> Option<&mut AttributeInstance> {
+    ) -> Option<Arc<RwLock<AttributeInstance>>>  {
         if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
             if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
-                return Some(attribute);
+                return Some(Arc::clone(attribute));
             }
             return None;
         }
@@ -553,8 +579,10 @@ impl StatCollection {
         // 1. Clone the StatValue from the attribute (if it exists)
 
         let mut dependency_strings: Vec<(String, String)> = Vec::new();
-        if let Some(stat_value) = self.get_stat_value_mut(attribute_id.clone()) {
-            if let Some(dependencies) = stat_value.extract_dependencies() {
+
+        if let Some(attribute) = self.get_attribute_instance(attribute_id.clone()) {
+            let attribute_read = attribute.read().unwrap();
+            if let Some(dependencies) = attribute_read.value.extract_dependencies() {
                 for (dependency_group, dependency_tag) in dependencies {
                     dependency_strings.push((dependency_group, dependency_tag));
                 }
@@ -566,21 +594,16 @@ impl StatCollection {
             .clone();
 
         // 2. If we have a stat value, update it with the current stat collection
-        if let Some(value) = self.get_stat_value_mut(attribute_id.clone()) {
-            println!("current value: {:?}", value.get_value_f32());
-            value.update_value_with_context(&stat_snapshot);
-            println!("current value: {:?}", value.get_value_f32());
+        if let Some(attribute) = self.get_attribute_instance(attribute_id.clone()) {
+            let mut attribute_write = attribute.write().unwrap();
+            println!("current value: {:?}", attribute_write.value.get_value_f32());
+            attribute_write.value.update_value_with_context(&stat_snapshot);
+            println!("current value: {:?}", attribute_write.value.get_value_f32());
 
-            // println!("trigger_update_update_dependent");
-            // 3. Now place the updated value back in the attribute
-            if let Some(attr_group) = self.attributes.get_mut(&attribute_id.group) {
-                if let Some(attribute) = attr_group.get_mut(&attribute_id.tag) {
-                    //println!("trigger_update_update_dependent");
-                    for modifier in &attribute.dependent_modifiers {
-                        commands
-                            .trigger_targets(ModifierUpdatedEvent { new_value: None }, *modifier);
-                    }
-                }
+            // Trigger updates for dependent modifiers
+            let dependent_modifiers = attribute_write.dependent_modifiers.clone();
+            for modifier in &dependent_modifiers {
+                commands.trigger_targets(ModifierUpdatedEvent { new_value: None }, *modifier);
             }
         }
 
@@ -604,7 +627,8 @@ impl StatCollection {
         if let Some(target_group) = self.attributes.get_mut(&modifier.target_stat.group) {
             for (key, value) in target_group {
                 if key & modifier.target_stat.tag > 0 {
-                    value.add_or_replace_modifier(modifier, modifier_entity);
+                    let mut attribute_write = value.write().unwrap();
+                    attribute_write.add_or_replace_modifier(modifier, modifier_entity);
                     self.attribute_modifiers
                         .entry(modifier_entity)
                         .or_insert_with(HashSet::new)
@@ -619,7 +643,9 @@ impl StatCollection {
         for modifier_dep in &modifier_deps {
             if let Some(attribute_instance) = self.get_attribute_instance_mut(modifier_dep.clone())
             {
-                attribute_instance
+                let mut attribute_write = attribute_instance.write().unwrap();
+                
+                attribute_write
                     .dependent_modifiers
                     .insert(modifier_entity);
             }
@@ -650,7 +676,9 @@ impl StatCollection {
             for attribute_id in attribute_ids.iter() {
                 if let Some(attribute_tags) = self.attributes.get_mut(&attribute_id.group) {
                     if let Some(attribute) = attribute_tags.get_mut(&attribute_id.tag) {
-                        attribute.remove_modifier(modifier_entity);
+                        let mut attribute_write = attribute.write().unwrap();
+                        
+                        attribute_write.remove_modifier(modifier_entity);
                     }
                 }
                 attributes_to_recalculate.push(attribute_id.clone());

@@ -60,8 +60,9 @@ fn on_modifier_removed(
             {
                 for (key, value) in target_group {
                     if key & modifier.target_stat.tag > 0 {
+                        let mut attribute_write = value.write().unwrap();
                         modifier_deps = modifier.dependencies.clone().iter().collect();
-                        value.remove_modifier(trigger.target());
+                        attribute_write.remove_modifier(trigger.target());
                         // NEED TO REMOVE FROM COLLECTION TODO
 
                         //value.add_or_replace_modifier(modifier, modifier_entity);
@@ -127,7 +128,8 @@ pub fn on_modifier_change(
                 if let Some(attribute_instance) =
                     stats.get_attribute_instance_mut(attribute_id.clone())
                 {
-                    attribute_instance.modify_modifier(&modifier_instance, trigger.target());
+                    let mut attribute_write = attribute_instance.write().unwrap();
+                    attribute_write.modify_modifier(&modifier_instance, trigger.target());
                     //assert_eq!(attribute_instance.modifier_collection.get(&trigger.target()).unwrap().get_value(), trigger.new_value.get_value());
                 }
             }

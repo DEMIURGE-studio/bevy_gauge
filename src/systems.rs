@@ -125,12 +125,13 @@ mod tests {
 
         // The modifier should be in the storage
         assert!(
-            strength_attr.modifier_collection.contains_key(&modifier_id),
+            strength_attr.read().unwrap().modifier_collection.contains_key(&modifier_id),
             "Modifier should be present in the attribute"
         );
 
         // Check the modifier value
-        let modifier_value = strength_attr.modifier_collection.get(&modifier_id).unwrap();
+        let strength_attribute = strength_attr.read().unwrap();
+        let modifier_value = strength_attribute.modifier_collection.get(&modifier_id).unwrap();
         match modifier_value {
             ModifierValue::Flat(stat_value) => {
                 assert!(
@@ -142,7 +143,7 @@ mod tests {
         }
 
         // Check total value (base value + modifier)
-        let strength_value = strength_attr.get_total_value_f32();
+        let strength_value = strength_attribute.get_total_value_f32();
         assert!(
             (strength_value - 5.0).abs() < 0.001,
             "Total strength should be 5.0, got {}",
