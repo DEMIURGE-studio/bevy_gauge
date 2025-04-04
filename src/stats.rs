@@ -513,34 +513,29 @@ impl StatCollection {
         }
         None
     }
-    
-    
+
+    pub fn get_attribute_instance_mut(&mut self, attribute_id: AttributeId) -> Option<Arc<RwLock<AttributeInstance>>> {
+        if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
+            if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
+                return Some(Arc::clone(attribute));
+            }
+        }
+        None
+    }
+
     pub fn get_qualified_tags(
         &mut self,
         attribute_id: AttributeId,
     ) -> Vec<AttributeId> {
         let mut result = Vec::new();
         if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
-            for (tag, attribute) in attribute_group.iter_mut() {
+            for (tag, _) in attribute_group.iter_mut() {
                 if tag & attribute_id.tag > 0 {
                     result.push(AttributeId { tag: *tag, group: attribute_id.group.clone() });
                 }
             }
         }
         result
-    }
-
-    pub fn get_attribute_instance_mut(
-        &mut self,
-        attribute_id: AttributeId,
-    ) -> Option<Arc<RwLock<AttributeInstance>>>  {
-        if let Some(attribute_group) = self.attributes.get_mut(&attribute_id.group) {
-            if let Some(attribute) = attribute_group.get_mut(&attribute_id.tag) {
-                return Some(Arc::clone(attribute));
-            }
-            return None;
-        }
-        None
     }
 
     pub fn get_stat_relevant_context(

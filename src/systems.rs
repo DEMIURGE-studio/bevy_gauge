@@ -223,8 +223,10 @@ mod tests {
             .get("attribute")
             .unwrap()
             .get(&strength_tag)
+            .unwrap()
+            .read()
             .unwrap();
-
+        
         // The modifier should be in the storage
         assert!(
             strength_attr.modifier_collection.contains_key(&modifier_id),
@@ -323,12 +325,16 @@ mod tests {
             .get("attribute")
             .unwrap()
             .get(&strength_tag)
+            .unwrap()
+            .read()
             .unwrap();
         let damage_attr = stat_collection
             .attributes
             .get("attribute")
             .unwrap()
             .get(&damage_tag)
+            .unwrap()
+            .read()
             .unwrap();
 
         // Check that damage depends on strength
@@ -443,6 +449,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&strength_tag)
+                .unwrap()
+                .read()
                 .unwrap();
 
             // Check modifiers are present
@@ -510,6 +518,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&strength_tag)
+                .unwrap()
+                .read()
                 .unwrap();
 
             // Check flat modifier is still present, more modifier is gone
@@ -547,6 +557,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&strength_tag)
+                .unwrap()
+                .read()
                 .unwrap();
 
             // Check all modifiers are gone
@@ -662,6 +674,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&strength_tag)
+                .unwrap()
+                .read()
                 .unwrap();
             let strength_value = strength_attr.get_total_value_f32();
             assert!(
@@ -676,6 +690,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&damage_tag)
+                .unwrap()
+                .read()
                 .unwrap();
             let damage_value = damage_attr.get_total_value_f32();
             assert!(
@@ -722,6 +738,8 @@ mod tests {
                 .get("attribute")
                 .unwrap()
                 .get(&damage_tag)
+                .unwrap()
+                .read()
                 .unwrap();
             let damage_value = damage_attr.get_total_value_f32();
             assert!(
@@ -734,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_group_modifier_application() {
-        // Setup app
+        // Setup appF
         let mut app = setup_test_app();
 
         // Setup tag registry
