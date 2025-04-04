@@ -253,8 +253,26 @@ impl StatAccessor<'_, '_> {
         }
     }
 
-    // Public API: Update a stat on an entity and propagate changes
+    // Modified StatAccessor::update_stat method for recursive dependency propagation
     pub fn update_stat(&mut self, target_entity: Entity, stat_path: &str) {
+        // Track entities/stats that we've already processed to prevent cycles
+        let mut processed = HashSet::new();
+        self.update_stat_recursive(target_entity, stat_path, &mut processed);
+    }
+
+    // New recursive helper method
+    fn update_stat_recursive(&mut self, target_entity: Entity, stat_path: &str, processed: &mut HashSet<(Entity, String)>) {
+        // Create a unique identifier for this entity+stat combination
+        let process_key = (target_entity, stat_path.to_string());
+        
+        // Skip if we've already processed this entity+stat combination to prevent cycles
+        if processed.contains(&process_key) {
+            return;
+        }
+        
+        // Mark this entity+stat as processed
+        processed.insert(process_key);
+        
         // First collect all the information needed
         let mut entity_dependents = Vec::new();
         
@@ -284,7 +302,7 @@ impl StatAccessor<'_, '_> {
                 // For each entity dependent, we need to find the corresponding "@" names
                 // and update them
                 let mut prefixes_to_update = Vec::new();
-                let mut cached_dependencies = Vec::new();
+                let mut stats_to_update = Vec::new();
                 
                 // Collect prefixes that point to the target entity
                 for (prefix, &entity) in &dependent_stats.dependent_on {
@@ -304,15 +322,17 @@ impl StatAccessor<'_, '_> {
                     let local_dependents = dependent_stats.get_dependents_internal(&cache_key);
                     for local_dependent in local_dependents {
                         if let DependentType::LocalStat(local_stat) = local_dependent {
-                            cached_dependencies.push(local_stat);
+                            stats_to_update.push(local_stat);
                         }
                     }
                 }
                 
-                // Update all local stats that depend on the cache entries
-                for local_stat in cached_dependencies {
-                    let local_segments = local_stat.split('_').collect::<Vec<&str>>();
-                    dependent_stats.update_stat(&local_segments);
+                // Drop the immutable borrow before we recursively update
+                let _ = drop(dependent_stats);
+                
+                // Now recursively update each affected stat on the dependent entity
+                for local_stat in stats_to_update {
+                    self.update_stat_recursive(dependent_entity, &local_stat, processed);
                 }
             }
         }
@@ -790,7 +810,7 @@ impl StatLike for Modifiable  {
 }
 
 #[derive(Debug)]
-struct ComplexEntry(f32, HashMap<u32, Simple>);
+pub struct ComplexEntry(f32, HashMap<u32, Simple>);
 
 #[derive(Debug)]
 pub struct ComplexModifiable {
@@ -834,20 +854,44 @@ impl StatLike for ComplexModifiable {
         if let Ok(value) = stats.get_cached(&full_path) {
             return value;
         }
-        let search_tags = match stat_path.get(1) {
-            Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
-            None => match stat_path.get(2) {
-                Some(query_str) => query_str.parse::<u32>().unwrap_or(0),
-                None => return 0.0,
-            },
-        };
-        let mut context = HashMapContext::new();
-        for name in self.total.value.iter_variable_identifiers() {
-            let val = get_initial_value_for_modifier(name);
-            context.set_value(name.to_string(), Value::Float(val as f64)).unwrap();
+
+        if let Ok(search_tags) = stat_path.get(1).unwrap().parse::<u32>() {
+            let mut context = HashMapContext::new();
+            for name in self.total.value.iter_variable_identifiers() {
+                let val = get_initial_value_for_modifier(name);
+                context.set_value(name.to_string(), Value::Float(val as f64)).unwrap();
+            }
+            for (category, values) in &self.modifier_types {
+                let category_sum: f32 = values.1
+                    .iter()
+                    .filter_map(|(&mod_tags, value)| {
+                        if mod_tags.has_all(search_tags) {
+                            let dep_path = format!("{}_{}_{}", stat_path[0], category, mod_tags.to_string());
+                            stats.add_dependent_internal(&dep_path, DependentType::LocalStat(full_path.clone()));
+                            Some(value.evaluate(stat_path, stats))
+                        } else {
+                            None
+                        }
+                    })
+                    .sum();
+                context.set_value(category.clone(), Value::Float((category_sum + values.0) as f64)).ok();
+            }
+            let total = self.total.value
+                .eval_with_context(&context)
+                .unwrap()
+                .as_number()
+                .unwrap() as f32;
+            stats.set_cached(&full_path, total);
+            return total;
         }
-        for (category, values) in &self.modifier_types {
-            let category_sum: f32 = values.1
+
+        if let Ok(search_tags) = stat_path.get(2).unwrap().parse::<u32>() {
+            let category = stat_path[1];
+            let Some(values) = self.modifier_types.get(category) else {
+                return 0.0;
+            };
+
+            return values.1
                 .iter()
                 .filter_map(|(&mod_tags, value)| {
                     if mod_tags.has_all(search_tags) {
@@ -859,15 +903,9 @@ impl StatLike for ComplexModifiable {
                     }
                 })
                 .sum();
-            context.set_value(category.clone(), Value::Float((category_sum + values.0) as f64)).ok();
         }
-        let total = self.total.value
-            .eval_with_context(&context)
-            .unwrap()
-            .as_number()
-            .unwrap() as f32;
-        stats.set_cached(&full_path, total);
-        total
+
+        return 0.0;
     }
     
     fn on_insert(&self, _stats: &Stats, _stat_path: &[&str]) { }
@@ -981,7 +1019,7 @@ stat_macros::define_tags! {
 #[cfg(test)]
 mod tests {
     use bevy::prelude::*;
-    use crate::stat_modifiers::{Stats, StatAccessor, ValueType, ModType, DependentType};
+    use crate::stat_modifiers::{Stats, StatAccessor};
 
     // Helper function for approximate equality checks
     fn assert_approx_eq(a: f32, b: f32) {
@@ -1032,14 +1070,12 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add systems
-        app.add_systems(Update, add_stat_modifier);
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the system once
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
 
         // Check if the stat was added correctly
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1053,14 +1089,12 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add systems
-        app.add_systems(Update, add_stat_modifier);
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the system once
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
 
         // Query the Stats component directly
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1075,17 +1109,15 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add systems in sequence
-        app.add_systems(Update, (
-            add_stat_modifier,
-            add_dependent_modifier,
-        ).chain());
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the systems in sequence
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
+        
+        let add_dep_id = app.world_mut().register_system(add_dependent_modifier);
+        let _ = app.world_mut().run_system(add_dep_id);
 
         // Query the Stats component directly
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1103,18 +1135,16 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add systems
-        app.add_systems(Update, (
-            add_stat_modifier,
-            add_entity_dependency,
-        ).chain());
-
         // Spawn two entities with Stats component
         let source_entity = app.world_mut().spawn(Stats::new()).id();
         let target_entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the systems in sequence
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
+        
+        let add_dep_id = app.world_mut().register_system(add_entity_dependency);
+        let _ = app.world_mut().run_system(add_dep_id);
 
         // Check if entity-dependent stat was calculated correctly
         let [source_stats, target_stats] = app.world_mut().query::<&Stats>().get_many(app.world(), [source_entity, target_entity]).unwrap();
@@ -1132,34 +1162,27 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add systems to set up the initial state
-        app.add_systems(Update, (
-            add_stat_modifier,
-            add_dependent_modifier,
-        ).chain());
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run initial setup
-        app.update();
+        // Register and run the initial setup systems
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
+        
+        let add_dep_id = app.world_mut().register_system(add_dependent_modifier);
+        let _ = app.world_mut().run_system(add_dep_id);
         
         // Verify initial values
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
         let initial_damage = stats.evaluate_by_string("Damage_Added");
         assert_eq!(initial_damage, 5.0);
         
-        // Create a system to increase Life_Added
-        let increase_life = move |mut stat_accessor: StatAccessor| {
+        // Register and run a system to increase Life_Added
+        let increase_life_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(entity, "Life_Added", 5.0);
             stat_accessor.update_stat(entity, "Life_Added"); // Important to trigger update
-        };
-        
-        // Add the update system
-        app.add_systems(Update, increase_life);
-        
-        // Run update
-        app.update();
+        });
+        let _ = app.world_mut().run_system(increase_life_id);
         
         // Check if dependent stat was updated
         let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1177,36 +1200,32 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Add initial systems
-        app.add_systems(Update, (
-            add_stat_modifier,
-            add_entity_dependency,
-        ).chain());
-
         // Spawn two entities with Stats component
         let source_entity = app.world_mut().spawn(Stats::new()).id();
         let target_entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run initial setup
-        app.update();
+        // Register and run the initial setup systems
+        let add_mod_id = app.world_mut().register_system(add_stat_modifier);
+        let _ = app.world_mut().run_system(add_mod_id);
+        
+        let add_dep_id = app.world_mut().register_system(add_entity_dependency);
+        let _ = app.world_mut().run_system(add_dep_id);
         
         // Verify initial values
-        let target_stats = app.world_mut().query::<&Stats>().get(app.world(), target_entity).unwrap();
+        let [source_stats, target_stats] = app.world_mut().query::<&Stats>().get_many(app.world(), [source_entity, target_entity]).unwrap();
         
+        let initial_source_life = source_stats.get("Life_Added").unwrap_or(0.0);
         let initial_target_damage = target_stats.evaluate_by_string("Damage_Added");
-        assert_eq!(initial_target_damage, 2.5);
         
-        // Create a system to update the source entity
-        let update_source = move |mut stat_accessor: StatAccessor| {
+        assert_eq!(initial_source_life, 10.0);
+        assert_eq!(initial_target_damage, 2.5); // Should be 0.25 * source Life_Added
+        
+        // Register and run a system to update the source entity
+        let update_source_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(source_entity, "Life_Added", 10.0);
             stat_accessor.update_stat(source_entity, "Life_Added");
-        };
-        
-        // Add the update system
-        app.add_systems(Update, update_source);
-        
-        // Run update
-        app.update();
+        });
+        let _ = app.world_mut().run_system(update_source_id);
         
         // Check if target entity's stat was updated
         let [source_stats, target_stats] = app.world_mut().query::<&Stats>().get_many(app.world(), [source_entity, target_entity]).unwrap();
@@ -1218,7 +1237,6 @@ mod tests {
         assert_eq!(updated_target_damage, 5.0); // Should be 0.25 * updated source Life_Added
     }
 
-    // TODO Fix "Damage_TAG" eval vs "Damage_Added_TAG" eval
     // Test complex modifiable stat with tags
     #[test]
     fn test_complex_modifiable_stat() {
@@ -1230,29 +1248,19 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // Create a system that uses the bitflag pattern
-        let add_complex_stat = |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
-            for entity in &query {
-                // Add stats with bitflag tags, similar to test_damage_type_tags
-                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG1), 10.0); // Tag 1
-                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG2), 5.0);  // Tag 2
-                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG3), 15.0); // Tag 3
-                
-                // Update the stats to ensure they're evaluated
-                //stat_accessor.update_stat(entity, &format!("Damage_Added_{}", TAG1));
-                //stat_accessor.update_stat(entity, &format!("Damage_Added_{}", TAG2));
-                //stat_accessor.update_stat(entity, &format!("Damage_Added_{}", TAG3));
-            }
-        };
-
-        // Add system
-        app.add_systems(Update, add_complex_stat);
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the system that adds complex stats
+        let add_complex_stat_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
+            for entity in &query {
+                // Add stats with bitflag tags
+                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG1), 10.0); // Tag 1
+                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG2), 5.0);  // Tag 2
+                stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", TAG3), 15.0); // Tag 3
+            }
+        });
+        let _ = app.world_mut().run_system(add_complex_stat_id);
 
         // Check complex stat values by tag
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1279,37 +1287,27 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // System to add a modifier
-        let add_modifier = |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
-            for entity in &query {
-                stat_accessor.add_modifier(entity, "Life_Added", 10.0);
-            }
-        };
-
-        // Add system
-        app.add_systems(Update, add_modifier);
-
         // Spawn an entity with Stats component
         let entity = app.world_mut().spawn(Stats::new()).id();
 
-        // Run systems
-        app.update();
+        // Register and run the system to add a modifier
+        let add_mod_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
+            for entity in &query {
+                stat_accessor.add_modifier(entity, "Life_Added", 10.0);
+            }
+        });
+        let _ = app.world_mut().run_system(add_mod_id);
         
         // Verify the initial value
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
         let initial_value = stats.get("Life_Added").unwrap_or(0.0);
         assert_eq!(initial_value, 10.0);
         
-        // Create a system to remove the modifier
-        let remove_modifier = move |mut stat_accessor: StatAccessor| {
+        // Register and run a system to remove the modifier
+        let remove_mod_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.remove_modifier(entity, "Life_Added", 10.0);
-        };
-        
-        // Add the removal system
-        app.add_systems(Update, remove_modifier);
-        
-        // Run the removal
-        app.update();
+        });
+        let _ = app.world_mut().run_system(remove_mod_id);
         
         // Check if modifier was removed correctly
         let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1323,8 +1321,11 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // System to set up a multi-level dependency chain
-        let setup_dependency_chain = |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
+        // Spawn an entity with Stats component
+        let entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Register and run the system to set up the dependency chain
+        let setup_chain_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 stat_accessor.add_modifier(entity, "Base", 10.0);
                 stat_accessor.add_modifier(entity, "Level1", "Base * 2");
@@ -1337,15 +1338,8 @@ mod tests {
                 stat_accessor.update_stat(entity, "Level2");
                 stat_accessor.update_stat(entity, "Level3");
             }
-        };
-        
-        app.add_systems(Update, setup_dependency_chain);
-
-        // Spawn an entity with Stats component
-        let entity = app.world_mut().spawn(Stats::new()).id();
-
-        // Run setup
-        app.update();
+        });
+        let _ = app.world_mut().run_system(setup_chain_id);
         
         // Verify the dependency chain values
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1360,8 +1354,8 @@ mod tests {
         assert_eq!(level2_value, 25.0); // Level1 + 5
         assert_eq!(level3_value, 37.5); // Level2 * 1.5
         
-        // Create a system to update the base value
-        let update_base = move |mut stat_accessor: StatAccessor| {
+        // Register and run a system to update the base value
+        let update_base_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(entity, "Base", 5.0);
             
             // Important: Update stats explicitly to propagate changes
@@ -1369,13 +1363,8 @@ mod tests {
             stat_accessor.update_stat(entity, "Level1");
             stat_accessor.update_stat(entity, "Level2");
             stat_accessor.update_stat(entity, "Level3");
-        };
-        
-        // Add the update system
-        app.add_systems(Update, update_base);
-        
-        // Run the update
-        app.update();
+        });
+        let _ = app.world_mut().run_system(update_base_id);
         
         // Check if all levels in the chain were updated
         let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1406,8 +1395,11 @@ mod tests {
         // Setup app
         let mut app = App::new();
 
-        // System to add tagged damage stats
-        let add_damage_stats = |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
+        // Spawn an entity with Stats component
+        let entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Register and run the system to add tagged damage stats
+        let add_damage_stats_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Add base damage
                 stat_accessor.add_modifier(entity, &format!("Damage_Added_{}", u32::MAX), 10.0);
@@ -1426,15 +1418,8 @@ mod tests {
                 // Update all relevant stats
                 stat_accessor.update_stat(entity, &format!("Damage_{}", FIRE | SWORD));
             }
-        };
-        
-        app.add_systems(Update, add_damage_stats);
-
-        // Spawn an entity with Stats component
-        let entity = app.world_mut().spawn(Stats::new()).id();
-
-        // Run systems
-        app.update();
+        });
+        let _ = app.world_mut().run_system(add_damage_stats_id);
         
         // Check complex tag-based stat values
         let stats = app.world_mut().query::<&Stats>().get(app.world(), entity).unwrap();
@@ -1447,5 +1432,411 @@ mod tests {
         let actual_damage = stats.evaluate_by_string(&format!("Damage_{}", FIRE | SWORD));
         
         assert_approx_eq(actual_damage, expected_damage);
+    }
+
+    // Test multiple levels of entity dependencies (A -> B -> C)
+    #[test]
+    fn test_multi_level_entity_dependencies() {
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn three entities with Stats component
+        let entity_c = app.world_mut().spawn(Stats::new()).id();
+        let entity_b = app.world_mut().spawn(Stats::new()).id();
+        let entity_a = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup initial values and dependencies
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base values for entity C
+            stat_accessor.add_modifier(entity_c, "Power_Added", 10.0);
+            
+            // Entity B depends on C
+            stat_accessor.register_dependency(entity_b, "Source", entity_c);
+            stat_accessor.add_modifier(entity_b, "Strength_Added", "Source@Power_Added * 0.5");
+            
+            // Entity A depends on B
+            stat_accessor.register_dependency(entity_a, "Parent", entity_b);
+            stat_accessor.add_modifier(entity_a, "Damage_Added", "Parent@Strength_Added * 2.0");
+            
+            // Update stats to propagate values
+            stat_accessor.update_stat(entity_c, "Power_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify the dependency chain
+        let [stats_c, stats_b, stats_a] = app.world_mut().query::<&Stats>()
+            .get_many(app.world(), [entity_c, entity_b, entity_a])
+            .unwrap();
+        
+        let c_power = stats_c.evaluate_by_string("Power_Added");
+        let b_strength = stats_b.evaluate_by_string("Strength_Added");
+        let a_damage = stats_a.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(c_power, 10.0);
+        assert_eq!(b_strength, 5.0);  // 10.0 * 0.5
+        assert_eq!(a_damage, 10.0);   // 5.0 * 2.0
+        
+        // Now modify entity C and verify changes propagate through the chain
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(entity_c, "Power_Added", 10.0); // Increase by 10
+            stat_accessor.update_stat(entity_c, "Power_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify updated values
+        let [stats_c, stats_b, stats_a] = app.world_mut().query::<&Stats>()
+            .get_many(app.world(), [entity_c, entity_b, entity_a])
+            .unwrap();
+        
+        let updated_c_power = stats_c.evaluate_by_string("Power_Added");
+        let updated_b_strength = stats_b.evaluate_by_string("Strength_Added");
+        let updated_a_damage = stats_a.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(updated_c_power, 20.0);      // 10.0 + 10.0
+        assert_eq!(updated_b_strength, 10.0);   // 20.0 * 0.5
+        assert_eq!(updated_a_damage, 20.0);     // 10.0 * 2.0
+    }
+
+    // Test multiple entity dependencies (entity depends on multiple other entities)
+    #[test]
+    fn test_multiple_entity_dependencies() {
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn three entities with Stats component
+        let owner_entity = app.world_mut().spawn(Stats::new()).id();
+        let weapon_entity = app.world_mut().spawn(Stats::new()).id();
+        let minion_entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup dependencies and initial values
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base values for owner
+            stat_accessor.add_modifier(owner_entity, "Intelligence_Added", 20.0);
+            stat_accessor.add_modifier(owner_entity, "Strength_Added", 15.0);
+            
+            // Set base value for weapon
+            stat_accessor.add_modifier(weapon_entity, "WeaponDamage_Added", 25.0);
+            
+            // Minion depends on both owner and weapon
+            stat_accessor.register_dependency(minion_entity, "Owner", owner_entity);
+            stat_accessor.register_dependency(minion_entity, "Weapon", weapon_entity);
+            
+            // Minion's damage depends on owner's intelligence and weapon's damage
+            stat_accessor.add_modifier(minion_entity, "SpellDamage_Added", "Owner@Intelligence_Added * 0.5");
+            stat_accessor.add_modifier(minion_entity, "PhysicalDamage_Added", "Weapon@WeaponDamage_Added * 0.8");
+            
+            // Minion's total damage depends on both types
+            stat_accessor.add_modifier(minion_entity, "TotalDamage_Added", "SpellDamage_Added + PhysicalDamage_Added");
+            
+            // Update stats to propagate values
+            stat_accessor.update_stat(owner_entity, "Intelligence_Added");
+            stat_accessor.update_stat(weapon_entity, "WeaponDamage_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify the dependencies
+        let stats_minion = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        
+        let spell_damage = stats_minion.evaluate_by_string("SpellDamage_Added");
+        let physical_damage = stats_minion.evaluate_by_string("PhysicalDamage_Added");
+        let total_damage = stats_minion.evaluate_by_string("TotalDamage_Added");
+        
+        assert_eq!(spell_damage, 10.0);     // Owner Intelligence 20.0 * 0.5
+        assert_eq!(physical_damage, 20.0);  // Weapon Damage 25.0 * 0.8
+        assert_eq!(total_damage, 30.0);     // 10.0 + 20.0
+        
+        // Now modify both dependencies and verify changes
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(owner_entity, "Intelligence_Added", 10.0);
+            stat_accessor.add_modifier(weapon_entity, "WeaponDamage_Added", 15.0);
+            
+            stat_accessor.update_stat(owner_entity, "Intelligence_Added");
+            stat_accessor.update_stat(weapon_entity, "WeaponDamage_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify updated values
+        let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        
+        let updated_spell = updated_stats.evaluate_by_string("SpellDamage_Added");
+        let updated_physical = updated_stats.evaluate_by_string("PhysicalDamage_Added");
+        let updated_total = updated_stats.evaluate_by_string("TotalDamage_Added");
+        
+        assert_eq!(updated_spell, 15.0);      // (20.0 + 10.0) * 0.5
+        assert_eq!(updated_physical, 32.0);   // (25.0 + 15.0) * 0.8
+        assert_eq!(updated_total, 47.0);      // 15.0 + 32.0
+    }
+
+    // Test complex expressions mixing entity dependencies and local dependencies
+    #[test]
+    fn test_mixed_entity_local_dependencies() {
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn entities with Stats component
+        let owner_entity = app.world_mut().spawn(Stats::new()).id();
+        let minion_entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup dependencies and initial values
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base values for owner
+            stat_accessor.add_modifier(owner_entity, "Power_Added", 20.0);
+            
+            // Set local multiplier for minion
+            stat_accessor.add_modifier(minion_entity, "Multiplier_Added", 2.5);
+            
+            // Register dependencies
+            stat_accessor.register_dependency(minion_entity, "Owner", owner_entity);
+            
+            // Create a mixed dependency expression
+            stat_accessor.add_modifier(minion_entity, "Damage_Added", "Owner@Power_Added * Multiplier_Added");
+            
+            // Update stats to propagate values
+            stat_accessor.update_stat(owner_entity, "Power_Added");
+            stat_accessor.update_stat(minion_entity, "Multiplier_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify the mixed dependency calculation
+        let stats_minion = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let damage = stats_minion.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(damage, 50.0);  // Owner Power 20.0 * Local Multiplier 2.5
+        
+        // Test updating the local multiplier
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(minion_entity, "Multiplier_Added", 0.5);
+            stat_accessor.update_stat(minion_entity, "Multiplier_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify only the multiplier changed, not the owner stat
+        let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let updated_damage = updated_stats.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(updated_damage, 60.0);  // Owner Power 20.0 * Local Multiplier (2.5 + 0.5 = 3.0)
+        
+        // Test updating the owner stat
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(owner_entity, "Power_Added", 10.0);
+            stat_accessor.update_stat(owner_entity, "Power_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify the owner stat change propagated correctly
+        let final_stats = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let final_damage = final_stats.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(final_damage, 90.0);  // Owner Power (20.0 + 10.0 = 30.0) * Local Multiplier 3.0
+    }
+
+    // Test entity dependency removal
+    #[test]
+    fn test_entity_dependency_removal() {
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn entities with Stats component
+        let owner_entity = app.world_mut().spawn(Stats::new()).id();
+        let minion_entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup initial values and dependencies
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base values for owner
+            stat_accessor.add_modifier(owner_entity, "Power_Added", 20.0);
+            
+            // Register dependencies
+            stat_accessor.register_dependency(minion_entity, "Owner", owner_entity);
+            
+            // Create a dependency
+            stat_accessor.add_modifier(minion_entity, "Damage_Added", "Owner@Power_Added * 1.5");
+            
+            // Update stats to propagate values
+            stat_accessor.update_stat(owner_entity, "Power_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify initial dependency
+        let stats_minion = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let initial_damage = stats_minion.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(initial_damage, 30.0);  // Owner Power 20.0 * 1.5
+        
+        // Remove the entity-dependent modifier
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Remove the modifier that depends on the owner
+            stat_accessor.remove_modifier(minion_entity, "Damage_Added", "Owner@Power_Added * 1.5");
+            
+            // Add a fixed value instead
+            stat_accessor.add_modifier(minion_entity, "Damage_Added", 15.0);
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify dependency is removed and fixed value works
+        let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let updated_damage = updated_stats.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(updated_damage, 15.0);  // Fixed value, no longer depends on owner
+        
+        // Modify the owner entity and verify it no longer affects the minion
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(owner_entity, "Power_Added", 30.0);
+            stat_accessor.update_stat(owner_entity, "Power_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify the minion's damage didn't change
+        let final_stats = app.world_mut().query::<&Stats>().get(app.world(), minion_entity).unwrap();
+        let final_damage = final_stats.evaluate_by_string("Damage_Added");
+        
+        assert_eq!(final_damage, 15.0);  // Still fixed value, owner change had no effect
+    }
+
+    // Test complex tag-based entity dependencies
+    #[test]
+    fn test_complex_tag_based_entity_dependencies() {
+        // Define bit flags for damage types
+        const FIRE: u32 = 0x01;
+        const COLD: u32 = 0x02;
+        const LIGHTNING: u32 = 0x04;
+        
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn entities with Stats component
+        let master_entity = app.world_mut().spawn(Stats::new()).id();
+        let servant_entity = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup initial values and dependencies
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base elemental damage values for master
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", FIRE), 20.0);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", COLD), 15.0);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", LIGHTNING), 25.0);
+            
+            // Set elemental multipliers for master
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", FIRE), 0.5);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", COLD), 0.3);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", LIGHTNING), 0.4);
+            
+            // Register dependency
+            stat_accessor.register_dependency(servant_entity, "Master", master_entity);
+            
+            // Create complex tag-based dependencies on the servant
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", FIRE), format!("Master@Damage_Added_{} * 0.6", FIRE));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", COLD), format!("Master@Damage_Added_{} * 0.7", COLD));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", LIGHTNING), format!("Master@Damage_Added_{} * 0.5", LIGHTNING));
+            
+            // Copy master's multipliers (simplified syntax)
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", FIRE), format!("Master@Damage_Increased_{}", FIRE));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", COLD), format!("Master@Damage_Increased_{}", COLD));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", LIGHTNING), format!("Master@Damage_Increased_{}", LIGHTNING));
+            
+            // Update all stats
+            stat_accessor.update_stat(master_entity, &format!("Damage_{}", FIRE));
+            stat_accessor.update_stat(master_entity, &format!("Damage_{}", COLD));
+            stat_accessor.update_stat(master_entity, &format!("Damage_{}", LIGHTNING));
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify the complex tag-based dependencies
+        let stats_servant = app.world_mut().query::<&Stats>().get(app.world(), servant_entity).unwrap();
+        
+        // Calculate expected values
+        // For each damage type: servant's damage = master's base * servant scaling * (1 + master's increased)
+        let fire_expected = 20.0 * 0.6 * (1.0 + 0.5);
+        let cold_expected = 15.0 * 0.7 * (1.0 + 0.3);
+        let lightning_expected = 25.0 * 0.5 * (1.0 + 0.4);
+        
+        let fire_actual = stats_servant.evaluate_by_string(&format!("Damage_{}", FIRE));
+        let cold_actual = stats_servant.evaluate_by_string(&format!("Damage_{}", COLD));
+        let lightning_actual = stats_servant.evaluate_by_string(&format!("Damage_{}", LIGHTNING));
+        
+        assert_approx_eq(fire_actual, fire_expected);
+        assert_approx_eq(cold_actual, cold_expected);
+        assert_approx_eq(lightning_actual, lightning_expected);
+        
+        // Now increase the master's fire damage and verify the change propagates
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", FIRE), 10.0);
+            stat_accessor.update_stat(master_entity, &format!("Damage_{}", FIRE));
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify updated values
+        let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), servant_entity).unwrap();
+        
+        // Calculate new expected values - only fire changes
+        let updated_fire_expected = 30.0 * 0.6 * (1.0 + 0.5);
+        
+        let updated_fire = updated_stats.evaluate_by_string(&format!("Damage_{}", FIRE));
+        assert_approx_eq(updated_fire, updated_fire_expected);
+    }
+
+    // Test concurrent updates to multiple entity stats
+    #[test]
+    fn test_concurrent_entity_updates() {
+        // Setup app
+        let mut app = App::new();
+
+        // Spawn entities with Stats component - a buff source and multiple recipients
+        let buff_source = app.world_mut().spawn(Stats::new()).id();
+        let recipient_a = app.world_mut().spawn(Stats::new()).id();
+        let recipient_b = app.world_mut().spawn(Stats::new()).id();
+        let recipient_c = app.world_mut().spawn(Stats::new()).id();
+
+        // Setup initial values and dependencies
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Set base buff value
+            stat_accessor.add_modifier(buff_source, "AuraPower_Added", 10.0);
+            
+            // Register dependencies for all recipients
+            stat_accessor.register_dependency(recipient_a, "Aura", buff_source);
+            stat_accessor.register_dependency(recipient_b, "Aura", buff_source);
+            stat_accessor.register_dependency(recipient_c, "Aura", buff_source);
+            
+            // Each recipient gets the aura buff with a different multiplier
+            stat_accessor.add_modifier(recipient_a, "BuffedPower_Added", "Aura@AuraPower_Added * 1.2");
+            stat_accessor.add_modifier(recipient_b, "BuffedPower_Added", "Aura@AuraPower_Added * 0.8");
+            stat_accessor.add_modifier(recipient_c, "BuffedPower_Added", "Aura@AuraPower_Added * 1.5");
+            
+            // Update stats to propagate values
+            stat_accessor.update_stat(buff_source, "AuraPower_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+
+        // Verify initial buffed values
+        let [stats_a, stats_b, stats_c] = app.world_mut().query::<&Stats>()
+            .get_many(app.world(), [recipient_a, recipient_b, recipient_c])
+            .unwrap();
+        
+        let power_a = stats_a.evaluate_by_string("BuffedPower_Added");
+        let power_b = stats_b.evaluate_by_string("BuffedPower_Added");
+        let power_c = stats_c.evaluate_by_string("BuffedPower_Added");
+        
+        assert_eq!(power_a, 12.0);  // 10.0 * 1.2
+        assert_eq!(power_b, 8.0);   // 10.0 * 0.8
+        assert_eq!(power_c, 15.0);  // 10.0 * 1.5
+        
+        // Now change the aura power value to simulate a buff strengthening
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            // Strengthen the aura
+            stat_accessor.add_modifier(buff_source, "AuraPower_Added", 5.0);
+            stat_accessor.update_stat(buff_source, "AuraPower_Added");
+        });
+        let _ = app.world_mut().run_system(system_id);
+        
+        // Verify all buffs updated correctly
+        let [updated_a, updated_b, updated_c] = app.world_mut().query::<&Stats>()
+            .get_many(app.world(), [recipient_a, recipient_b, recipient_c])
+            .unwrap();
+        
+        let updated_power_a = updated_a.evaluate_by_string("BuffedPower_Added");
+        let updated_power_b = updated_b.evaluate_by_string("BuffedPower_Added");
+        let updated_power_c = updated_c.evaluate_by_string("BuffedPower_Added");
+        
+        assert_eq!(updated_power_a, 18.0);  // 15.0 * 1.2
+        assert_eq!(updated_power_b, 12.0);  // 15.0 * 0.8
+        assert_eq!(updated_power_c, 22.5);  // 15.0 * 1.5
     }
 }
