@@ -1,5 +1,5 @@
 use std::{cell::SyncUnsafeCell, sync::{Arc, RwLock}};
-use bevy::{core_pipeline::prepass::OpaqueNoLightmap3dBinKey, ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 use crate::{error::StatError, tags::TagLike};
 
@@ -17,11 +17,6 @@ use crate::{error::StatError, tags::TagLike};
 // TODO wrapper for u32 that lets us conveniently do queries (HasTag, HasAny, HasAll). Possibly change ComplexModifiable to take type T where T implements TagLike
 
 // TODO Implement fasteval instead of evalexpr
-
-// TODO Consider some scheme to avoid having to parse and reparse these strings. FName could be some inspiration. Why am I splitting and un-splitting these strings
-// during stat operations? 
-//     - One thing to consider is a type that behaves like an address. Basically turn strings into u32's with some FName-like implementation, and an array of u32s
-//       is a 'path.' Then you could key the context (and everything else that currently uses strings) on this vec-of-u32s type.
 
 // TODO Build some examples 
 //     - Path of Exile
@@ -246,9 +241,8 @@ impl StatAccessor<'_, '_> {
                 
                 for depends_on in expression.value.iter_variable_identifiers() {
                     let depends_on = StatPath::parse(depends_on);
-                    if let Some(head) = depends_on.owner {
-                        let head = &depends_on.segments[0]; // "Invoker"
-                        let dependency_stat_path = &depends_on.segments[1]; // "Life_Added"
+                    if let Some(head) = &depends_on.owner {
+                        let dependency_stat_path = &depends_on.path; // "Life_Added"
                         
                         if let Some(&depends_on_entity) = target_stats.dependent_on.get(head) {
                             dependencies_to_remove.push((
