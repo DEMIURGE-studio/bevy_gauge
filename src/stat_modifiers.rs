@@ -121,8 +121,6 @@ impl StatAccessor<'_, '_> {
     // Public API: Add a modifier to a stat
     pub fn add_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
         let stat_path = StatPath::parse(stat_path);
-        // Lets cover a few possible setups: 
-        //    case 1: target_entity: ability_entity, stat_path: "Damage_Added_1", modifier: "Invoker@Added_Life * 0.5"
         let vt: ValueType = modifier.into();
         
         if !self.stats_query.contains(target_entity) {
@@ -135,39 +133,25 @@ impl StatAccessor<'_, '_> {
                     target_stats.add_modifier(&stat_path, value);
                 }
             },
-            // case 1: the modifier is an expression, and may depend on other stats. 
             ValueType::Expression(expression) => {
                 let mut dependencies_info = Vec::new();
                 let mut dependents_to_add = Vec::new();
                 
-                {
-                    let Ok(target_stats) = self.stats_query.get(target_entity) else {
-                        return;
-                    };
-                    
-                    // case 1: iter through each variable in the expression. We find "Invoker@Life_Added"
+                // First gather dependency information
+                if let Ok(target_stats) = self.stats_query.get(target_entity) {
                     for depends_on in expression.value.iter_variable_identifiers() {
-
-                        // case 1: "Invoker@Life_Added" contains and @!
                         if depends_on.contains('@') {
+                            let parts: Vec<&str> = depends_on.split('@').collect();
+                            let entity_name = parts[0];
+                            let dependency_stat_path = parts[1];
                             
-                            // case 1: We split the strings into 2 parts: head: "Invoker", dependency_stat_path: "Life_Added"
-                            let depends_on_segments: Vec<&str> = depends_on.split('@').collect();
-                            let head = depends_on_segments[0];
-                            let dependency_stat_path = depends_on_segments[1];
-                            
-                            // case 1: We get the entity that matches the "Invoker". We will call this the invoker_entity.
-                            //         We cache the dependency info and dependents-to-add for later use. This is to get around
-                            //         the borrow checker.
-                            if let Some(&depends_on_entity) = target_stats.dependent_on.get(head) {
-                                // case 1: "Invoker@Added_Life", invoker_entity, "Life_Added"
+                            if let Some(&depends_on_entity) = target_stats.dependent_on.get(entity_name) {
                                 dependencies_info.push((
                                     depends_on.to_string(),
                                     depends_on_entity,
                                     dependency_stat_path.to_string(),
                                 ));
                                 
-                                // case 1: invoker_entity, "Life_Added", ability_entity
                                 dependents_to_add.push((
                                     depends_on_entity,
                                     dependency_stat_path.to_string(),
@@ -183,15 +167,13 @@ impl StatAccessor<'_, '_> {
                         }
                     }
                 }
-                                
-                // case 1: Get the ability_entity's stats. Add the modifier "Invoker@Added_Life * 0.5" to the stat.
+                
+                // Add the expression modifier
                 if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
                     target_stats.add_modifier(&stat_path, expression);
                 }
-
-                // case 1: We iter through and find a single entry. ("Invoker@Added_Life", invoker_entity, "Life_Added")
-                //         We get the invoker's stats and put the output value into our dependencies_to_cache vec as
-                //         ("Invoker@Added_Life", 100.0) because the invoker has 100 added life.
+                
+                // Cache dependency values
                 let dependencies_to_cache = dependencies_info
                     .iter()
                     .filter_map(|(depends_on, depends_on_entity, dependency_stat_path)| {
@@ -204,13 +186,13 @@ impl StatAccessor<'_, '_> {
                     })
                     .collect::<Vec<_>>();
                 
-                // case 1: Get the ability_entity's stats. Iter through dependencies and cache them. 
                 if let Ok(target_stats) = self.stats_query.get(target_entity) {
                     for (depends_on, value) in dependencies_to_cache {
                         target_stats.cache_stat(&depends_on, value);
                     }
                 }
                 
+                // Register dependents
                 for (depends_on_entity, dependency_stat_path, dependent_type) in dependents_to_add {
                     if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
                         depends_on_stats.add_dependent_internal(&dependency_stat_path, dependent_type);
@@ -308,27 +290,26 @@ impl StatAccessor<'_, '_> {
             return;
         }
         
-        let mut current_value = 0.0;
-        if let Ok(stats) = self.stats_query.get(target_entity) {
-            current_value = stats.evaluate(stat_path);
-            
-            let full_path = stat_path.to_string();
-            stats.set_cached(&full_path, current_value);
-        }
-        
         processed.insert(process_key);
+        
+        // Calculate new value and update cache
+        let current_value = if let Ok(stats) = self.stats_query.get(target_entity) {
+            let value = stats.evaluate(stat_path);
+            stats.set_cached(&stat_path.path, value);
+            value
+        } else {
+            return; // Entity doesn't have stats, nothing to do
+        };
         
         let mut local_dependents = Vec::new();
         let mut entity_dependents = Vec::new();
         
         if let Ok(stats) = self.stats_query.get(target_entity) {
-            let dependents = stats.get_dependents_internal(&stat_path.to_string());
-            
-            for dependent in dependents {
+            // Get all dependents for this stat
+            for dependent in stats.get_dependents_internal(&stat_path.path) {
                 match dependent {
                     DependentType::LocalStat(local_stat) => {
-                        let dependent_path = StatPath::parse(&local_stat);
-                        local_dependents.push(dependent_path);
+                        local_dependents.push(StatPath::parse(&local_stat));
                     },
                     DependentType::EntityStat(dependent_entity) => {
                         entity_dependents.push(dependent_entity);
@@ -337,38 +318,43 @@ impl StatAccessor<'_, '_> {
             }
         }
         
+        // Update all local dependents
         for local_dependent in local_dependents {
             self.update_stat_recursive(target_entity, &local_dependent, processed);
         }
         
+        // Update all entity dependents
         for dependent_entity in entity_dependents {
-            let mut stats_to_update = Vec::new();
-            
             if let Ok(dependent_stats) = self.stats_query.get(dependent_entity) {
-                let mut prefixes = Vec::new();
-                for (prefix, &entity) in &dependent_stats.dependent_on {
-                    if entity == target_entity {
-                        prefixes.push(prefix.clone());
-                    }
-                }
+                // Find all prefixes that reference this entity
+                let prefixes: Vec<String> = dependent_stats.dependent_on
+                    .iter()
+                    .filter_map(|(prefix, &entity)| {
+                        if entity == target_entity {
+                            Some(prefix.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 
+                // Update cached values and get stats to update
+                let mut stats_to_update = Vec::new();
                 for prefix in prefixes {
                     let cache_key = format!("{}@{}", prefix, stat_path.path);
-                    
                     dependent_stats.set_cached(&cache_key, current_value);
                     
-                    let cache_dependents = dependent_stats.get_dependents_internal(&cache_key);
-                    for cache_dependent in cache_dependents {
+                    for cache_dependent in dependent_stats.get_dependents_internal(&cache_key) {
                         if let DependentType::LocalStat(dependent_stat) = cache_dependent {
-                            let stat_path = StatPath::parse(&dependent_stat);
-                            stats_to_update.push(stat_path);
+                            stats_to_update.push(StatPath::parse(&dependent_stat));
                         }
                     }
                 }
-            }
-            
-            for stat_to_update in stats_to_update {
-                self.update_stat_recursive(dependent_entity, &stat_to_update, processed);
+                
+                // Update the dependent stats recursively
+                for stat_to_update in stats_to_update {
+                    self.update_stat_recursive(dependent_entity, &stat_to_update, processed);
+                }
             }
         }
     }
@@ -421,34 +407,35 @@ impl SyncDependents {
     }
    
     fn add_dependent(&self, stat_path: &str, dependent: DependentType) {
-        let mut graph = self.0.write().unwrap();
-        let entry = graph.entry(stat_path.to_string()).or_insert(HashMap::new());
-        *entry.entry(dependent).or_insert(0) += 1;
+        if let Ok(mut graph) = self.0.write() {
+            let entry = graph.entry(stat_path.to_string()).or_insert_with(HashMap::new);
+            *entry.entry(dependent).or_insert(0) += 1;
+        }
     }
     
     fn remove_dependent(&self, stat_path: &str, dependent: DependentType) {
-        let Ok(mut graph) = self.0.write() else {
-            return;
-        };
-        let Some(dependents) = graph.get_mut(stat_path) else {
-            return;
-        };
-        if let Some(weight) = dependents.get_mut(&dependent) {
-            *weight -= 1;
-            if *weight == 0 {
-                dependents.remove(&dependent);
+        if let Ok(mut graph) = self.0.write() {
+            if let Some(dependents) = graph.get_mut(stat_path) {
+                if let Some(weight) = dependents.get_mut(&dependent) {
+                    *weight -= 1;
+                    if *weight == 0 {
+                        dependents.remove(&dependent);
+                    }
+                }
+                if dependents.is_empty() {
+                    graph.remove(stat_path);
+                }
             }
-        }
-        if dependents.is_empty() {
-            graph.remove(stat_path);
         }
     }
     
     fn get_dependents(&self, stat_path: &str) -> Vec<DependentType> {
-        let graph = self.0.read().unwrap();
-        match graph.get(stat_path) {
-            Some(dependents) => dependents.iter().map(|(dep, _)| dep.clone()).collect(),
-            None => Vec::new(),
+        if let Ok(graph) = self.0.read() {
+            graph.get(stat_path)
+                .map(|dependents| dependents.keys().cloned().collect())
+                .unwrap_or_else(Vec::new)
+        } else {
+            Vec::new()
         }
     }
 }
