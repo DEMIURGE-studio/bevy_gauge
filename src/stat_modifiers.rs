@@ -77,8 +77,7 @@ impl StatAccessor<'_, '_> {
             ValueType::Literal(value) => {
                 if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
                     let segments = stat_path.split('_').collect::<Vec<&str>>();
-                    dbg!(&stat_path, &value);
-                    target_stats.add_modifier_internal(&segments, value);
+                    target_stats.add_modifier(&segments, value);
                 }
             },
             // case 1: the modifier is an expression, and may depend on other stats. 
@@ -129,8 +128,14 @@ impl StatAccessor<'_, '_> {
                         }
                     }
                 }
-                
-                // case 1: We iter through an find a single entry. ("Invoker@Added_Life", invoker_entity, "Life_Added")
+                                
+                // case 1: Get the ability_entity's stats. Add the modifier "Invoker@Added_Life * 0.5" to the stat.
+                if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
+                    let segments = stat_path.split('_').collect::<Vec<&str>>();
+                    target_stats.add_modifier(&segments, expression);
+                }
+
+                // case 1: We iter through and find a single entry. ("Invoker@Added_Life", invoker_entity, "Life_Added")
                 //         We get the invoker's stats and put the output value into our dependencies_to_cache vec as
                 //         ("Invoker@Added_Life", 100.0) because the invoker has 100 added life.
                 let dependencies_to_cache = dependencies_info
@@ -146,13 +151,10 @@ impl StatAccessor<'_, '_> {
                     .collect::<Vec<_>>();
                 
                 // case 1: Get the ability_entity's stats. Iter through dependencies and cache them. 
-                if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
+                if let Ok(target_stats) = self.stats_query.get(target_entity) {
                     for (depends_on, value) in dependencies_to_cache {
                         target_stats.cache_stat(&depends_on, value);
                     }
-                    
-                    let segments = stat_path.split('_').collect::<Vec<&str>>();
-                    target_stats.add_modifier_internal(&segments, expression);
                 }
                 
                 for (depends_on_entity, dependency_stat_path, dependent_type) in dependents_to_add {
@@ -177,7 +179,7 @@ impl StatAccessor<'_, '_> {
         match vt {
             ValueType::Literal(value) => {
                 let segments = stat_path.split('_').collect::<Vec<&str>>();
-                target_stats.remove_modifier_internal(&segments, value);
+                target_stats.remove_modifier(&segments, value);
             },
             ValueType::Expression(expression) => {
                 // First, collect all the dependencies to remove
@@ -208,7 +210,7 @@ impl StatAccessor<'_, '_> {
                 
                 // Remove the expression modifier
                 let segments = stat_path.split('_').collect::<Vec<&str>>();
-                target_stats.remove_modifier_internal(&segments, expression);
+                target_stats.remove_modifier(&segments, expression);
                 
                 // Release the mutable borrow to target_stats
                 drop(target_stats);
@@ -300,7 +302,6 @@ impl StatAccessor<'_, '_> {
                 
                 for prefix in prefixes {
                     let cache_key = format!("{}@{}", prefix, stat_path);
-                    dbg!(&cache_key, &current_value);
                     
                     dependent_stats.set_cached(&cache_key, current_value);
                     
@@ -480,10 +481,8 @@ impl Stats {
 
         {
             if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                dbg!("Stat present: ", stat_path);
                 stat.add_modifier(stat_path, value.clone());
             } else {
-                dbg!("Stat added: ", stat_path);
                 let full_path = stat_path.join("_");
                 let new_stat = StatType::new(&full_path, value.clone());
                 new_stat.on_insert(self, stat_path);
@@ -496,7 +495,7 @@ impl Stats {
         }
     }
 
-    fn remove_modifier_internal<V>(&mut self, stat_path: &[&str], value: V)
+    fn remove_modifier<V>(&mut self, stat_path: &[&str], value: V)
     where
         V: Into<ValueType> + Clone,
     {
@@ -537,23 +536,6 @@ impl Stats {
     fn cache_stat(&self, key: &str, value: f32) {
         self.set_cached(key, value);
     }
-}
-
-// Implementing StatLike for Stats
-impl StatLike for Stats {
-    fn add_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &[&str], value: V) {
-        self.add_modifier_internal(stat_path, value);
-    }
-
-    fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &[&str], value: V) {
-        self.remove_modifier_internal(stat_path, value);
-    }
-    
-    fn evaluate(&self, stat_path: &[&str], _stats: &Stats) -> f32 {
-        self.evaluate(stat_path)
-    }
-    
-    fn on_insert(&self, _stats: &Stats, _stat_path: &[&str]) { }
 }
 
 pub trait StatLike {
@@ -650,7 +632,7 @@ impl StatLike for Simple {
         let vt: ValueType = value.into();
 
         match vt {
-            ValueType::Literal(vals) => { dbg!("Simple step 1: ", _stat_path, self.base, vals); self.base += vals; dbg!("Simple step 2: ", _stat_path, self.base, vals); }
+            ValueType::Literal(vals) => { self.base += vals; }
             ValueType::Expression(expression) => { self.mods.push(expression.clone()); }
         }
     }
@@ -786,7 +768,6 @@ impl StatLike for ComplexModifiable {
         let step_map = self.modifier_types.entry(modifier_type.to_string())
             .or_insert(ComplexEntry(get_initial_value_for_modifier(modifier_type), HashMap::new()));
         let step = step_map.1.entry(tag).or_insert(Simple::new(modifier_type));
-        dbg!("Complex step: ", &stat_path);
         step.add_modifier(stat_path, value);
     }
 
@@ -800,9 +781,6 @@ impl StatLike for ComplexModifiable {
     
     fn evaluate(&self, stat_path: &[&str], stats: &Stats) -> f32 {
         let full_path = stat_path.join("_");
-        if let Ok(value) = stats.get_cached(&full_path) {
-            return value;
-        }
 
         if let Ok(search_tags) = stat_path.get(1).unwrap().parse::<u32>() {
             let mut context = HashMapContext::new();
@@ -1618,30 +1596,33 @@ mod tests {
         let master_entity = app.world_mut().spawn(Stats::new()).id();
         let servant_entity = app.world_mut().spawn(Stats::new()).id();
 
+        println!("Master entity: {}", master_entity);
+        println!("Servant entity: {}", servant_entity);
+
         // Setup initial values and dependencies
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             // Set base elemental damage values for master
             stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", FIRE), 20.0);
-            // stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", COLD), 15.0);
-            // stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", LIGHTNING), 25.0);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", COLD), 15.0);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", LIGHTNING), 25.0);
             
             // Set elemental multipliers for master
             stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", FIRE), 0.5);
-            // stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", COLD), 0.3);
-            // stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", LIGHTNING), 0.4);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", COLD), 0.3);
+            stat_accessor.add_modifier(master_entity, &format!("Damage_Increased_{}", LIGHTNING), 0.4);
             
             // Register dependency
             stat_accessor.register_dependency(servant_entity, "Master", master_entity);
             
             // Create complex tag-based dependencies on the servant
             stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", FIRE), format!("Master@Damage_Added_{} * 0.6", FIRE));
-            // stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", COLD), format!("Master@Damage_Added_{} * 0.7", COLD));
-            // stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", LIGHTNING), format!("Master@Damage_Added_{} * 0.5", LIGHTNING));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", COLD), format!("Master@Damage_Added_{} * 0.7", COLD));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Added_{}", LIGHTNING), format!("Master@Damage_Added_{} * 0.5", LIGHTNING));
             
             // Copy master's multipliers (simplified syntax)
             stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", FIRE), format!("Master@Damage_Increased_{}", FIRE));
-            // stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", COLD), format!("Master@Damage_Increased_{}", COLD));
-            // stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", LIGHTNING), format!("Master@Damage_Increased_{}", LIGHTNING));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", COLD), format!("Master@Damage_Increased_{}", COLD));
+            stat_accessor.add_modifier(servant_entity, &format!("Damage_Increased_{}", LIGHTNING), format!("Master@Damage_Increased_{}", LIGHTNING));
         });
         let _ = app.world_mut().run_system(system_id);
 
@@ -1659,14 +1640,12 @@ mod tests {
         let lightning_actual = stats_servant.evaluate_by_string(&format!("Damage_{}", LIGHTNING));
         
         assert_approx_eq(fire_actual, fire_expected);
-        //assert_approx_eq(cold_actual, cold_expected);
-        //assert_approx_eq(lightning_actual, lightning_expected);
+        assert_approx_eq(cold_actual, cold_expected);
+        assert_approx_eq(lightning_actual, lightning_expected);
         
         // Now increase the master's fire damage and verify the change propagates
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
             stat_accessor.add_modifier(master_entity, &format!("Damage_Added_{}", FIRE), 10.0);
-            dbg!(&stat_accessor.stats_query.get(master_entity).unwrap().definitions);
-            dbg!(&stat_accessor.stats_query.get(master_entity).unwrap().cached_stats.get(&format!("Damage_Added_{}", FIRE)));
         });
         let _ = app.world_mut().run_system(system_id);
         
