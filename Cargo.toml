@@ -28,3 +28,9 @@ criterion = "0.5.1"
 name = "stats_bench"
 path = "benches/stats_bench.rs"
 harness = false
+
+[profile.dev]
+debug = true
+
+[profile.release]
+debug = true
