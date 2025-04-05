@@ -25,9 +25,10 @@ use crate::{error::StatError, tags::TagLike};
 //     - Halo
 
 // TODO Reintegrate with other stats code
-//     - StatContext
 //     - StatEffect
 //     - StatRequirements
+
+// TODO Some way to avoid parse::<u32>()
 
 // StatPath struct to handle path parsing and avoid repetitive string operations
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
