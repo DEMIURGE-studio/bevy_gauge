@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::HashMap};
+use bevy::utils::HashMap;
 use evalexpr::{ContextWithMutableVariables, HashMapContext, Value};
 use super::prelude::*;
 

@@ -9,8 +9,8 @@ use super::prelude::*;
 pub struct Stats {
     // Holds the definitions of stats. This includes default values, their modifiers, and their dependents
     pub definitions: HashMap<String, StatType>,
-    pub cached_stats: SyncContext,
-    pub dependency_graph: SyncDependents,
+    pub(crate) cached_stats: SyncContext,
+    pub(crate) dependency_graph: SyncDependents,
     pub dependent_on: HashMap<String, Entity>,
 }
 
@@ -139,7 +139,7 @@ impl Stats {
 }
 
 #[derive(Debug, Default)]
-struct SyncContext(SyncUnsafeCell<HashMapContext>);
+pub(crate) struct SyncContext(SyncUnsafeCell<HashMapContext>);
 
 impl SyncContext {
     fn new() -> Self {
@@ -173,7 +173,7 @@ pub enum DependentType {
 }
 
 #[derive(Debug, Default)]
-struct SyncDependents(Arc<RwLock<HashMap<String, HashMap<DependentType, u32>>>>);
+pub(crate) struct SyncDependents(Arc<RwLock<HashMap<String, HashMap<DependentType, u32>>>>);
 
 impl SyncDependents {
     fn new() -> Self {
