@@ -1,13 +1,13 @@
 use evalexpr::{DefaultNumericTypes, HashMapContext, Node, Value};
 
 #[derive(Debug, Clone)]
-pub struct Expression {
-    pub string: String,
-    pub value: Node<DefaultNumericTypes>,
+pub(crate) struct Expression {
+    pub(crate) string: String,
+    pub(crate) value: Node<DefaultNumericTypes>,
 }
 
 impl Expression {
-    pub fn evaluate(&self, context: &HashMapContext) -> f32 {
+    pub(crate) fn evaluate(&self, context: &HashMapContext) -> f32 {
         self.value
             .eval_with_context(context)
             .unwrap_or(Value::Float(0.0))
@@ -23,7 +23,7 @@ impl PartialEq for Expression {
 }
 
 #[derive(Debug, Clone)]
-pub enum ValueType {
+pub(crate) enum ValueType {
     Literal(f32),
     Expression(Expression),
 }

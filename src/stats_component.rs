@@ -4,14 +4,12 @@ use bevy::{prelude::*, utils::HashMap};
 use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value};
 use super::prelude::*;
 
-/// A collection of stats keyed by their names.
 #[derive(Component, Debug, Default)]
 pub struct Stats {
-    // Holds the definitions of stats. This includes default values, their modifiers, and their dependents
-    pub definitions: HashMap<String, StatType>,
+    pub(crate) definitions: HashMap<String, StatType>,
     pub(crate) cached_stats: SyncContext,
     pub(crate) dependency_graph: SyncDependents,
-    pub dependent_on: HashMap<String, Entity>,
+    pub(crate) sources: HashMap<String, Entity>,
 }
 
 impl Stats {
@@ -20,46 +18,44 @@ impl Stats {
             definitions: HashMap::new(),
             cached_stats: SyncContext::new(),
             dependency_graph: SyncDependents::new(),
-            dependent_on: HashMap::new(),
+            sources: HashMap::new(),
         }
     }
-
-    // Internal methods, not part of public API
-
-    pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
+    
+    pub(crate) fn get(&self, stat_path: &str) -> Result<f32, StatError> {
         self.cached_stats.get(stat_path)
     }
 
-    pub fn get_cached(&self, key: &str) -> Result<f32, StatError> {
+    pub(crate) fn get_cached(&self, key: &str) -> Result<f32, StatError> {
         self.cached_stats.get(key)
     }
 
-    pub fn set_cached(&self, key: &str, value: f32) {
+    pub(crate) fn set_cached(&self, key: &str, value: f32) {
         self.cached_stats.set(key, value)
     }
 
-    pub fn cached_context(&self) -> &HashMapContext {
+    pub(crate) fn cached_context(&self) -> &HashMapContext {
         self.cached_stats.context()
     }
 
-    pub fn add_dependent_internal(&self, stat: &str, dependent: DependentType) {
+    pub(crate) fn add_dependent_internal(&self, stat: &str, dependent: DependentType) {
         self.dependency_graph.add_dependent(stat, dependent);
     }
 
-    pub fn remove_dependent_internal(&self, stat: &str, dependent: DependentType) {
+    pub(crate) fn remove_dependent_internal(&self, stat: &str, dependent: DependentType) {
         self.dependency_graph.remove_dependent(stat, dependent);
     }
 
-    pub fn get_dependents_internal(&self, stat: &str) -> Vec<DependentType> {
+    pub(crate) fn get_dependents_internal(&self, stat: &str) -> Vec<DependentType> {
         self.dependency_graph.get_dependents(stat)
     }
 
-    pub fn evaluate_by_string(&self, stat_path: &str) -> f32 {
+    pub(crate) fn evaluate_by_string(&self, stat_path: &str) -> f32 {
         let stat_path = StatPath::parse(stat_path);
         self.evaluate(&stat_path)
     }
 
-    pub fn evaluate(&self, stat_path: &StatPath) -> f32 {
+    pub(crate) fn evaluate(&self, stat_path: &StatPath) -> f32 {
         if stat_path.segments.is_empty() {
             return 0.0;
         }
@@ -73,7 +69,7 @@ impl Stats {
         value
     }
 
-    pub fn add_modifier<V>(&mut self, stat_path: &StatPath, value: V)
+    pub(crate) fn add_modifier<V>(&mut self, stat_path: &StatPath, value: V)
     where
         V: Into<ValueType> + Clone,
     {
@@ -98,7 +94,7 @@ impl Stats {
         }
     }
 
-    pub fn remove_modifier<V>(&mut self, stat_path: &StatPath, value: V)
+    pub(crate) fn remove_modifier<V>(&mut self, stat_path: &StatPath, value: V)
     where
         V: Into<ValueType> + Clone,
     {
@@ -119,21 +115,21 @@ impl Stats {
         }
     }
 
-    pub fn register_dependencies(&self, stat_path: &StatPath, depends_on_expression: &Expression) {
+    pub(crate) fn register_dependencies(&self, stat_path: &StatPath, depends_on_expression: &Expression) {
         for var_name in depends_on_expression.value.iter_variable_identifiers() {
             self.evaluate(stat_path);
             self.add_dependent_internal(var_name, DependentType::LocalStat(stat_path.path.to_string()));
         }
     }
 
-    pub fn unregister_dependencies(&self, dependent_stat: &str, depends_on_expression: &Expression) {
+    pub(crate) fn unregister_dependencies(&self, dependent_stat: &str, depends_on_expression: &Expression) {
         for depends_on_stat in depends_on_expression.value.iter_variable_identifiers() {
             self.remove_dependent_internal(depends_on_stat, DependentType::LocalStat(dependent_stat.to_string()));
         }
     }
 
     // Helper method to store an entity-dependent stat value
-    pub fn cache_stat(&self, key: &str, value: f32) {
+    pub(crate) fn cache_stat(&self, key: &str, value: f32) {
         self.set_cached(key, value);
     }
 }

@@ -24,12 +24,16 @@
 // TODO Reintegrate with other stats code
 //     - StatEffect
 //     - StatRequirements
+//     - StatDerived
+//     - Writeback
 
 // TODO Some way to avoid parse::<u32>()
 
-// TODO Second sort-pass, second pass for accessibility modifiers (pub vs pub(crate))
+// TODO Rewrite interfaces so that everything can be done through StatAccessor or StatAccessorMut
 
 // TODO Re-bench
+
+// TODO integrate ustr
 
 pub mod asset_like;
 pub mod expressions;

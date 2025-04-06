@@ -3,21 +3,21 @@ use evalexpr::{ContextWithMutableVariables, HashMapContext, Value};
 use super::prelude::*;
 
 #[derive(Debug, Clone, Default)]
-pub enum ModType {
+pub(crate) enum ModType {
     #[default]
     Add,
     Mul,
 }
 
 #[derive(Debug)]
-pub enum StatType {
+pub(crate) enum StatType {
     Simple(Simple),
     Modifiable(Modifiable),
     Complex(ComplexModifiable),
 }
 
 impl StatType {
-    pub fn new<V>(stat_path: &str, value: V) -> Self
+    pub(crate) fn new<V>(stat_path: &str, value: V) -> Self
     where
         V: Into<ValueType> + Clone,
     {
@@ -78,14 +78,14 @@ impl StatLike for StatType {
 }
 
 #[derive(Debug)]
-pub struct Simple {
-    pub relationship: ModType,
-    pub base: f32,
-    pub mods: Vec<Expression>,
+pub(crate) struct Simple {
+    pub(crate) relationship: ModType,
+    pub(crate) base: f32,
+    pub(crate) mods: Vec<Expression>,
 }
 
 impl Simple {
-    pub fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         //let base = get_initial_value_for_modifier(name);
         Self { relationship: ModType::Add, base: 0.0, mods: Vec::new() }
     }
@@ -124,13 +124,13 @@ impl StatLike for Simple {
 }
 
 #[derive(Debug)]
-pub struct Modifiable {
-    pub total: Expression, // "(Added * Increased * More) override"
-    pub modifier_steps: HashMap<String, Simple>,
+pub(crate) struct Modifiable {
+    pub(crate) total: Expression, // "(Added * Increased * More) override"
+    pub(crate) modifier_steps: HashMap<String, Simple>,
 }
 
 impl Modifiable {
-    pub fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         let original_expr = get_total_expr_from_name(name);
         let mut modifier_steps = HashMap::new();
         let modifier_names: Vec<&str> = original_expr.split(|c: char| !c.is_alphabetic())
@@ -204,16 +204,16 @@ impl StatLike for Modifiable  {
 }
 
 #[derive(Debug)]
-pub struct ComplexEntry(f32, HashMap<u32, Simple>);
+pub(crate) struct ComplexEntry(f32, HashMap<u32, Simple>);
 
 #[derive(Debug)]
-pub struct ComplexModifiable {
-    pub total: Expression, // "(Added * Increased * More) override"
-    pub modifier_types: HashMap<String, ComplexEntry>,
+pub(crate) struct ComplexModifiable {
+    pub(crate) total: Expression, // "(Added * Increased * More) override"
+    pub(crate) modifier_types: HashMap<String, ComplexEntry>,
 }
 
 impl ComplexModifiable {
-    pub fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         Self {
             total: Expression { 
                 string: get_total_expr_from_name(name).to_string(), 

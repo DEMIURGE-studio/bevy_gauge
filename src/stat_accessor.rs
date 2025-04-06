@@ -1,14 +1,12 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use super::prelude::*;
 
-// SystemParam for accessing stats from systems
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
-    stats_query: Query<'w, 's, &'static mut Stats>,
+    stats_query: Query<'w, 's, &'static Stats>,
 }
 
 impl StatAccessor<'_, '_> {
-    // Public API: Get the value of a stat
     pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
         let Ok(stats) = self.stats_query.get(target_entity) else {
             return 0.0;
@@ -17,7 +15,30 @@ impl StatAccessor<'_, '_> {
         stats.get(stat_path).unwrap_or(0.0)
     }
 
-    // Public API: Add a modifier to a stat
+    pub fn evaluate(&self, target_entity: Entity, stat_path: &str) -> f32 {
+        if let Ok(stats) = self.stats_query.get(target_entity) {
+            stats.evaluate_by_string(stat_path)
+        } else {
+            0.0
+        }
+    }
+}
+
+// SystemParam for accessing stats from systems
+#[derive(SystemParam)]
+pub struct StatAccessorMut<'w, 's> {
+    stats_query: Query<'w, 's, &'static mut Stats>,
+}
+
+impl StatAccessorMut<'_, '_> {
+    pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
+        let Ok(stats) = self.stats_query.get(target_entity) else {
+            return 0.0;
+        };
+
+        stats.get(stat_path).unwrap_or(0.0)
+    }
+
     pub fn add_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
         let stat_path = StatPath::parse(stat_path);
         let vt: ValueType = modifier.into();
@@ -44,7 +65,7 @@ impl StatAccessor<'_, '_> {
                             let entity_name = parts[0];
                             let dependency_stat_path = parts[1];
                             
-                            if let Some(&depends_on_entity) = target_stats.dependent_on.get(entity_name) {
+                            if let Some(&depends_on_entity) = target_stats.sources.get(entity_name) {
                                 dependencies_info.push((
                                     depends_on.to_string(),
                                     depends_on_entity,
@@ -103,7 +124,6 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &stat_path);
     }
 
-    // Public API: Remove a modifier from a stat
     pub fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
         let stat_path = StatPath::parse(stat_path);
 
@@ -126,7 +146,7 @@ impl StatAccessor<'_, '_> {
                     if let Some(head) = &depends_on.owner {
                         let dependency_stat_path = &depends_on.path; // "Life_Added"
                         
-                        if let Some(&depends_on_entity) = target_stats.dependent_on.get(head) {
+                        if let Some(&depends_on_entity) = target_stats.sources.get(head) {
                             dependencies_to_remove.push((
                                 depends_on_entity,
                                 dependency_stat_path.to_string(),
@@ -161,14 +181,12 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &stat_path);
     }
 
-    // Public API: Register an entity dependency
     pub fn register_dependency(&mut self, target_entity: Entity, name: &str, dependency_entity: Entity) {
         if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
-            stats.dependent_on.insert(name.to_string(), dependency_entity);
+            stats.sources.insert(name.to_string(), dependency_entity);
         }
     }
 
-    // Public API: Evaluate a stat
     pub fn evaluate(&self, target_entity: Entity, stat_path: &str) -> f32 {
         if let Ok(stats) = self.stats_query.get(target_entity) {
             stats.evaluate_by_string(stat_path)
@@ -226,7 +244,7 @@ impl StatAccessor<'_, '_> {
         for dependent_entity in entity_dependents {
             if let Ok(dependent_stats) = self.stats_query.get(dependent_entity) {
                 // Find all prefixes that reference this entity
-                let prefixes: Vec<String> = dependent_stats.dependent_on
+                let prefixes: Vec<String> = dependent_stats.sources
                     .iter()
                     .filter_map(|(prefix, &entity)| {
                         if entity == target_entity {
@@ -254,6 +272,22 @@ impl StatAccessor<'_, '_> {
                 for stat_to_update in stats_to_update {
                     self.update_stat_recursive(dependent_entity, &stat_to_update, processed);
                 }
+            }
+        }
+    }
+
+    fn apply_stat_effect(&mut self, target_entity: Entity, effect: &HashMap<String, Vec<ValueType>>) {
+        for (stat, modifiers) in effect.iter() {
+            for modifier in modifiers.iter() {
+                self.add_modifier(target_entity, stat, modifier.clone());
+            }
+        }
+    }
+    
+    fn remove_stat_effect(&mut self, target_entity: Entity, effect: &HashMap<String, Vec<ValueType>>) {
+        for (stat, modifiers) in effect.iter() {
+            for modifier in modifiers.iter() {
+                self.remove_modifier(target_entity, stat, modifier.clone());
             }
         }
     }

@@ -32,7 +32,7 @@ fn add_basic_stat(app: &mut App, entity: Entity, stat_name: &str, value: f32) {
     // Create an owned copy of the stat name string
     let stat_name_owned = stat_name.to_string();
     
-    let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+    let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
         stat_accessor.add_modifier(entity, &stat_name_owned, value);
     });
     let _ = app.world_mut().run_system(system_id);
@@ -83,7 +83,7 @@ pub fn bench_dependent_stats(c: &mut Criterion) {
             let (mut app, entity) = setup_app();
             
             // Set up a dependency chain of the specified length
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 stat_accessor.add_modifier(entity, "Base", 10.0);
                 
                 // Create a chain of dependencies where each level depends on the previous
@@ -120,7 +120,7 @@ pub fn bench_entity_dependencies(c: &mut Criterion) {
             let entities_clone = entities.clone();
             
             // Set up a dependency chain of entities where each depends on the previous
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 // Set base value for the first entity
                 stat_accessor.add_modifier(entities_clone[0], "Power.Added", 100.0);
                 
@@ -155,7 +155,7 @@ pub fn bench_tag_based_stats(c: &mut Criterion) {
             let (mut app, entity) = setup_app();
             
             // Set up tag-based stats
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 // Add base damage
                 stat_accessor.add_modifier(entity, &format!("Damage.Added.{}", u32::MAX), 10.0);
                 
@@ -192,7 +192,7 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
             let entities_clone = entities.clone();
             
             // Set up complex mixed dependencies
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 // Base entity with power
                 stat_accessor.add_modifier(entities_clone[0], "Power.Added", 20.0);
                 
@@ -253,7 +253,7 @@ pub fn bench_stats_update(c: &mut Criterion) {
             
             // Set up dependencies - we need to clone the dependent_entities for the closure
             let dependent_for_system = dependent_entities.clone();
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 // Set base aura value
                 stat_accessor.add_modifier(central, "Aura.Added", 10.0);
                 
@@ -270,7 +270,7 @@ pub fn bench_stats_update(c: &mut Criterion) {
             // Benchmark updating the central entity and seeing how it affects performance
             b.iter(|| {
                 // Update the central entity's aura
-                let update_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+                let update_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                     stat_accessor.add_modifier(central, "Aura.Added", 1.0);
                 });
                 black_box(app.world_mut().run_system(update_id));
@@ -307,7 +307,7 @@ pub fn bench_complex_expression_evaluation(c: &mut Criterion) {
             let expr_string = expr.to_string();
             
             // Set up all the relevant stats
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 stat_accessor.add_modifier(entity, "Base", 100.0);
                 stat_accessor.add_modifier(entity, "Added", 50.0);
                 stat_accessor.add_modifier(entity, "Increased", 0.3);
@@ -340,7 +340,7 @@ pub fn bench_many_modifiers(c: &mut Criterion) {
             let (mut app, entity) = setup_app();
             
             // Add many modifiers to the same stat
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 for i in 0..modifier_count {
                     stat_accessor.add_modifier(entity, "Power.Added", 1.0);
                 }
@@ -367,7 +367,7 @@ pub fn bench_many_stats(c: &mut Criterion) {
             let (mut app, entity) = setup_app();
             
             // Add many distinct stats
-            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+            let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut| {
                 for i in 0..stat_count {
                     stat_accessor.add_modifier(entity, &format!("Stat{}.Added", i), i as f32);
                 }
