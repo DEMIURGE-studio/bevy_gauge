@@ -33,7 +33,7 @@
 
 // TODO Re-bench
 
-// TODO integrate ustr
+// TODO integrate string interning (string-interner vs lasso)
 
 pub mod asset_like;
 pub mod expressions;
