@@ -69,10 +69,7 @@ impl Stats {
         value
     }
 
-    pub(crate) fn add_modifier<V>(&mut self, stat_path: &StatPath, value: V)
-    where
-        V: Into<ValueType> + Clone,
-    {
+    pub(crate) fn add_modifier(&mut self, stat_path: &StatPath, value: ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -94,10 +91,7 @@ impl Stats {
         }
     }
 
-    pub(crate) fn remove_modifier<V>(&mut self, stat_path: &StatPath, value: V)
-    where
-        V: Into<ValueType> + Clone,
-    {
+    pub(crate) fn remove_modifier(&mut self, stat_path: &StatPath, value: &ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -106,10 +100,9 @@ impl Stats {
 
         {
             if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.remove_modifier(stat_path, value.clone());
+                stat.remove_modifier(stat_path, value);
             }
-            let vt: ValueType = value.into();
-            if let ValueType::Expression(expression) = vt {
+            if let ValueType::Expression(expression) = value {
                 self.unregister_dependencies(&base_stat, &expression);
             }
         }

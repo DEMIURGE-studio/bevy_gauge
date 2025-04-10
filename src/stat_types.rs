@@ -25,17 +25,17 @@ impl StatType {
         match stat_path.segments.len() {
             1 => {
                 let mut stat = Simple::new(&stat_path.segments[0]);
-                stat.add_modifier(&stat_path, value);
+                stat.add_modifier(&stat_path, value.into());
                 StatType::Simple(stat)
             },
             2 => {
                 let mut stat = Modifiable::new(&stat_path.segments[0]);
-                stat.add_modifier(&stat_path, value);
+                stat.add_modifier(&stat_path, value.into());
                 StatType::Modifiable(stat)
             },
             3 => {
                 let mut stat = ComplexModifiable::new(&stat_path.segments[0]);
-                stat.add_modifier(&stat_path, value);
+                stat.add_modifier(&stat_path, value.into());
                 StatType::Complex(stat)
             },
             _ => panic!("Invalid stat path format: {:#?}", stat_path)
@@ -44,7 +44,7 @@ impl StatType {
 }
 
 impl StatLike for StatType {
-    fn add_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn add_modifier(&mut self, stat_path: &StatPath, value: ValueType) {
         match self {
             StatType::Simple(simple) => simple.add_modifier(stat_path, value),
             StatType::Modifiable(modifiable) => modifiable.add_modifier(stat_path, value),
@@ -52,7 +52,7 @@ impl StatLike for StatType {
         }
     }
 
-    fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn remove_modifier(&mut self, stat_path: &StatPath, value: &ValueType) {
         match self {
             StatType::Simple(simple) => simple.remove_modifier(stat_path, value),
             StatType::Modifiable(modifiable) => modifiable.remove_modifier(stat_path, value),
@@ -92,21 +92,18 @@ impl Simple {
 }
 
 impl StatLike for Simple {
-    fn add_modifier<V: Into<ValueType> + Clone>(&mut self, _stat_path: &StatPath, value: V) {
-        let vt: ValueType = value.into();
-
-        match vt {
+    fn add_modifier(&mut self, _stat_path: &StatPath, value: ValueType) {
+        match value {
             ValueType::Literal(vals) => { self.base += vals; }
             ValueType::Expression(expression) => { self.mods.push(expression.clone()); }
         }
     }
 
-    fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, _stat_path: &StatPath, value: V) {
-        let vt: ValueType = value.into();
-        match vt {
+    fn remove_modifier(&mut self, _stat_path: &StatPath, value: &ValueType) {
+        match value {
             ValueType::Literal(vals) => { self.base -= vals; }
             ValueType::Expression(expression) => {
-                let Some(pos) = self.mods.iter().position(|e| *e == expression) else { return; };
+                let Some(pos) = self.mods.iter().position(|e| e == expression) else { return; };
                 self.mods.remove(pos);
             }
         }
@@ -159,14 +156,14 @@ impl Modifiable {
 }
 
 impl StatLike for Modifiable  {
-    fn add_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn add_modifier(&mut self, stat_path: &StatPath, value: ValueType) {
         if stat_path.len() != 2 { return; }
         let key = stat_path.segments[1].to_string();
         let part = self.modifier_steps.entry(key.clone()).or_insert(Simple::new(&key));
         part.add_modifier(stat_path, value);
     }
 
-    fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn remove_modifier(&mut self, stat_path: &StatPath, value: &ValueType) {
         if stat_path.len() != 2 { return; }
         let key = stat_path.segments[1].to_string();
         let part = self.modifier_steps.entry(key.clone()).or_insert(Simple::new(&key));
@@ -225,7 +222,7 @@ impl ComplexModifiable {
 }
 
 impl StatLike for ComplexModifiable {
-    fn add_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn add_modifier(&mut self, stat_path: &StatPath, value: ValueType) {
         if stat_path.len() != 3 { return; }
         let modifier_type = &stat_path.segments[1];
         let Ok(tag) = stat_path.segments[2].parse::<u32>() else { return; };
@@ -235,7 +232,7 @@ impl StatLike for ComplexModifiable {
         step.add_modifier(stat_path, value);
     }
 
-    fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, stat_path: &StatPath, value: V) {
+    fn remove_modifier(&mut self, stat_path: &StatPath, value: &ValueType) {
         if stat_path.len() != 3 { return; }
         let Some(step_map) = self.modifier_types.get_mut(&stat_path.segments[1]) else { return; };
         let Ok(tag) = stat_path.segments[2].parse::<u32>() else { return; };

@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
 use super::prelude::*;
 
 #[derive(SystemParam)]
@@ -47,78 +47,70 @@ impl StatAccessorMut<'_, '_> {
             return;
         }
         
-        match vt {
-            ValueType::Literal(value) => {
-                if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-                    target_stats.add_modifier(&stat_path, value);
-                }
-            },
-            ValueType::Expression(expression) => {
-                let mut dependencies_info = Vec::new();
-                let mut dependents_to_add = Vec::new();
-                
-                // First gather dependency information
-                if let Ok(target_stats) = self.stats_query.get(target_entity) {
-                    for depends_on in expression.value.iter_variable_identifiers() {
-                        if depends_on.contains('@') {
-                            let parts: Vec<&str> = depends_on.split('@').collect();
-                            let entity_name = parts[0];
-                            let dependency_stat_path = parts[1];
-                            
-                            if let Some(&depends_on_entity) = target_stats.sources.get(entity_name) {
-                                dependencies_info.push((
-                                    depends_on.to_string(),
-                                    depends_on_entity,
-                                    dependency_stat_path.to_string(),
-                                ));
-                                
-                                dependents_to_add.push((
-                                    depends_on_entity,
-                                    dependency_stat_path.to_string(),
-                                    DependentType::EntityStat(target_entity),
-                                ));
-                            }
-                        } else {
-                            dependents_to_add.push((
-                                target_entity,
+        if let ValueType::Expression(expression) = &vt {
+            let mut dependencies_info = Vec::new();
+            let mut dependents_to_add = Vec::new();
+            
+            // First gather dependency information
+            if let Ok(target_stats) = self.stats_query.get(target_entity) {
+                for depends_on in expression.value.iter_variable_identifiers() {
+                    if depends_on.contains('@') {
+                        let parts: Vec<&str> = depends_on.split('@').collect();
+                        let entity_name = parts[0];
+                        let dependency_stat_path = parts[1];
+                        
+                        if let Some(&depends_on_entity) = target_stats.sources.get(entity_name) {
+                            dependencies_info.push((
                                 depends_on.to_string(),
-                                DependentType::LocalStat(stat_path.to_string())
+                                depends_on_entity,
+                                dependency_stat_path.to_string(),
+                            ));
+                            
+                            dependents_to_add.push((
+                                depends_on_entity,
+                                dependency_stat_path.to_string(),
+                                DependentType::EntityStat(target_entity),
                             ));
                         }
+                    } else {
+                        dependents_to_add.push((
+                            target_entity,
+                            depends_on.to_string(),
+                            DependentType::LocalStat(stat_path.to_string())
+                        ));
                     }
                 }
-                
-                // Add the expression modifier
-                if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-                    target_stats.add_modifier(&stat_path, expression);
-                }
-                
-                // Cache dependency values
-                let dependencies_to_cache = dependencies_info
-                    .iter()
-                    .filter_map(|(depends_on, depends_on_entity, dependency_stat_path)| {
-                        if let Ok(depends_on_stats) = self.stats_query.get(*depends_on_entity) {
-                            let value = depends_on_stats.evaluate_by_string(dependency_stat_path);
-                            Some((depends_on.clone(), value))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                
-                if let Ok(target_stats) = self.stats_query.get(target_entity) {
-                    for (depends_on, value) in dependencies_to_cache {
-                        target_stats.cache_stat(&depends_on, value);
+            }
+            
+            // Cache dependency values
+            let dependencies_to_cache = dependencies_info
+                .iter()
+                .filter_map(|(depends_on, depends_on_entity, dependency_stat_path)| {
+                    if let Ok(depends_on_stats) = self.stats_query.get(*depends_on_entity) {
+                        let value = depends_on_stats.evaluate_by_string(dependency_stat_path);
+                        Some((depends_on.clone(), value))
+                    } else {
+                        None
                     }
+                })
+                .collect::<Vec<_>>();
+            
+            if let Ok(target_stats) = self.stats_query.get(target_entity) {
+                for (depends_on, value) in dependencies_to_cache {
+                    target_stats.cache_stat(&depends_on, value);
                 }
-                
-                // Register dependents
-                for (depends_on_entity, dependency_stat_path, dependent_type) in dependents_to_add {
-                    if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
-                        depends_on_stats.add_dependent_internal(&dependency_stat_path, dependent_type);
-                    }
+            }
+            
+            // Register dependents
+            for (depends_on_entity, dependency_stat_path, dependent_type) in dependents_to_add {
+                if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
+                    depends_on_stats.add_dependent_internal(&dependency_stat_path, dependent_type);
                 }
-            },
+            }
+        }
+
+        if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
+            target_stats.add_modifier(&stat_path, vt);
         }
 
         self.update_stat(target_entity, &stat_path);
@@ -126,21 +118,19 @@ impl StatAccessorMut<'_, '_> {
 
     pub fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
         let stat_path = StatPath::parse(stat_path);
-
+        
         let vt: ValueType = modifier.into();
 
-        let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) else {
-            return;
-        };
-
-        match vt {
-            ValueType::Literal(value) => {
-                target_stats.remove_modifier(&stat_path, value);
-            },
-            ValueType::Expression(expression) => {
-                // First, collect all the dependencies to remove
-                let mut dependencies_to_remove = Vec::new();
-                
+        // First, collect all the dependencies to remove
+        let mut dependencies_to_remove = Vec::new();
+        
+        {
+            let target_stats = match self.stats_query.get(target_entity) {
+                Ok(stats) => stats,
+                Err(_) => return,
+            };
+            
+            if let ValueType::Expression(expression) = &vt {
                 for depends_on in expression.value.iter_variable_identifiers() {
                     let depends_on = StatPath::parse(depends_on);
                     if let Some(head) = &depends_on.owner {
@@ -162,20 +152,19 @@ impl StatAccessorMut<'_, '_> {
                         ));
                     }
                 }
-                
-                // Remove the expression modifier
-                target_stats.remove_modifier(&stat_path, expression);
-                
-                // Release the mutable borrow to target_stats
-                drop(target_stats);
-                
-                // Now remove all dependencies
-                for (depends_on_entity, dependency_stat_path, dependent_type) in dependencies_to_remove {
-                    if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
-                        depends_on_stats.remove_dependent_internal(&dependency_stat_path, dependent_type);
-                    }
-                }
-            },
+            }
+        }
+        
+        // Now remove all dependencies
+        for (depends_on_entity, dependency_stat_path, dependent_type) in dependencies_to_remove {
+            if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
+                depends_on_stats.remove_dependent_internal(&dependency_stat_path, dependent_type);
+            }
+        }
+
+        // Finally remove the modifier itself
+        if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
+            target_stats.remove_modifier(&stat_path, &vt);
         }
 
         self.update_stat(target_entity, &stat_path);
@@ -272,22 +261,6 @@ impl StatAccessorMut<'_, '_> {
                 for stat_to_update in stats_to_update {
                     self.update_stat_recursive(dependent_entity, &stat_to_update, processed);
                 }
-            }
-        }
-    }
-
-    fn apply_stat_effect(&mut self, target_entity: Entity, effect: &HashMap<String, Vec<ValueType>>) {
-        for (stat, modifiers) in effect.iter() {
-            for modifier in modifiers.iter() {
-                self.add_modifier(target_entity, stat, modifier.clone());
-            }
-        }
-    }
-    
-    fn remove_stat_effect(&mut self, target_entity: Entity, effect: &HashMap<String, Vec<ValueType>>) {
-        for (stat, modifiers) in effect.iter() {
-            for modifier in modifiers.iter() {
-                self.remove_modifier(target_entity, stat, modifier.clone());
             }
         }
     }

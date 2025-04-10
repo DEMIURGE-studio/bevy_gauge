@@ -23,7 +23,7 @@ impl PartialEq for Expression {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ValueType {
+pub enum ValueType {
     Literal(f32),
     Expression(Expression),
 }
