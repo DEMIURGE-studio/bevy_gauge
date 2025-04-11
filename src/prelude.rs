@@ -1,5 +1,6 @@
 pub use super::asset_like::*;
 pub use super::expressions::*;
+pub use super::modifier_set::*;
 pub use super::stat_accessor::*;
 pub use super::stat_addressing::*;
 pub use super::stat_effect::*;

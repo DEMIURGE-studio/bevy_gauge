@@ -69,7 +69,7 @@ impl Stats {
         value
     }
 
-    pub(crate) fn add_modifier(&mut self, stat_path: &StatPath, value: ValueType) {
+    pub(crate) fn add_modifier(&mut self, stat_path: &StatPath, modifier: ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -77,21 +77,20 @@ impl Stats {
         let base_stat = stat_path.segments[0].to_string();
 
         {
+            if let ValueType::Expression(ref depends_on_expression) = modifier {
+                self.register_dependencies(stat_path, &depends_on_expression);
+            }
             if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.add_modifier(stat_path, value.clone());
+                stat.add_modifier(stat_path, modifier);
             } else {
-                let new_stat = StatType::new(&stat_path.path, value.clone());
+                let new_stat = StatType::new(&stat_path.path, modifier);
                 new_stat.on_insert(self, stat_path);
                 self.definitions.insert(base_stat.clone(), new_stat);
-            }
-            let vt: ValueType = value.into();
-            if let ValueType::Expression(depends_on_expression) = vt {
-                self.register_dependencies(stat_path, &depends_on_expression);
             }
         }
     }
 
-    pub(crate) fn remove_modifier(&mut self, stat_path: &StatPath, value: &ValueType) {
+    pub(crate) fn remove_modifier(&mut self, stat_path: &StatPath, modifier: &ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -100,9 +99,9 @@ impl Stats {
 
         {
             if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.remove_modifier(stat_path, value);
+                stat.remove_modifier(stat_path, modifier);
             }
-            if let ValueType::Expression(expression) = value {
+            if let ValueType::Expression(expression) = modifier {
                 self.unregister_dependencies(&base_stat, &expression);
             }
         }

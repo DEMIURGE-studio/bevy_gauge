@@ -37,6 +37,7 @@
 
 pub mod asset_like;
 pub mod expressions;
+pub mod modifier_set;
 pub mod prelude;
 pub mod stat_accessor;
 pub mod stat_addressing;

@@ -39,15 +39,19 @@ impl StatAccessorMut<'_, '_> {
         stats.get(stat_path).unwrap_or(0.0)
     }
 
-    pub fn add_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+    pub fn add_modifier<V: Into<ValueType>>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+        let vt = modifier.into();
+        self.add_modifier_value(target_entity, stat_path, vt);
+    }
+
+    pub fn add_modifier_value(&mut self, target_entity: Entity, stat_path: &str, modifier: ValueType) {
         let stat_path = StatPath::parse(stat_path);
-        let vt: ValueType = modifier.into();
-        
+
         if !self.stats_query.contains(target_entity) {
             return;
         }
         
-        if let ValueType::Expression(expression) = &vt {
+        if let ValueType::Expression(ref expression) = modifier {
             let mut dependencies_info = Vec::new();
             let mut dependents_to_add = Vec::new();
             
@@ -110,17 +114,20 @@ impl StatAccessorMut<'_, '_> {
         }
 
         if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-            target_stats.add_modifier(&stat_path, vt);
+            target_stats.add_modifier(&stat_path, modifier);
         }
 
         self.update_stat(target_entity, &stat_path);
     }
 
-    pub fn remove_modifier<V: Into<ValueType> + Clone>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+    pub fn remove_modifier<V: Into<ValueType>>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
+        let vt = modifier.into();
+        self.remove_modifier_value(target_entity, stat_path, &vt);
+    }
+
+    pub fn remove_modifier_value(&mut self, target_entity: Entity, stat_path: &str, modifier: &ValueType) {
         let stat_path = StatPath::parse(stat_path);
         
-        let vt: ValueType = modifier.into();
-
         // First, collect all the dependencies to remove
         let mut dependencies_to_remove = Vec::new();
         
@@ -130,7 +137,7 @@ impl StatAccessorMut<'_, '_> {
                 Err(_) => return,
             };
             
-            if let ValueType::Expression(expression) = &vt {
+            if let ValueType::Expression(expression) = modifier {
                 for depends_on in expression.value.iter_variable_identifiers() {
                     let depends_on = StatPath::parse(depends_on);
                     if let Some(head) = &depends_on.owner {
@@ -164,7 +171,7 @@ impl StatAccessorMut<'_, '_> {
 
         // Finally remove the modifier itself
         if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-            target_stats.remove_modifier(&stat_path, &vt);
+            target_stats.remove_modifier(&stat_path, modifier);
         }
 
         self.update_stat(target_entity, &stat_path);
@@ -263,5 +270,13 @@ impl StatAccessorMut<'_, '_> {
                 }
             }
         }
+    }
+
+    fn apply_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
+        modifier_set.apply(self, target_entity);
+    }
+
+    fn remove_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
+        modifier_set.remove(self, target_entity);
     }
 }
