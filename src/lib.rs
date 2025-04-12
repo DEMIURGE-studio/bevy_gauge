@@ -1,4 +1,5 @@
 #![feature(sync_unsafe_cell)]
+#![feature(associated_type_defaults)]
 
 // TODO Fix overuse of .unwrap(). It's fine for now (maybe preferable during development) but in the future we'll want proper errors, panics, and warnings.
 

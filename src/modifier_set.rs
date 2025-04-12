@@ -60,7 +60,7 @@ mod modifier_set_tests {
                     .push(ValueType::Literal(5.0));
                 
                 // Apply the ModifierSet to the entity
-                modifier_set.apply(&mut stat_accessor, entity);
+                stat_accessor.apply_modifier_set(&modifier_set, entity);
             }
         });
         let _ = app.world_mut().run_system(system_id);
@@ -111,7 +111,7 @@ mod modifier_set_tests {
                     .push(ValueType::from("Intelligence.Added * 1.5".to_string()));
                 
                 // Apply the ModifierSet
-                modifier_set.apply(&mut stat_accessor, entity);
+                stat_accessor.apply_modifier_set(&modifier_set, entity);
             }
         });
         let _ = app.world_mut().run_system(system_id);
@@ -153,7 +153,7 @@ mod modifier_set_tests {
         let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Apply the test ModifierSet
-                test_modifier_set.apply(&mut stat_accessor, entity);
+                stat_accessor.apply_modifier_set(&test_modifier_set, entity);
             }
         });
         let _ = app.world_mut().run_system(apply_system_id);
@@ -171,7 +171,7 @@ mod modifier_set_tests {
         let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Remove the test ModifierSet
-                test_modifier_set_clone.remove(&mut stat_accessor, entity);
+                stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
             }
         });
         let _ = app.world_mut().run_system(remove_system_id);
@@ -219,7 +219,7 @@ mod modifier_set_tests {
         // Register and run a system to apply the ModifierSet
         let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
-                test_modifier_set.apply(&mut stat_accessor, entity);
+                stat_accessor.apply_modifier_set(&test_modifier_set, entity);
             }
         });
         let _ = app.world_mut().run_system(apply_system_id);
@@ -236,7 +236,7 @@ mod modifier_set_tests {
         // Now run a system to remove the ModifierSet
         let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
-                test_modifier_set_clone.remove(&mut stat_accessor, entity);
+                stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
             }
         });
         let _ = app.world_mut().run_system(remove_system_id);
@@ -288,8 +288,8 @@ mod modifier_set_tests {
         let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Apply both ModifierSets
-                base_modifier_set_clone1.apply(&mut stat_accessor, entity);
-                buff_modifier_set_clone1.apply(&mut stat_accessor, entity);
+                stat_accessor.apply_modifier_set(&base_modifier_set_clone1, entity);
+                stat_accessor.apply_modifier_set(&buff_modifier_set_clone1, entity);
             }
         });
         let _ = app.world_mut().run_system(system_id);
@@ -309,7 +309,7 @@ mod modifier_set_tests {
         let remove_buff_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Remove only the buff ModifierSet
-                buff_modifier_set.remove(&mut stat_accessor, entity);
+                stat_accessor.remove_modifier_set(&buff_modifier_set, entity);
             }
         });
         let _ = app.world_mut().run_system(remove_buff_id);

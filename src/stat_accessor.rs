@@ -272,11 +272,11 @@ impl StatAccessorMut<'_, '_> {
         }
     }
 
-    fn apply_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
+    pub fn apply_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
         modifier_set.apply(self, target_entity);
     }
 
-    fn remove_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
+    pub fn remove_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
         modifier_set.remove(self, target_entity);
     }
 }
