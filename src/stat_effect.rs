@@ -1,5 +1,5 @@
 use bevy::ecs::entity::Entity;
-use crate::prelude::StatAccessorMut;
+use crate::prelude::StatAccessor;
 
 // The base context trait
 trait StatEffectContext {}
@@ -16,7 +16,7 @@ trait StatEffect {
     // The Context type is defined without explicit lifetimes in the trait
     type Context: StatEffectContext;
    
-    fn apply(&self, stat_accessor: &mut StatAccessorMut, context: &Self::Context);
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context);
 }
 
 struct DamageEffect {
@@ -36,7 +36,7 @@ impl<'a> StatEffectContext for DamageEffectContext<'a> {}
 impl<'a> StatEffect for &'a DamageEffect {
     type Context = DamageEffectContext<'a>;
    
-    fn apply(&self, stat_accessor: &mut StatAccessorMut, context: &Self::Context) {
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
         todo!()
     }
 }
@@ -48,7 +48,7 @@ struct HealEffect {
 impl StatEffect for HealEffect {
     type Context = DefaultContext;
     
-    fn apply(&self, stat_accessor: &mut StatAccessorMut, context: &Self::Context) {
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
         let target = context.target;
         todo!()
     }

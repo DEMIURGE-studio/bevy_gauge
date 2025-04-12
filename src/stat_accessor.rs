@@ -1,36 +1,13 @@
 use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
 use super::prelude::*;
 
-#[derive(SystemParam)]
-pub struct StatAccessor<'w, 's> {
-    stats_query: Query<'w, 's, &'static Stats>,
-}
-
-impl StatAccessor<'_, '_> {
-    pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
-        let Ok(stats) = self.stats_query.get(target_entity) else {
-            return 0.0;
-        };
-
-        stats.get(stat_path).unwrap_or(0.0)
-    }
-
-    pub fn evaluate(&self, target_entity: Entity, stat_path: &str) -> f32 {
-        if let Ok(stats) = self.stats_query.get(target_entity) {
-            stats.evaluate_by_string(stat_path)
-        } else {
-            0.0
-        }
-    }
-}
-
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
-pub struct StatAccessorMut<'w, 's> {
+pub struct StatAccessor<'w, 's> {
     stats_query: Query<'w, 's, &'static mut Stats>,
 }
 
-impl StatAccessorMut<'_, '_> {
+impl StatAccessor<'_, '_> {
     pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
         let Ok(stats) = self.stats_query.get(target_entity) else {
             return 0.0;
@@ -108,7 +85,7 @@ impl StatAccessorMut<'_, '_> {
             // Register dependents
             for (depends_on_entity, dependency_stat_path, dependent_type) in dependents_to_add {
                 if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
-                    depends_on_stats.add_dependent_internal(&dependency_stat_path, dependent_type);
+                    depends_on_stats.add_dependent(&dependency_stat_path, dependent_type);
                 }
             }
         }
@@ -165,7 +142,7 @@ impl StatAccessorMut<'_, '_> {
         // Now remove all dependencies
         for (depends_on_entity, dependency_stat_path, dependent_type) in dependencies_to_remove {
             if let Ok(depends_on_stats) = self.stats_query.get(depends_on_entity) {
-                depends_on_stats.remove_dependent_internal(&dependency_stat_path, dependent_type);
+                depends_on_stats.remove_dependent(&dependency_stat_path, dependent_type);
             }
         }
 
@@ -219,7 +196,7 @@ impl StatAccessorMut<'_, '_> {
         
         if let Ok(stats) = self.stats_query.get(target_entity) {
             // Get all dependents for this stat
-            for dependent in stats.get_dependents_internal(&stat_path.path) {
+            for dependent in stats.get_dependents(&stat_path.path) {
                 match dependent {
                     DependentType::LocalStat(local_stat) => {
                         local_dependents.push(StatPath::parse(&local_stat));
@@ -257,7 +234,7 @@ impl StatAccessorMut<'_, '_> {
                     let cache_key = format!("{}@{}", prefix, stat_path.path);
                     dependent_stats.set_cached(&cache_key, current_value);
                     
-                    for cache_dependent in dependent_stats.get_dependents_internal(&cache_key) {
+                    for cache_dependent in dependent_stats.get_dependents(&cache_key) {
                         if let DependentType::LocalStat(dependent_stat) = cache_dependent {
                             stats_to_update.push(StatPath::parse(&dependent_stat));
                         }

@@ -1,5 +1,5 @@
 use bevy::{prelude::*, utils::HashMap};
-use crate::prelude::{StatAccessorMut, ValueType};
+use crate::prelude::{StatAccessor, ValueType};
 
 #[derive(Clone, Deref, DerefMut)]
 pub struct ModifierSet(HashMap<String, Vec<ValueType>>);
@@ -9,7 +9,7 @@ impl ModifierSet {
         Self(HashMap::new())
     }
 
-    pub fn apply(&self, stat_accessor: &mut StatAccessorMut, target_entity: Entity) {
+    pub fn apply(&self, stat_accessor: &mut StatAccessor, target_entity: Entity) {
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
                 stat_accessor.add_modifier_value(target_entity, stat, modifier.clone());
@@ -17,7 +17,7 @@ impl ModifierSet {
         }
     }
 
-    pub fn remove(&self, stat_accessor: &mut StatAccessorMut, target_entity: Entity) {
+    pub fn remove(&self, stat_accessor: &mut StatAccessor, target_entity: Entity) {
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
                 stat_accessor.remove_modifier_value(target_entity, stat, modifier);
@@ -41,7 +41,7 @@ mod modifier_set_tests {
         let entity = app.world_mut().spawn(Stats::new()).id();
 
         // Register and run the system to apply a ModifierSet
-        let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Create a ModifierSet with multiple stats and modifiers
                 let mut modifier_set = ModifierSet::new();
@@ -87,7 +87,7 @@ mod modifier_set_tests {
         let entity = app.world_mut().spawn(Stats::new()).id();
 
         // Register and run the system to apply a ModifierSet with expressions
-        let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Create a ModifierSet
                 let mut modifier_set = ModifierSet::new();
@@ -150,7 +150,7 @@ mod modifier_set_tests {
         let test_modifier_set_clone = test_modifier_set.clone();
 
         // Register and run a system to apply the ModifierSet
-        let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Apply the test ModifierSet
                 stat_accessor.apply_modifier_set(&test_modifier_set, entity);
@@ -168,7 +168,7 @@ mod modifier_set_tests {
         assert_eq!(initial_mana, 25.0);
         
         // Now run a system to remove the ModifierSet, using the clone
-        let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Remove the test ModifierSet
                 stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
@@ -217,7 +217,7 @@ mod modifier_set_tests {
         let test_modifier_set_clone = test_modifier_set.clone();
         
         // Register and run a system to apply the ModifierSet
-        let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 stat_accessor.apply_modifier_set(&test_modifier_set, entity);
             }
@@ -234,7 +234,7 @@ mod modifier_set_tests {
         assert_eq!(damage_value, 7.5); // 15.0 * 0.5
         
         // Now run a system to remove the ModifierSet
-        let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
             }
@@ -285,7 +285,7 @@ mod modifier_set_tests {
         let buff_modifier_set_clone1 = buff_modifier_set.clone();
         
         // Register and run systems to apply both ModifierSets
-        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Apply both ModifierSets
                 stat_accessor.apply_modifier_set(&base_modifier_set_clone1, entity);
@@ -306,7 +306,7 @@ mod modifier_set_tests {
         assert_eq!(regen_value, 5.0);  // From buff set
         
         // Now run a system to remove just the buff ModifierSet
-        let remove_buff_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessorMut, query: Query<Entity, With<Stats>>| {
+        let remove_buff_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
             for entity in &query {
                 // Remove only the buff ModifierSet
                 stat_accessor.remove_modifier_set(&buff_modifier_set, entity);

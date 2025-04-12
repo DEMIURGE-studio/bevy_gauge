@@ -22,12 +22,8 @@ impl Stats {
         }
     }
     
-    pub(crate) fn get(&self, stat_path: &str) -> Result<f32, StatError> {
+    pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
         self.cached_stats.get(stat_path)
-    }
-
-    pub(crate) fn get_cached(&self, key: &str) -> Result<f32, StatError> {
-        self.cached_stats.get(key)
     }
 
     pub(crate) fn set_cached(&self, key: &str, value: f32) {
@@ -38,19 +34,19 @@ impl Stats {
         self.cached_stats.context()
     }
 
-    pub(crate) fn add_dependent_internal(&self, stat: &str, dependent: DependentType) {
+    pub(crate) fn add_dependent(&self, stat: &str, dependent: DependentType) {
         self.dependency_graph.add_dependent(stat, dependent);
     }
 
-    pub(crate) fn remove_dependent_internal(&self, stat: &str, dependent: DependentType) {
+    pub(crate) fn remove_dependent(&self, stat: &str, dependent: DependentType) {
         self.dependency_graph.remove_dependent(stat, dependent);
     }
 
-    pub(crate) fn get_dependents_internal(&self, stat: &str) -> Vec<DependentType> {
+    pub(crate) fn get_dependents(&self, stat: &str) -> Vec<DependentType> {
         self.dependency_graph.get_dependents(stat)
     }
 
-    pub(crate) fn evaluate_by_string(&self, stat_path: &str) -> f32 {
+    pub fn evaluate_by_string(&self, stat_path: &str) -> f32 {
         let stat_path = StatPath::parse(stat_path);
         self.evaluate(&stat_path)
     }
@@ -110,13 +106,13 @@ impl Stats {
     pub(crate) fn register_dependencies(&self, stat_path: &StatPath, depends_on_expression: &Expression) {
         for var_name in depends_on_expression.value.iter_variable_identifiers() {
             self.evaluate(stat_path);
-            self.add_dependent_internal(var_name, DependentType::LocalStat(stat_path.path.to_string()));
+            self.add_dependent(var_name, DependentType::LocalStat(stat_path.path.to_string()));
         }
     }
 
     pub(crate) fn unregister_dependencies(&self, dependent_stat: &str, depends_on_expression: &Expression) {
         for depends_on_stat in depends_on_expression.value.iter_variable_identifiers() {
-            self.remove_dependent_internal(depends_on_stat, DependentType::LocalStat(dependent_stat.to_string()));
+            self.remove_dependent(depends_on_stat, DependentType::LocalStat(dependent_stat.to_string()));
         }
     }
 

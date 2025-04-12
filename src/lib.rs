@@ -36,6 +36,8 @@
 
 // TODO integrate string interning (string-interner vs lasso)
 
+// TODO NEXT: StatEffect
+
 pub mod asset_like;
 pub mod expressions;
 pub mod modifier_set;

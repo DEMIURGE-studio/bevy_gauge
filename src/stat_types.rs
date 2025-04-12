@@ -192,7 +192,7 @@ impl StatLike for Modifiable  {
         let base_name = &stat_path.segments[0];
         for (modifier_name, _) in self.modifier_steps.iter() {
             let full_modifier_path = format!("{}_{}", base_name, modifier_name);
-            if stats.get_cached(&full_modifier_path).is_err() {
+            if stats.get(&full_modifier_path).is_err() {
                 let val = self.modifier_steps.get(modifier_name).unwrap().evaluate(stat_path, stats);
                 stats.set_cached(&full_modifier_path, val);
             }
@@ -255,7 +255,7 @@ impl StatLike for ComplexModifiable {
                     .filter_map(|(&mod_tags, value)| {
                         if mod_tags.has_all(search_tags) {
                             let dep_path = format!("{}_{}_{}", stat_path.segments[0], category, mod_tags.to_string());
-                            stats.add_dependent_internal(&dep_path, DependentType::LocalStat(full_path.to_string()));
+                            stats.add_dependent(&dep_path, DependentType::LocalStat(full_path.to_string()));
                             Some(value.evaluate(stat_path, stats))
                         } else {
                             None
@@ -284,7 +284,7 @@ impl StatLike for ComplexModifiable {
                 .filter_map(|(&mod_tags, value)| {
                     if mod_tags.has_all(search_tags) {
                         let dep_path = format!("{}_{}_{}", stat_path.segments[0], category, mod_tags.to_string());
-                        stats.add_dependent_internal(&dep_path, DependentType::LocalStat(full_path.to_string()));
+                        stats.add_dependent(&dep_path, DependentType::LocalStat(full_path.to_string()));
                         Some(value.evaluate(stat_path, stats))
                     } else {
                         None
