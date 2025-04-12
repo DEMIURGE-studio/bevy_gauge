@@ -60,9 +60,7 @@ impl Stats {
         let stat_type = self.definitions.get(head);
         let Some(stat_type) = stat_type else { return 0.0; };
 
-        let value = stat_type.evaluate(stat_path, self);
-        self.set_cached(&stat_path.path, value);
-        value
+        stat_type.evaluate(stat_path, self)
     }
 
     pub(crate) fn add_modifier(&mut self, stat_path: &StatPath, modifier: ValueType) {
@@ -153,7 +151,7 @@ impl SyncContext {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DependentType {
     LocalStat(String),
-    EntityStat(Entity), // Entity that depends on this stat
+    EntityStat(Entity),
 }
 
 #[derive(Debug, Default)]
@@ -172,18 +170,22 @@ impl SyncDependents {
     }
     
     fn remove_dependent(&self, stat_path: &str, dependent: DependentType) {
-        if let Ok(mut graph) = self.0.write() {
-            if let Some(dependents) = graph.get_mut(stat_path) {
-                if let Some(weight) = dependents.get_mut(&dependent) {
-                    *weight -= 1;
-                    if *weight == 0 {
-                        dependents.remove(&dependent);
-                    }
-                }
-                if dependents.is_empty() {
-                    graph.remove(stat_path);
-                }
+        let Ok(mut graph) = self.0.write() else {
+            return;
+        };
+
+        let Some(dependents) = graph.get_mut(stat_path) else {
+            return;
+        };
+        
+        if let Some(weight) = dependents.get_mut(&dependent) {
+            *weight -= 1;
+            if *weight == 0 {
+                dependents.remove(&dependent);
             }
+        }
+        if dependents.is_empty() {
+            graph.remove(stat_path);
         }
     }
     
