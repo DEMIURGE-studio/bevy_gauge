@@ -30,7 +30,7 @@ impl Stats {
         self.cached_stats.set(key, value)
     }
 
-    pub(crate) fn cached_context(&self) -> &HashMapContext {
+    pub(crate) fn get_context(&self) -> &HashMapContext {
         self.cached_stats.context()
     }
 

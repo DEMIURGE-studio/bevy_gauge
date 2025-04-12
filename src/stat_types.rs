@@ -110,7 +110,7 @@ impl StatLike for Simple {
     }
 
     fn evaluate(&self, _stat_path: &StatPath, stats: &Stats) -> f32 {
-        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats.cached_context())).collect();
+        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats.get_context())).collect();
         match self.relationship {
             ModType::Add => self.base + computed.iter().sum::<f32>(),
             ModType::Mul => self.base * computed.iter().product::<f32>(),
@@ -174,7 +174,7 @@ impl StatLike for Modifiable  {
         match stat_path.len() {
             1 => {
                 self.total.value
-                    .eval_with_context(stats.cached_context())
+                    .eval_with_context(stats.get_context())
                     .unwrap()
                     .as_number()
                     .unwrap() as f32

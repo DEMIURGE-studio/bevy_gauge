@@ -1,8 +1,6 @@
 #![feature(sync_unsafe_cell)]
 #![feature(associated_type_defaults)]
 
-// TODO Fix overuse of .unwrap(). It's fine for now (maybe preferable during development) but in the future we'll want proper errors, panics, and warnings.
-
 // TODO ContextDrivenStats type that wraps stats, but contains a context (Hashmap of strings to entities). Can only call evaluate on it if you pass in a StatContextRefs
 
 // TODO Stats.definitions should match String -> T where T implements StatLike. Convert the current StatType into DefaultStatType.
@@ -23,20 +21,12 @@
 //     - Halo
 
 // TODO Reintegrate with other stats code
-//     - StatEffect
-//     - StatRequirements
 //     - StatDerived
 //     - Writeback
 
 // TODO Some way to avoid parse::<u32>()
 
-// TODO Rewrite interfaces so that everything can be done through StatAccessor or StatAccessorMut
-
-// TODO Re-bench
-
 // TODO integrate string interning (string-interner vs lasso)
-
-// TODO NEXT: StatEffect
 
 pub mod asset_like;
 pub mod expressions;
