@@ -140,7 +140,7 @@ impl Modifiable {
         let transformed_expr = original_expr.split(|c: char| !c.is_alphabetic())
             .fold(original_expr.to_string(), |expr, word| {
                 if modifier_names.contains(&word) {
-                    expr.replace(word, &format!("{}_{}", name, word))
+                    expr.replace(word, &format!("{}.{}", name, word))
                 } else {
                     expr
                 }
@@ -191,7 +191,7 @@ impl StatLike for Modifiable  {
         if stat_path.segments.is_empty() { return; }
         let base_name = &stat_path.segments[0];
         for (modifier_name, _) in self.modifier_steps.iter() {
-            let full_modifier_path = format!("{}_{}", base_name, modifier_name);
+            let full_modifier_path = format!("{}.{}", base_name, modifier_name);
             if stats.get(&full_modifier_path).is_err() {
                 let val = self.modifier_steps.get(modifier_name).unwrap().evaluate(stat_path, stats);
                 stats.set_cached(&full_modifier_path, val);
@@ -202,6 +202,27 @@ impl StatLike for Modifiable  {
 
 #[derive(Debug)]
 pub(crate) struct ComplexEntry(f32, HashMap<u32, Simple>);
+
+/// The problem with ComplexModifiable is that any given query is a dependent of every flag in it and there are many
+/// possible queries. So in order to prevent storing a million potential queries and their dependencies for every possible
+/// query, we should only store queries and dependent entries for queries that are made by the user. For instance
+/// Damage.FIRE|AXE|1H query entry in the cache is made the first time the query is made, and all of the stats that
+/// query is dependent on (Damage.FIRE, Damage.AXE, Damage.ANY, etc) is put in the stat dependents. I.e., the query 
+/// Damage.FIRE|AXE|1H is dependent on the stats Damage.FIRE, Damage.ANY, etc.
+/// 
+/// So when the query is made, every damage stat is iterated over and checked to see if the flags match the query. If they
+/// do, the stat is collated into a generic category and the query is added as a dependent of that stat. Then the query 
+/// and its final value are cached.
+/// 
+/// What happens if we later add a stat like "Damage.ELEMENTAL"? Elemental is a meta tag representing FIRE|ICE|LIGHTNING, 
+/// so Damage.FIRE|AXE|1H would benefit from it. However, the query Damage.FIRE|AXE|1H was not added as a dependent of 
+/// Damage.ELEMENTAL because the character did not have a Damage.ELEMENTAL stat at the moment the query was made. 
+/// 
+/// I think it is becoming clear that ComplexModifiable needs to store more data. Perhaps a cache of every query that has
+/// been made. Then when a new stat is added, the list of made queries can be iterated over and cached query values can
+/// be properly updated where appropriate. ComplexModifiable could also have a dirty bool that represents whether or not
+/// it has been internally updated since the last time it was evaluated. If it has been, the bit is dirty and the query
+/// value must be fully re-evaluated. Otherwise it just returns the cached value.
 
 #[derive(Debug)]
 pub(crate) struct ComplexModifiable {
@@ -254,7 +275,7 @@ impl StatLike for ComplexModifiable {
                     .iter()
                     .filter_map(|(&mod_tags, value)| {
                         if mod_tags.has_all(search_tags) {
-                            let dep_path = format!("{}_{}_{}", stat_path.segments[0], category, mod_tags.to_string());
+                            let dep_path = format!("{}.{}.{}", stat_path.segments[0], category, mod_tags.to_string());
                             stats.add_dependent(&dep_path, DependentType::LocalStat(full_path.to_string()));
                             Some(value.evaluate(stat_path, stats))
                         } else {
@@ -283,7 +304,7 @@ impl StatLike for ComplexModifiable {
                 .iter()
                 .filter_map(|(&mod_tags, value)| {
                     if mod_tags.has_all(search_tags) {
-                        let dep_path = format!("{}_{}_{}", stat_path.segments[0], category, mod_tags.to_string());
+                        let dep_path = format!("{}.{}.{}", stat_path.segments[0], category, mod_tags.to_string());
                         stats.add_dependent(&dep_path, DependentType::LocalStat(full_path.to_string()));
                         Some(value.evaluate(stat_path, stats))
                     } else {

@@ -127,7 +127,7 @@ pub fn bench_entity_dependencies(c: &mut Criterion) {
                 // Create a chain of entity dependencies
                 for i in 1..=chain_length {
                     // Register dependency on the previous entity
-                    stat_accessor.register_dependency(entities_clone[i], "Source", entities_clone[i-1]);
+                    stat_accessor.register_source(entities_clone[i], "Source", entities_clone[i-1]);
                     
                     // Add a stat that depends on the previous entity
                     stat_accessor.add_modifier(entities_clone[i], "Power.Added", "Source@Power.Added * 0.9");
@@ -199,7 +199,7 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
                 // For each level of complexity, add more interconnected dependencies
                 for i in 1..=complexity {
                     // Register dependencies on the base entity
-                    stat_accessor.register_dependency(entities_clone[i], "Source", entities_clone[0]);
+                    stat_accessor.register_source(entities_clone[i], "Source", entities_clone[0]);
                     
                     // Add local multiplier
                     stat_accessor.add_modifier(entities_clone[i], "Multiplier.Added", 1.0 + (i as f32 * 0.1));
@@ -210,7 +210,7 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
                     // For extra complexity, add dependencies between non-base entities
                     if i > 1 {
                         // Register dependency on the previous entity
-                        stat_accessor.register_dependency(entities_clone[i], "Prev", entities_clone[i-1]);
+                        stat_accessor.register_source(entities_clone[i], "Prev", entities_clone[i-1]);
                         
                         // Add a more complex calculation with multiple entity references
                         stat_accessor.add_modifier(
@@ -259,7 +259,7 @@ pub fn bench_stats_update(c: &mut Criterion) {
                 
                 // All entities depend on the central one
                 for (i, &entity) in dependent_for_system.iter().enumerate() {
-                    stat_accessor.register_dependency(entity, "Central", central);
+                    stat_accessor.register_source(entity, "Central", central);
                     // Different multiplier for each entity to make cache effects less predictable
                     let multiplier = 0.8 + ((i as f32 % 5.0) * 0.1);
                     stat_accessor.add_modifier(entity, "Buff.Added", format!("Central@Aura.Added * {}", multiplier));

@@ -29,7 +29,13 @@ impl StatAccessor<'_, '_> {
         }
         
         if let ValueType::Expression(ref expression) = modifier {
+            // example entry: "Master@Life", master_entity, "Life"
+            // i.e., map entities the modified_entity is dependent on to the stat modified_entity is dependent on, 
+            // and the final path inside of the cached_stats of modified_entity.
             let mut dependencies_info = Vec::new();
+
+            // example entry: master_entity, "Life", servant_entity
+            //                servant_entity, "Life.Added", "Strength"
             let mut dependents_to_add = Vec::new();
             
             // First gather dependency information
@@ -154,9 +160,9 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &stat_path);
     }
 
-    pub fn register_dependency(&mut self, target_entity: Entity, name: &str, dependency_entity: Entity) {
+    pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
         if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
-            stats.sources.insert(name.to_string(), dependency_entity);
+            stats.sources.insert(name.to_string(), source_entity);
         }
     }
 

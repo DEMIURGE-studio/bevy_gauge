@@ -1,7 +1,7 @@
 use evalexpr::{DefaultNumericTypes, HashMapContext, Node, Value};
 
 #[derive(Debug, Clone)]
-pub(crate) struct Expression {
+pub struct Expression {
     pub(crate) string: String,
     pub(crate) value: Node<DefaultNumericTypes>,
 }
