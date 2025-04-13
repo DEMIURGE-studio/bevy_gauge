@@ -28,6 +28,8 @@
 
 // TODO integrate string interning (string-interner vs lasso)
 
+// TODO Figure out if modifier_sets are just a specific case of stat_effects.
+
 pub mod asset_like;
 pub mod expressions;
 pub mod modifier_set;
@@ -41,4 +43,3 @@ pub mod stat_requirements;
 pub mod stat_types;
 pub mod stats_component;
 pub mod tags;
-pub mod tests;
