@@ -30,6 +30,9 @@
 
 // TODO Figure out if modifier_sets are just a specific case of stat_effects.
 
+// TODO Test for when an entity with cached values is destroyed. If a source entity is destroyed its cached entries on other entities should be cleared. Probably best done
+// in a trigger
+
 pub mod asset_like;
 pub mod expressions;
 pub mod modifier_set;
