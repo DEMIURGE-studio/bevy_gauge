@@ -698,9 +698,9 @@ impl Parse for TagRoot {
 
 // A structure to hold information about each tag
 struct TagInfo {
-    name: String,
+    _name: String,
     const_name: String,
-    bit_expr: proc_macro2::TokenStream,
+    _bit_expr: proc_macro2::TokenStream,
     parent_category: Option<String>,
 }
 
@@ -733,9 +733,9 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         
         // Store the category itself
         tag_info_list.push(TagInfo {
-            name: category_name,
+            _name: category_name,
             const_name: category_const.to_string(),
-            bit_expr: category_expr.clone(),
+            _bit_expr: category_expr.clone(),
             parent_category: None,
         });
     }
@@ -808,9 +808,9 @@ fn gen_constants(
         
         // Store tag info
         tag_info_list.push(TagInfo {
-            name: name_str,
+            _name: name_str,
             const_name,
-            bit_expr: expr.clone(),
+            _bit_expr: expr.clone(),
             parent_category,
         });
         
@@ -851,9 +851,9 @@ fn gen_constants(
         
         // Store info for the category itself
         tag_info_list.push(TagInfo {
-            name: name_str,
+            _name: name_str,
             const_name,
-            bit_expr: expr.clone(),
+            _bit_expr: expr.clone(),
             parent_category,
         });
         
