@@ -30,10 +30,10 @@
 
 // TODO Figure out if modifier_sets are just a specific case of stat_effects.
 
-// TODO Test for when an entity with cached values is destroyed. If a source entity is destroyed its cached entries on other entities should be cleared. Probably best done
-// in a trigger
-
 // TODO reorganize tag code
+
+use prelude::*;
+use bevy::prelude::*;
 
 pub mod asset_like;
 pub mod expressions;
@@ -48,3 +48,7 @@ pub mod stat_requirements;
 pub mod stat_types;
 pub mod stats_component;
 pub mod tags;
+
+pub fn plugin(app: &mut App) {
+    app.add_observer(remove_stats);
+}

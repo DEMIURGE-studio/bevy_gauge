@@ -202,7 +202,7 @@ impl StatAccessor<'_, '_> {
         
         if let Ok(stats) = self.stats_query.get(target_entity) {
             // Get all dependents for this stat
-            for dependent in stats.get_dependents(&stat_path.path) {
+            for dependent in stats.get_stat_dependents(&stat_path.path) {
                 match dependent {
                     DependentType::LocalStat(local_stat) => {
                         local_dependents.push(StatPath::parse(&local_stat));
@@ -240,7 +240,7 @@ impl StatAccessor<'_, '_> {
                     let cache_key = format!("{}@{}", prefix, stat_path.path);
                     dependent_stats.set_cached(&cache_key, current_value);
                     
-                    for cache_dependent in dependent_stats.get_dependents(&cache_key) {
+                    for cache_dependent in dependent_stats.get_stat_dependents(&cache_key) {
                         if let DependentType::LocalStat(dependent_stat) = cache_dependent {
                             stats_to_update.push(StatPath::parse(&dependent_stat));
                         }
@@ -262,4 +262,50 @@ impl StatAccessor<'_, '_> {
     pub fn remove_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
         modifier_set.remove(self, target_entity);
     }
+
+    // TODO make me more efficient
+    pub fn remove_stat_entity(&mut self, target_entity: Entity) {
+        let Ok(target_stats) = self.stats_query.get(target_entity) else {
+            return;
+        };
+
+        let mut dependent_entities = Vec::new();
+        let dependents = target_stats.get_dependents();
+        for (stat, stat_dependents) in dependents.iter() {
+            for (dependent, _) in stat_dependents.iter() {
+                let DependentType::EntityStat(dependent_entity) = dependent else {
+                    continue;
+                };
+
+                dependent_entities.push((stat, dependent_entity));
+            }
+        }
+
+        let mut stat_dependencies = Vec::new();
+        for (stat, &dependent_entity) in dependent_entities {
+            let Ok(dependent_stats) = self.stats_query.get(dependent_entity) else {
+                return;
+            };
+
+            for (source_name, &source_entity) in dependent_stats.sources.iter() {
+                if source_entity == target_entity {
+                    let cache_key = format!("{}@{}", source_name, stat);
+                    dependent_stats.remove_cached(&cache_key);
+                    stat_dependencies.push((dependent_entity, cache_key));
+                }
+            }
+        }
+
+        for (dependent_entity, cache_key) in stat_dependencies {
+            self.update_stat(dependent_entity, &StatPath::parse(&cache_key));
+        }
+    }
+}
+
+pub(crate) fn remove_stats(
+    trigger: Trigger<OnRemove, Stats>,
+    mut stat_accessor: StatAccessor,
+) {
+    let removed_entity = trigger.entity();
+    stat_accessor.remove_stat_entity(removed_entity);
 }

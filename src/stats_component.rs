@@ -30,6 +30,10 @@ impl Stats {
         self.cached_stats.set(key, value)
     }
 
+    pub(crate) fn remove_cached(&self, key: &str) {
+        self.cached_stats.set(key, 0.0);
+    }
+
     pub(crate) fn get_context(&self) -> &HashMapContext {
         self.cached_stats.context()
     }
@@ -42,8 +46,12 @@ impl Stats {
         self.dependency_graph.remove_dependent(stat, dependent);
     }
 
-    pub(crate) fn get_dependents(&self, stat: &str) -> Vec<DependentType> {
-        self.dependency_graph.get_dependents(stat)
+    pub(crate) fn get_stat_dependents(&self, stat: &str) -> Vec<DependentType> {
+        self.dependency_graph.get_stat_dependents(stat)
+    }
+
+    pub(crate) fn get_dependents(&self) -> HashMap<String, HashMap<DependentType, u32>> {
+        self.dependency_graph.get_dependents()
     }
 
     pub fn evaluate_by_string(&self, stat_path: &str) -> f32 {
@@ -189,13 +197,22 @@ impl SyncDependents {
         }
     }
     
-    fn get_dependents(&self, stat_path: &str) -> Vec<DependentType> {
+    fn get_stat_dependents(&self, stat_path: &str) -> Vec<DependentType> {
         if let Ok(graph) = self.0.read() {
             graph.get(stat_path)
                 .map(|dependents| dependents.keys().cloned().collect())
                 .unwrap_or_else(Vec::new)
         } else {
             Vec::new()
+        }
+    }
+    
+    // TODO do we need this clone?
+    fn get_dependents(&self) -> HashMap<String, HashMap<DependentType, u32>> {
+        if let Ok(graph) = self.0.read() {
+            graph.clone()
+        } else {
+            HashMap::new()
         }
     }
 }

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_gauge::prelude::*;
+use bevy_gauge::{plugin, prelude::*};
 
 stat_macros::define_tags! {
     damage_type {
@@ -473,4 +473,45 @@ fn test_entity_dependency_removal() {
     let final_damage = final_stats.evaluate_by_string("Damage.Added");
     
     assert_eq!(final_damage, 15.0);  // Still fixed value, owner change had no effect
+}
+
+#[test]
+fn test_destroy_source_entity() {
+    // Setup app
+    let mut app = App::new();
+    app.add_plugins(plugin);
+
+    // Spawn entities with Stats component
+    let source_entity = app.world_mut().spawn(Stats::new()).id();
+    let target_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // Setup initial values and dependencies
+    let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+        // Set base values for owner
+        stat_accessor.add_modifier(source_entity, "Power.Added", 20.0);
+        
+        // Register dependencies
+        stat_accessor.register_source(target_entity, "Source", source_entity);
+        
+        // Create a dependency
+        stat_accessor.add_modifier(target_entity, "Damage.Added", "(Source@Power.Added * 1.5) + 5");
+    });
+    let _ = app.world_mut().run_system(system_id);
+
+    // Verify initial dependency
+    let stats_target = app.world_mut().query::<&Stats>().get(app.world(), target_entity).unwrap();
+    let initial_damage = stats_target.evaluate_by_string("Damage.Added");
+    
+    assert_eq!(initial_damage, 35.0);  // Source Power 20.0 * 1.5
+    
+    let system_id = app.world_mut().register_system(move |mut commands: Commands| {
+        // Set base values for owner
+        commands.entity(source_entity).despawn();
+    });
+    let _ = app.world_mut().run_system(system_id);
+
+    let stats_target = app.world_mut().query::<&Stats>().get(app.world(), target_entity).unwrap();
+    let modified_damage = stats_target.evaluate_by_string("Damage.Added");
+
+    assert_eq!(modified_damage, 5.0);  // Source Power 0.0 * 1.5
 }
