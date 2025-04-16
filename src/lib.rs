@@ -28,8 +28,6 @@
 
 // TODO integrate string interning (string-interner vs lasso)
 
-// TODO Figure out if modifier_sets are just a specific case of stat_effects.
-
 // TODO reorganize tag code
 
 use prelude::*;
