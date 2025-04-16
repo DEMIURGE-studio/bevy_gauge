@@ -86,8 +86,11 @@ pub(crate) struct Simple {
 
 impl Simple {
     pub(crate) fn new(name: &str) -> Self {
-        //let base = get_initial_value_for_modifier(name);
-        Self { relationship: ModType::Add, base: 0.0, mods: Vec::new() }
+        if name.to_lowercase().contains("more") {
+            Self { relationship: ModType::Mul, base: 0.0, mods: Vec::new() }
+        } else {
+            Self { relationship: ModType::Add, base: 0.0, mods: Vec::new() }
+        }
     }
 }
 

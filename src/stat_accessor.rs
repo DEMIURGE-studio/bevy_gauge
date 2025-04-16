@@ -256,11 +256,11 @@ impl StatAccessor<'_, '_> {
     }
 
     pub fn apply_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
-        modifier_set.apply(self, target_entity);
+        modifier_set.apply(self, &target_entity);
     }
 
     pub fn remove_modifier_set(&mut self, modifier_set: &ModifierSet, target_entity: Entity) {
-        modifier_set.remove(self, target_entity);
+        modifier_set.remove(self, &target_entity);
     }
 
     // TODO make me more efficient

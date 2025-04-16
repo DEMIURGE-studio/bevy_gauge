@@ -1,19 +1,17 @@
 use bevy::ecs::{entity::Entity, system::Commands};
-use crate::prelude::{StatAccessor, ValueType};
+use crate::prelude::StatAccessor;
 
-trait StatEffect {
-    type Context: StatEffectContext;
+pub trait StatEffect {
+    type Context: StatEffectContext = Entity;
    
     fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context);
+
+    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {}
 }
 
-trait StatEffectContext {}
+pub trait StatEffectContext {}
 
-struct DefaultContext {
-    target: Entity,
-}
-
-impl StatEffectContext for DefaultContext {}
+impl StatEffectContext for Entity {}
 
 // example implementation
 
@@ -52,10 +50,8 @@ struct HealEffect {
 }
 
 impl StatEffect for HealEffect {
-    type Context = DefaultContext;
-    
     fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
-        let target = context.target;
+        let target = context;
         todo!()
     }
 }

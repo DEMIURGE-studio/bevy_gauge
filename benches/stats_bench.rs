@@ -2,14 +2,7 @@ use bevy::prelude::*;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use bevy_gauge::prelude::*;
 
-// Define constants for tag-based benchmarks
-const FIRE: u32 = 0x01;
-const COLD: u32 = 0x02;
-const LIGHTNING: u32 = 0x04;
-const SWORD: u32 = 0x0100;
-const BOW: u32 = 0x0200;
 const DAMAGE_TYPE: u32 = 0xFF;
-const WEAPON_TYPE: u32 = 0xFF00;
 
 // Helper function to set up a simple app with an entity
 fn setup_app() -> (App, Entity) {
@@ -273,7 +266,7 @@ pub fn bench_stats_update(c: &mut Criterion) {
                 let update_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
                     stat_accessor.add_modifier(central, "Aura.Added", 1.0);
                 });
-                black_box(app.world_mut().run_system(update_id));
+                let _ = black_box(app.world_mut().run_system(update_id));
                 
                 // Get values from all dependent entities to ensure updates propagate
                 for &entity in &dependent_entities {
@@ -341,7 +334,7 @@ pub fn bench_many_modifiers(c: &mut Criterion) {
             
             // Add many modifiers to the same stat
             let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
-                for i in 0..modifier_count {
+                for _ in 0..modifier_count {
                     stat_accessor.add_modifier(entity, "Power.Added", 1.0);
                 }
             });

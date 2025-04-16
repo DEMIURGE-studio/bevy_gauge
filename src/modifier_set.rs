@@ -1,5 +1,5 @@
 use bevy::{prelude::*, utils::HashMap};
-use crate::prelude::{StatAccessor, ValueType};
+use crate::prelude::{StatAccessor, StatEffect, ValueType};
 
 #[derive(Clone, Deref, DerefMut)]
 pub struct ModifierSet(HashMap<String, Vec<ValueType>>);
@@ -14,19 +14,23 @@ impl ModifierSet {
             .or_insert_with(Vec::new)
             .push(value.into());
     }
+}
 
-    pub fn apply(&self, stat_accessor: &mut StatAccessor, target_entity: Entity) {
+impl StatEffect for ModifierSet {
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+        let target_entity = context;
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stat_accessor.add_modifier_value(target_entity, stat, modifier.clone());
+                stat_accessor.add_modifier_value(*target_entity, stat, modifier.clone());
             }
         }
     }
 
-    pub fn remove(&self, stat_accessor: &mut StatAccessor, target_entity: Entity) {
+    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+        let target_entity = context;
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stat_accessor.remove_modifier_value(target_entity, stat, modifier);
+                stat_accessor.remove_modifier_value(*target_entity, stat, modifier);
             }
         }
     }
