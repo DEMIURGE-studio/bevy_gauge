@@ -15,17 +15,3 @@ pub fn get_initial_value_for_modifier(modifier_type: &str) -> f32 {
         _ => 0.0,
     }
 }
-
-stat_macros::define_tags! {
-    damage {
-        damage_type {
-            elemental { fire, cold, lightning },
-            physical,
-            chaos,
-        },
-        weapon_type {
-            melee { sword, axe },
-            ranged { bow, wand },
-        },
-    }
-}

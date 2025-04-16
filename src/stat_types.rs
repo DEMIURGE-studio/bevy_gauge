@@ -125,7 +125,7 @@ impl StatLike for Simple {
 
 #[derive(Debug)]
 pub(crate) struct Modifiable {
-    pub(crate) total: Expression, // "(Added * Increased * More) override"
+    pub(crate) total: Expression,
     pub(crate) modifier_steps: HashMap<String, Simple>,
 }
 
@@ -206,30 +206,9 @@ impl StatLike for Modifiable  {
 #[derive(Debug)]
 pub(crate) struct ComplexEntry(f32, HashMap<u32, Simple>);
 
-/// The problem with ComplexModifiable is that any given query is a dependent of every flag in it and there are many
-/// possible queries. So in order to prevent storing a million potential queries and their dependencies for every possible
-/// query, we should only store queries and dependent entries for queries that are made by the user. For instance
-/// Damage.FIRE|AXE|1H query entry in the cache is made the first time the query is made, and all of the stats that
-/// query is dependent on (Damage.FIRE, Damage.AXE, Damage.ANY, etc) is put in the stat dependents. I.e., the query 
-/// Damage.FIRE|AXE|1H is dependent on the stats Damage.FIRE, Damage.ANY, etc.
-/// 
-/// So when the query is made, every damage stat is iterated over and checked to see if the flags match the query. If they
-/// do, the stat is collated into a generic category and the query is added as a dependent of that stat. Then the query 
-/// and its final value are cached.
-/// 
-/// What happens if we later add a stat like "Damage.ELEMENTAL"? Elemental is a meta tag representing FIRE|ICE|LIGHTNING, 
-/// so Damage.FIRE|AXE|1H would benefit from it. However, the query Damage.FIRE|AXE|1H was not added as a dependent of 
-/// Damage.ELEMENTAL because the character did not have a Damage.ELEMENTAL stat at the moment the query was made. 
-/// 
-/// I think it is becoming clear that ComplexModifiable needs to store more data. Perhaps a cache of every query that has
-/// been made. Then when a new stat is added, the list of made queries can be iterated over and cached query values can
-/// be properly updated where appropriate. ComplexModifiable could also have a dirty bool that represents whether or not
-/// it has been internally updated since the last time it was evaluated. If it has been, the bit is dirty and the query
-/// value must be fully re-evaluated. Otherwise it just returns the cached value.
-
 #[derive(Debug)]
 pub(crate) struct ComplexModifiable {
-    pub(crate) total: Expression, // "(Added * Increased * More) override"
+    pub(crate) total: Expression,
     pub(crate) modifier_types: HashMap<String, ComplexEntry>,
 }
 

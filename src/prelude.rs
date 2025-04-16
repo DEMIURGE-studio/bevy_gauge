@@ -7,7 +7,7 @@ pub use super::stat_effect::*;
 pub use super::stat_error::*;
 pub use super::stat_like::*;
 pub use super::stat_requirements::*;
-pub use super::stat_types::*;
+pub(crate) use super::stat_types::*;
 pub use super::stats_component::*;
 pub use super::tags::*;
 pub use stat_macros::Named;
