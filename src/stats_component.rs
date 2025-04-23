@@ -4,7 +4,7 @@ use bevy::{prelude::*, utils::HashMap};
 use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value};
 use super::prelude::*;
 
-#[derive(Component, Debug, Default)]
+#[derive(Component, Clone, Debug, Default)]
 pub struct Stats {
     pub(crate) definitions: HashMap<String, StatType>,
     pub(crate) cached_stats: SyncContext,
@@ -20,6 +20,13 @@ impl Stats {
             dependency_graph: SyncDependents::new(),
             sources: HashMap::new(),
         }
+    }
+
+    pub fn set<V: Into<ValueType>>(&mut self, stat_path: &str, modifier: V) -> &mut Self {
+        let vt = modifier.into();
+        // destroy current entry
+        self.add_modifier_value(&StatPath::parse(stat_path), vt);
+        self
     }
     
     pub fn get(&self, stat_path: &str) -> Result<f32, StatError> {
@@ -71,7 +78,12 @@ impl Stats {
         stat_type.evaluate(stat_path, self)
     }
 
-    pub(crate) fn add_modifier(&mut self, stat_path: &StatPath, modifier: ValueType) {
+    pub fn add_modifier<V: Into<ValueType>>(&mut self, stat_path: &str, modifier: V) {
+        let vt = modifier.into();
+        self.add_modifier_value(&StatPath::parse(stat_path), vt);
+    }
+
+    pub(crate) fn add_modifier_value(&mut self, stat_path: &StatPath, modifier: ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -92,7 +104,7 @@ impl Stats {
         }
     }
 
-    pub(crate) fn remove_modifier(&mut self, stat_path: &StatPath, modifier: &ValueType) {
+    pub(crate) fn remove_modifier_value(&mut self, stat_path: &StatPath, modifier: &ValueType) {
         if stat_path.segments.is_empty() {
             return;
         }
@@ -156,13 +168,20 @@ impl SyncContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+impl Clone for SyncContext {
+    fn clone(&self) -> Self {
+        let cloned_context = self.context().clone();
+        Self(SyncUnsafeCell::new(cloned_context))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DependentType {
     LocalStat(String),
     EntityStat(Entity),
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SyncDependents(Arc<RwLock<HashMap<String, HashMap<DependentType, u32>>>>);
 
 impl SyncDependents {

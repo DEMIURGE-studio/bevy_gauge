@@ -1,12 +1,12 @@
 use bevy::{prelude::*, utils::HashMap};
 use crate::prelude::{StatAccessor, StatEffect, ValueType};
 
-#[derive(Clone, Deref, DerefMut)]
+#[derive(Component, Clone, Debug, Default, Deref, DerefMut)]
 pub struct ModifierSet(HashMap<String, Vec<ValueType>>);
 
 impl ModifierSet {
-    pub fn new() -> Self {
-        Self(HashMap::new())
+    pub fn new(modifiers: HashMap<String, Vec<ValueType>>) -> Self {
+        Self(modifiers)
     }
 
     pub fn add<V: Into<ValueType>>(&mut self, stat_path: &str, value: V) {

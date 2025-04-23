@@ -69,3 +69,9 @@ impl From<u32> for ValueType {
         Self::Literal(value as f32)
     }
 }
+
+impl From<i32> for ValueType {
+    fn from(value: i32) -> Self {
+        Self::Literal(value as f32)
+    }
+}

@@ -9,7 +9,7 @@ pub(crate) enum ModType {
     Mul,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum StatType {
     Simple(Simple),
     Modifiable(Modifiable),
@@ -77,7 +77,7 @@ impl StatLike for StatType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Simple {
     pub(crate) relationship: ModType,
     pub(crate) base: f32,
@@ -123,7 +123,7 @@ impl StatLike for Simple {
     fn on_insert(&self, _stats: &Stats, _stat_path: &StatPath) { }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Modifiable {
     pub(crate) total: Expression,
     pub(crate) modifier_steps: HashMap<String, Simple>,
@@ -203,10 +203,10 @@ impl StatLike for Modifiable  {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ComplexEntry(f32, HashMap<u32, Simple>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ComplexModifiable {
     pub(crate) total: Expression,
     pub(crate) modifier_types: HashMap<String, ComplexEntry>,

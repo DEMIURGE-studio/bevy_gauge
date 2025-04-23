@@ -33,18 +33,22 @@
 use prelude::*;
 use bevy::prelude::*;
 
+pub mod app_extension;
 pub mod asset_like;
 pub mod expressions;
+pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
 pub mod stat_accessor;
 pub mod stat_addressing;
+pub mod stat_derived;
 pub mod stat_effect;
 pub mod stat_error;
 pub mod stat_like;
 pub mod stat_requirements;
 pub mod stat_types;
 pub mod stats_component;
+pub mod systems;
 pub mod tags;
 
 pub fn plugin(app: &mut App) {

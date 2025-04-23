@@ -1,6 +1,6 @@
 use quote::{format_ident, quote};
 use syn::token::{Brace, Paren, Semi};
-use syn::{braced, parse_macro_input, Attribute, Ident, Token, Visibility};
+use syn::{braced, parse_macro_input, Attribute, Ident, Token, Visibility, LitStr};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 
@@ -22,25 +22,28 @@ pub fn derive_named(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     let name = &input.ident;
-
+    
+    // Convert the struct name to a string
+    let name_str = name.to_string();
+    
     let expanded = quote! {
         impl bevy_gauge::prelude::StatDerived for #name {
-            fn from_stats(stats: &bevy_gauge::prelude::StatContextRefs) -> Self {
-                let value = stats.get(Self::NAME).unwrap_or(0.0);
+            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
+                let value = stats.get(#name_str).unwrap_or(0.0);
                 return Self(value);
             }
             
-            fn should_update(&self, stats: &StatContextRefs) -> bool {
+            fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 true
             }
         
-            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::StatContextRefs) {
-                let value = stats.get(Self::NAME).unwrap_or(0.0);
+            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
+                let value = stats.get(#name_str).unwrap_or(0.0);
                 self.0 = value;
             }
 
-            fn is_valid(stats: &bevy_gauge::prelude::StatContextRefs) -> bool {
-                stats.get(Self::NAME).is_ok()
+            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
+                stats.get(#name_str).is_ok()
             }
         }
     };
@@ -75,34 +78,56 @@ struct StatStructInput {
     variants: Option<Punctuated<Ident, Token![,]>>,
 }
 
-/// One field in the user’s DSL, e.g.
+/// Direction for the field
+#[derive(Debug, Clone, Copy)]
+enum Direction {
+    WriteTo,    // =>
+    WriteBack,  // <=
+    Both,       // <>
+}
+
+/// One field in the user's DSL, e.g.
 /// 
 /// ```plain
-///   foo: ..,
-///   bar: WriteBack,
-///   nested: SomeType {
-///       x: ..,
-///       y: ..,
-///   }
+///   foo: "Stats.foo",
+///   bar: => "Stats.bar",
+///   baz: <= "Stats.baz",
+///   qux: <> "Stats.qux"
 /// ```
 enum StatField {
-    Derived {
+    // For legacy support, we'll keep the old forms
+    LegacyDerived {
         name: Ident,
         _colon_token: Token![:],
         _dots_token: Token![..],
     },
-    WriteBack {
+    LegacyWriteBack {
         name: Ident,
         _colon_token: Token![:],
         _writeback_ident: Ident,
     },
-    DerivedWriteBack {
+    LegacyDerivedWriteBack {
         name: Ident,
         _colon_token: Token![:],
         _dots_token: Token![..],
         _writeback_ident: Ident,
     },
-    Nested {
+    LegacyNested {
+        name: Ident,
+        _colon_token: Token![:],
+        type_name: Ident,
+        _brace_token: Brace,
+        nested_fields: Punctuated<StatField, Token![,]>,
+    },
+    
+    // New forms with explicit paths
+    WithPath {
+        name: Ident,
+        _colon_token: Token![:],
+        path: LitStr,
+        direction: Option<Direction>,
+    },
+    NestedWithPath {
         name: Ident,
         _colon_token: Token![:],
         type_name: Ident,
@@ -111,15 +136,25 @@ enum StatField {
     },
 }
 
-/// Represents one field of the top-level struct or a nested struct:
-///   `field_name : ..` => Derived
-///   `field_name : WriteBack` => WriteBack
-///   `field_name : SomeType { ... }` => Nested
+/// Represents one field after parsing
 #[derive(Debug)]
 enum ParsedField {
-    Derived { name: Ident },
-    WriteBack { name: Ident },
-    DerivedWriteBack { name: Ident },  // new
+    Derived { 
+        name: Ident, 
+        path: String 
+    },
+    WriteTo { 
+        name: Ident, 
+        path: String 
+    },
+    WriteBack { 
+        name: Ident, 
+        path: String 
+    },
+    Both { 
+        name: Ident, 
+        path: String 
+    },
     Nested { 
         name: Ident,
         type_name: Ident,
@@ -179,16 +214,17 @@ impl Parse for StatField {
         let name: Ident = input.parse()?;
         let colon_token: Token![:] = input.parse()?;
 
+        // First check for legacy forms
+        
         // Check if next token is `..`
         if input.peek(Token![..]) {
             let dots_token: Token![..] = input.parse()?;
 
-            // Now see if the user wrote `..WriteBack` or just `..`
+            // See if it's `..WriteBack`
             if input.peek(Ident) {
                 let maybe_wb: Ident = input.parse()?;
                 if maybe_wb == "WriteBack" {
-                    // => DerivedWriteBack
-                    return Ok(StatField::DerivedWriteBack {
+                    return Ok(StatField::LegacyDerivedWriteBack {
                         name,
                         _colon_token: colon_token,
                         _dots_token: dots_token,
@@ -199,38 +235,110 @@ impl Parse for StatField {
                 }
             }
 
-            // If there's no `Ident` after `..`, then it's the normal Derived
-            return Ok(StatField::Derived {
+            // Regular Derived with `..`
+            return Ok(StatField::LegacyDerived {
                 name,
                 _colon_token: colon_token,
                 _dots_token: dots_token,
             });
         }
         else if input.peek(Ident) {
-            // Possibly "WriteBack" or "TypeName { ... }" (Nested)
+            // Check for WriteBack or nested type
             let ident2: Ident = input.parse()?;
             if ident2 == "WriteBack" {
-                return Ok(StatField::WriteBack {
+                return Ok(StatField::LegacyWriteBack {
                     name,
                     _colon_token: colon_token,
                     _writeback_ident: ident2,
                 });
-            } else {
-                // nested
+            } else if input.peek(Brace) {
+                // Nested type
                 let content;
                 let brace_token = syn::braced!(content in input);
                 let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
-                return Ok(StatField::Nested {
+                return Ok(StatField::LegacyNested {
                     name,
                     _colon_token: colon_token,
                     type_name: ident2,
                     _brace_token: brace_token,
                     nested_fields,
                 });
+            } else {
+                return Err(input.error("expected `{` after type name"));
             }
         }
+        
+        // Check for new forms with directions
+        
+        // Write-to: =>
+        if input.peek(Token![=]) && input.peek2(Token![>]) {
+            let _eq_token: Token![=] = input.parse()?;
+            let _gt_token: Token![>] = input.parse()?;
 
-        Err(input.error("expected `..`, `..WriteBack`, `WriteBack`, or `TypeName { ... }`"))
+            // Parse the path string
+            if input.peek(LitStr) {
+                let path: LitStr = input.parse()?;
+                return Ok(StatField::WithPath {
+                    name,
+                    _colon_token: colon_token,
+                    path,
+                    direction: Some(Direction::WriteTo),
+                });
+            } else {
+                return Err(input.error("expected string literal after `=>`"));
+            }
+        }
+        
+        // Write-back: <=
+        if input.peek(Token![<]) && input.peek2(Token![=]) {
+            let _lt_token: Token![<] = input.parse()?;
+            let _eq_token: Token![=] = input.parse()?;
+
+            // Parse the path string
+            if input.peek(LitStr) {
+                let path: LitStr = input.parse()?;
+                return Ok(StatField::WithPath {
+                    name,
+                    _colon_token: colon_token,
+                    path,
+                    direction: Some(Direction::WriteBack),
+                });
+            } else {
+                return Err(input.error("expected string literal after `<=`"));
+            }
+        }
+        
+        // Both: <>
+        if input.peek(Token![<]) && input.peek2(Token![>]) {
+            let _lt_token: Token![<] = input.parse()?;
+            let _gt_token: Token![>] = input.parse()?;
+
+            // Parse the path string
+            if input.peek(LitStr) {
+                let path: LitStr = input.parse()?;
+                return Ok(StatField::WithPath {
+                    name,
+                    _colon_token: colon_token,
+                    path,
+                    direction: Some(Direction::Both),
+                });
+            } else {
+                return Err(input.error("expected string literal after `<>`"));
+            }
+        }
+        
+        // Simple path without direction (defaults to Derived)
+        if input.peek(LitStr) {
+            let path: LitStr = input.parse()?;
+            return Ok(StatField::WithPath {
+                name,
+                _colon_token: colon_token,
+                path,
+                direction: None,  // None means Derived (read-only)
+            });
+        }
+
+        Err(input.error("expected `..`, `..WriteBack`, `WriteBack`, `TypeName { ... }`, `\"path\"`, `=> \"path\"`, `<= \"path\"`, or `<> \"path\"`"))
     }
 }
 
@@ -242,8 +350,7 @@ impl StatStructInput {
         // parse fields into a Vec<ParsedField>
         let parsed_fields = parse_fields_list(&self.fields)?;
 
-        // Step A) Build exactly ONE generic struct definition—e.g. `Generic<T>`.
-        //         (Add or merge user attributes, plus always add some of your own.)
+        // Step A) Build exactly ONE generic struct definition
         let struct_code = expand_single_struct_def(
             &self.attrs,
             &self.vis,
@@ -265,7 +372,7 @@ impl StatStructInput {
             }
             quote! { #(#v_impls)* }
         } else {
-            // If no variants, just generate an impl for "impl StatDerived for Simple" (or whatever the struct name is).
+            // If no variants, just generate an impl for the struct.
             expand_trait_impls_for_no_variant(&self.ident, &self.generics, &parsed_fields)
         };
 
@@ -276,8 +383,6 @@ impl StatStructInput {
     }
 }
 
-/// Build the single struct definition with user + forced attributes,
-/// plus a `_pd: PhantomData<T>` field if generics are present.
 fn expand_single_struct_def(
     user_attrs: &[Attribute],
     vis: &Visibility,
@@ -285,39 +390,35 @@ fn expand_single_struct_def(
     generics: &syn::Generics,
     fields: &[ParsedField],
 ) -> syn::Result<proc_macro2::TokenStream> {
-    // We'll forcibly add `#[derive(Component, Default, Debug)]`.
-    // If you want to merge with user-specified derives, you can parse them carefully.
-    // For now, let's just push them on top:
-    // (If you want to allow user to override them, you'd do something more fancy.)
+    // Add required derives
     let forced_attrs = quote! {
         #[derive(::bevy::prelude::Component, ::std::default::Default, ::std::fmt::Debug)]
     };
 
-    // For the struct fields:
-    //  - Derived/WriteBack => `pub name: f32`
-    //  - Nested => `pub name: TheNestedType`
-    //  plus the `_pd: ::std::marker::PhantomData<T>` if there's at least one generic param
+    // Generate field definitions
     let field_defs = fields.iter().map(|f| {
         match f {
-            ParsedField::Derived { name } => {
+            ParsedField::Derived { name, .. } => {
                 quote! { pub #name: f32 }
-            }
-            ParsedField::WriteBack { name } => {
+            },
+            ParsedField::WriteTo { name, .. } => {
                 quote! { pub #name: f32 }
-            }
+            },
+            ParsedField::WriteBack { name, .. } => {
+                quote! { pub #name: f32 }
+            },
+            ParsedField::Both { name, .. } => {
+                quote! { pub #name: f32 }
+            },
             ParsedField::Nested { name, type_name, .. } => {
                 quote! { pub #name: #type_name }
-            }
-            ParsedField::DerivedWriteBack { name } => {
-                quote! { pub #name: f32}
             },
         }
     });
 
+    // Add PhantomData if needed
     let has_generics = !generics.params.is_empty();
     let phantom_field = if has_generics {
-        // `_pd: PhantomData<T>` or if multiple generics, you might do PhantomData<(A,B,...)>.
-        // For simplicity let's assume one T, or treat them all as a tuple.
         let generic_params_as_tuple = build_phantom_tuple(generics);
         quote! {
             pub _pd: ::std::marker::PhantomData<#generic_params_as_tuple>
@@ -329,7 +430,7 @@ fn expand_single_struct_def(
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
     Ok(quote! {
-        // user-supplied attributes, if any
+        // user-supplied attributes
         #(#user_attrs)*
 
         // forced attributes
@@ -342,76 +443,49 @@ fn expand_single_struct_def(
     })
 }
 
-/// Expand specialized impls for e.g. `Generic<OnBlock>`:
-///
-/// - `impl StatDerived for Generic<OnBlock> { ... }`
-/// - `impl WriteBack for Generic<OnBlock> { ... }`
 fn expand_trait_impls_for_variant(
     struct_ident: &Ident,
     variant_ident: &Ident,
     fields: &[ParsedField],
 ) -> proc_macro2::TokenStream {
-    // We'll produce code that says `impl StatDerived for #struct_ident<#variant_ident>`.
-    // That means we effectively replace T with the variant type in the path strings.
-    //
-    // If you have multiple generics, you’ll need to do something more involved:
-    //   e.g. `impl<A, B> StatDerived for Generic<A, B, OnBlock>` or something similar.
-    // For now, let's assume there's only one generic param T.
-
-    // Rebuild generics for the *impl* line. We'll use all the same generics except T.
-    // But if your struct has exactly 1 type param T, and you're overriding T with
-    // `variant_ident`, you might do it like:
-    //    impl StatDerived for #struct_ident<#variant_ident> { ... }
-    //
-    // If you have other generics besides T, you’d want to keep them. Example:
-    //    impl<U> StatDerived for #struct_ident<U, OnBlock> { ... }
-    // For simplicity, we’ll pretend the user only has `<T>`.
-
     let struct_name_with_variant = quote! { #struct_ident<#variant_ident> };
 
-    // The path prefix for e.g. `"Generic<OnBlock>"`.
-    // If you want to handle multiple type params, you'll need more robust string building.
-    let path_prefix_str = format!("{}<{}>", struct_ident, variant_ident);
+    // Note: path_prefix_str is not needed in the new implementation since we use explicit paths
 
-    let should_update_body = collect_should_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-
-    // Build the body of `update_from_stats` (only for derived fields).
-    let update_body = collect_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-
-    let is_valid_body = collect_is_valid_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-
-    // Build the body of `write_back` (only for writeback fields).
-    let wb_body = collect_writeback_lines_with_prefix(fields, &path_prefix_str, quote!(self));
+    // Build implementation bodies
+    let should_update_body = collect_should_update_lines(fields, quote!(self));
+    let update_body = collect_update_lines(fields, quote!(self));
+    let is_valid_body = collect_is_valid_lines(fields);
+    let wb_body = collect_writeback_lines(fields, quote!(self));
 
     quote! {
         impl StatDerived for #struct_name_with_variant {
-            fn from_stats(stats: &StatContextRefs) -> Self {
+            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
                 let mut s = Self::default();
                 s.update_from_stats(stats);
                 s
             }
-            fn should_update(&self, stats: &StatContextRefs) -> bool {
+            fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 #should_update_body
             }
-            fn update_from_stats(&mut self, stats: &StatContextRefs) {
+            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 #update_body
             }
-            fn is_valid(stats: &StatContextRefs) -> bool {
+            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
                 #is_valid_body
             }
         }
 
         impl WriteBack for #struct_name_with_variant {
-            fn write_back(&self, stats: &mut StatDefinitions) {
+            fn write_back(&self, stats: &mut Stats) {
                 #wb_body
             }
         }
     }
 }
 
-// Helper to build `_pd: PhantomData<(A, B, ...)>` from generics if there are multiple.
 fn build_phantom_tuple(generics: &syn::Generics) -> proc_macro2::TokenStream {
-    // Collect each type param as a token, e.g. T, U, V
+    // Collect each type param
     let params = generics.params.iter().map(|gp| {
         match gp {
             syn::GenericParam::Type(t) => {
@@ -419,7 +493,6 @@ fn build_phantom_tuple(generics: &syn::Generics) -> proc_macro2::TokenStream {
                 quote!( #ident )
             },
             syn::GenericParam::Lifetime(l) => {
-                // rarely want phantom for lifetimes, but let's just skip it
                 let lt = &l.lifetime;
                 quote!(&#lt ())
             },
@@ -433,185 +506,224 @@ fn build_phantom_tuple(generics: &syn::Generics) -> proc_macro2::TokenStream {
 }
 
 // ---------------------------------------------------------------------
-// 4) Generating code for `update_from_stats` / `write_back`
-//    with a prefix like "Generic<OnBlock>" in the paths
+// 4) Parse fields from the user input to our intermediate representation
 // ---------------------------------------------------------------------
 
 fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<Vec<ParsedField>> {
     let mut results = Vec::new();
     for f in fields {
         let pf = match f {
-            StatField::Derived { name, .. } => ParsedField::Derived { name: name.clone() },
-            StatField::WriteBack { name, .. } => ParsedField::WriteBack { name: name.clone() },
-            StatField::DerivedWriteBack { name, .. } => ParsedField::DerivedWriteBack {
-                name: name.clone(),
+            // Legacy forms
+            StatField::LegacyDerived { name, .. } => {
+                // Auto-derive path from struct.field
+                let path = format!("{}.{}", name.to_string(), name.to_string());
+                ParsedField::Derived { 
+                    name: name.clone(), 
+                    path 
+                }
             },
-            StatField::Nested { name, type_name, nested_fields, .. } => {
+            StatField::LegacyWriteBack { name, .. } => {
+                let path = format!("{}.{}", name.to_string(), name.to_string());
+                ParsedField::WriteBack { 
+                    name: name.clone(), 
+                    path 
+                }
+            },
+            StatField::LegacyDerivedWriteBack { name, .. } => {
+                let path = format!("{}.{}", name.to_string(), name.to_string());
+                ParsedField::Both { 
+                    name: name.clone(), 
+                    path 
+                }
+            },
+            StatField::LegacyNested { name, type_name, nested_fields, .. } => {
                 let sub = parse_fields_list(nested_fields)?;
                 ParsedField::Nested {
                     name: name.clone(),
                     type_name: type_name.clone(),
                     fields: sub,
                 }
-            }
+            },
+            
+            // New forms with explicit paths
+            StatField::WithPath { name, path, direction, .. } => {
+                let path_str = path.value();
+                match direction {
+                    Some(Direction::WriteTo) => ParsedField::WriteTo { 
+                        name: name.clone(), 
+                        path: path_str 
+                    },
+                    Some(Direction::WriteBack) => ParsedField::WriteBack { 
+                        name: name.clone(), 
+                        path: path_str 
+                    },
+                    Some(Direction::Both) => ParsedField::Both { 
+                        name: name.clone(), 
+                        path: path_str 
+                    },
+                    None => ParsedField::Derived { 
+                        name: name.clone(), 
+                        path: path_str 
+                    }, // Default is Derived
+                }
+            },
+            StatField::NestedWithPath { name, type_name, nested_fields, .. } => {
+                let sub = parse_fields_list(nested_fields)?;
+                ParsedField::Nested {
+                    name: name.clone(),
+                    type_name: type_name.clone(),
+                    fields: sub,
+                }
+            },
         };
         results.push(pf);
     }
     Ok(results)
 }
 
-/// Recursively build statements for `update_from_stats` that do:
-/// `self.name = stats.get("Prefix.name").unwrap_or(0.0)` for derived fields.
-/// For nested fields, recursively build lines with `Prefix.nested.some_subfield`.
-fn collect_update_lines_with_prefix(
+// ---------------------------------------------------------------------
+// 5) Code generation for the implementation methods
+// ---------------------------------------------------------------------
+
+fn collect_update_lines(
     fields: &[ParsedField],
-    prefix: &str,
     self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
     for pf in fields {
         match pf {
-            ParsedField::Derived { name } => {
-                let path_str = format!("{}.{}", prefix, name);
+            ParsedField::Derived { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#path_str).unwrap_or(0.0);
+                    #self_expr.#name = stats.get(#path).unwrap_or(0.0);
                 });
-            }
-            ParsedField::DerivedWriteBack { name } => {
-                // same as Derived
-                let path_str = format!("{}.{}", prefix, name);
+            },
+            ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#path_str).unwrap_or(0.0);
+                    #self_expr.#name = stats.get(#path).unwrap_or(0.0);
                 });
-            }
+            },
+            ParsedField::WriteTo { .. } => {
+                // WriteTo fields aren't updated from stats
+            },
             ParsedField::WriteBack { .. } => {
-                // skip
-            }
+                // WriteBack fields aren't updated from stats
+            },
             ParsedField::Nested { name, fields, .. } => {
-                let new_prefix = format!("{}.{}", prefix, name);
-                let new_self = quote!( #self_expr.#name );
-                let nested_code = collect_update_lines_with_prefix(fields, &new_prefix, new_self);
+                let nested_code = collect_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
-            }
+            },
         }
     }
 
     quote! { #(#lines)* }
 }
 
-fn collect_should_update_lines_with_prefix(
+fn collect_should_update_lines(
     fields: &[ParsedField],
-    prefix: &str,
     self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
     for pf in fields {
         match pf {
-            ParsedField::Derived { name } => {
-                let path_str = format!("{}.{}", prefix, name);
+            ParsedField::Derived { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name != stats.get(#path_str).unwrap_or(0.0)
+                    #self_expr.#name != stats.get(#path).unwrap_or(0.0)
                 });
-            }
-            ParsedField::DerivedWriteBack { name } => {
-                // same as Derived
-                let path_str = format!("{}.{}", prefix, name);
+            },
+            ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name != stats.get(#path_str).unwrap_or(0.0)
+                    #self_expr.#name != stats.get(#path).unwrap_or(0.0)
                 });
-            }
-            ParsedField::WriteBack { .. } => { /* skip in check? or you can do something if you want */ }
+            },
+            ParsedField::WriteBack { .. } => { /* skip */ },
+            ParsedField::WriteTo { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
-                let new_prefix = format!("{}.{}", prefix, name);
-                let nested_code = collect_should_update_lines_with_prefix(fields, &new_prefix, 
-                    quote!(#self_expr.#name));
+                let nested_code = collect_should_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
-            }
+            },
         }
     }
 
-    // Combine them with OR:
+    // If no lines, return true
+    if lines.is_empty() {
+        return quote! { true };
+    }
+
+    // Combine with OR
     quote! { #(#lines)||* }
 }
 
-/// Recursively build statements for `write_back` that do:
-/// `stats.set("Prefix.name", self.name)` for writeback fields.
-fn collect_writeback_lines_with_prefix(
+fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
+    let mut lines = Vec::new();
+    
+    for pf in fields {
+        match pf {
+            ParsedField::Derived { path, .. } => {
+                lines.push(quote! {
+                    stats.get(#path).is_ok()
+                });
+            },
+            ParsedField::WriteTo { path, .. } => {
+                lines.push(quote! {
+                    stats.get(#path).is_ok()
+                });
+            },
+            ParsedField::WriteBack { path, .. } => {
+                lines.push(quote! {
+                    stats.get(#path).is_ok()
+                });
+            },
+            ParsedField::Both { path, .. } => {
+                lines.push(quote! {
+                    stats.get(#path).is_ok()
+                });
+            },
+            ParsedField::Nested { fields, .. } => {
+                let nested_code = collect_is_valid_lines(fields);
+                lines.push(nested_code);
+            },
+        }
+    }
+    
+    // If no lines, return true
+    if lines.is_empty() {
+        return quote! { true };
+    }
+    
+    // Combine with AND
+    quote! { #(#lines)&&* }
+}
+
+fn collect_writeback_lines(
     fields: &[ParsedField],
-    prefix: &str,
     self_expr: proc_macro2::TokenStream
 ) -> proc_macro2::TokenStream {
     let mut lines = Vec::new();
 
     for pf in fields {
         match pf {
-            ParsedField::WriteBack { name } => {
-                let path_str = format!("{}.{}", prefix, name);
+            ParsedField::WriteBack { name, path } => {
                 lines.push(quote! {
-                    let _ = stats.set(#path_str, #self_expr.#name);
+                    let _ = stats.set(#path, #self_expr.#name);
                 });
-            }
-            ParsedField::DerivedWriteBack { name } => {
-                // same as WriteBack
-                let path_str = format!("{}.{}", prefix, name);
+            },
+            ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    let _ = stats.set(#path_str, #self_expr.#name);
+                    let _ = stats.set(#path, #self_expr.#name);
                 });
-            }
-            ParsedField::Derived { .. } => {
-                // skip
-            }
+            },
+            ParsedField::Derived { .. } => { /* skip */ },
+            ParsedField::WriteTo { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
-                let new_prefix = format!("{}.{}", prefix, name);
-                let nested_code = collect_writeback_lines_with_prefix(fields, &new_prefix, 
-                    quote!(#self_expr.#name));
+                let nested_code = collect_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
-            }
+            },
         }
     }
 
     quote! { #(#lines)* }
-}
-
-fn collect_is_valid_lines_with_prefix(
-    fields: &[ParsedField],
-    prefix: &str,
-    self_expr: proc_macro2::TokenStream
-) -> proc_macro2::TokenStream {
-    let mut lines = Vec::new();
-    for pf in fields {
-        match pf {
-            ParsedField::Derived { name } => {
-                let path_str = format!("{}.{}", prefix, name);
-                lines.push(quote! {
-                    stats.get(#path_str).is_ok()
-                });
-            }
-            ParsedField::DerivedWriteBack { name } => {
-                // same as Derived or WriteBack
-                let path_str = format!("{}.{}", prefix, name);
-                lines.push(quote! {
-                    stats.get(#path_str).is_ok()
-                });
-            }
-            ParsedField::WriteBack { name } => {
-                let path_str = format!("{}.{}", prefix, name);
-                lines.push(quote! {
-                    stats.get(#path_str).is_ok()
-                });
-            }
-            ParsedField::Nested { name, fields, .. } => {
-                let new_prefix = format!("{}.{}", prefix, name);
-                let nested_code = collect_is_valid_lines_with_prefix(fields, &new_prefix,
-                    quote!(#self_expr.#name));
-                lines.push(nested_code);
-            }
-        }
-    }
-    // Combine them with OR or AND, depending on your desired semantics
-    quote! { #(#lines)||* }
 }
 
 fn expand_trait_impls_for_no_variant(
@@ -619,44 +731,40 @@ fn expand_trait_impls_for_no_variant(
     generics: &syn::Generics,
     fields: &[ParsedField],
 ) -> proc_macro2::TokenStream {
-    // e.g. `impl StatDerived for Simple`
-    // the path is just "Simple" instead of "Simple<SomeVariant>".
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // So the path string becomes just `"Simple"` or whatever the name is.
-    let path_prefix_str = struct_ident.to_string();
-
-    let should_update_body = collect_should_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-    let update_body = collect_update_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-    let writeback_body = collect_writeback_lines_with_prefix(fields, &path_prefix_str, quote!(self));
-    let is_valid_body = collect_is_valid_lines_with_prefix(fields, &path_prefix_str, quote!(self));
+    let should_update_body = collect_should_update_lines(fields, quote!(self));
+    let update_body = collect_update_lines(fields, quote!(self));
+    let writeback_body = collect_writeback_lines(fields, quote!(self));
+    let is_valid_body = collect_is_valid_lines(fields);
 
     quote! {
         impl #impl_generics StatDerived for #struct_ident #ty_generics #where_clause {
-            fn from_stats(stats: &StatContextRefs) -> Self {
+            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
                 let mut s = Self::default();
                 s.update_from_stats(stats);
                 s
             }
-            fn should_update(&self, stats: &StatContextRefs) -> bool {
+            fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 #should_update_body
             }
-            fn update_from_stats(&mut self, stats: &StatContextRefs) {
+            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 #update_body
             }
-            fn is_valid(stats: &StatContextRefs) -> bool {
+            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
                 #is_valid_body
             }
         }
 
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
-            fn write_back(&self, stats: &mut StatDefinitions) {
+            fn write_back(&self, stats: &mut Stats) {
                 #writeback_body
             }
         }
     }
 }
 
+// Keep the Tag-related code unchanged
 use syn::token::Comma;
 
 /// A tag node with a name and optional children.

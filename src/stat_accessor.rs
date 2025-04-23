@@ -15,6 +15,14 @@ impl StatAccessor<'_, '_> {
 
         stats.get(stat_path).unwrap_or(0.0)
     }
+    
+    pub fn get_stats(&self, target_entity: Entity) -> Result<&Stats, ()> {
+        let Ok(stats) = self.stats_query.get(target_entity) else {
+            return Err(());
+        };
+
+        Ok(stats)
+    }
 
     pub fn add_modifier<V: Into<ValueType>>(&mut self, target_entity: Entity, stat_path: &str, modifier: V) {
         let vt = modifier.into();
@@ -97,7 +105,7 @@ impl StatAccessor<'_, '_> {
         }
 
         if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-            target_stats.add_modifier(&stat_path, modifier);
+            target_stats.add_modifier_value(&stat_path, modifier);
         }
 
         self.update_stat(target_entity, &stat_path);
@@ -154,7 +162,7 @@ impl StatAccessor<'_, '_> {
 
         // Finally remove the modifier itself
         if let Ok(mut target_stats) = self.stats_query.get_mut(target_entity) {
-            target_stats.remove_modifier(&stat_path, modifier);
+            target_stats.remove_modifier_value(&stat_path, modifier);
         }
 
         self.update_stat(target_entity, &stat_path);
