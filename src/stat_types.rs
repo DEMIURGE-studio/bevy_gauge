@@ -204,7 +204,7 @@ impl StatLike for Modifiable  {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ComplexEntry(f32, HashMap<u32, Simple>);
+pub(crate) struct ComplexEntry(pub HashMap<u32, Simple>);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComplexModifiable {
@@ -230,8 +230,8 @@ impl StatLike for ComplexModifiable {
         let modifier_type = &stat_path.segments[1];
         let Ok(tag) = stat_path.segments[2].parse::<u32>() else { return; };
         let step_map = self.modifier_types.entry(modifier_type.to_string())
-            .or_insert(ComplexEntry(get_initial_value_for_modifier(modifier_type), HashMap::new()));
-        let step = step_map.1.entry(tag).or_insert(Simple::new(modifier_type));
+            .or_insert(ComplexEntry(HashMap::new()));
+        let step = step_map.0.entry(tag).or_insert(Simple::new(modifier_type));
         step.add_modifier(stat_path, value);
     }
 
@@ -239,7 +239,7 @@ impl StatLike for ComplexModifiable {
         if stat_path.len() != 3 { return; }
         let Some(step_map) = self.modifier_types.get_mut(&stat_path.segments[1]) else { return; };
         let Ok(tag) = stat_path.segments[2].parse::<u32>() else { return; };
-        let Some(step) = step_map.1.get_mut(&tag) else { return; };
+        let Some(step) = step_map.0.get_mut(&tag) else { return; };
         step.remove_modifier(stat_path, value);
     }
     
@@ -253,7 +253,7 @@ impl StatLike for ComplexModifiable {
                 context.set_value(name.to_string(), Value::Float(val as f64)).unwrap();
             }
             for (category, values) in &self.modifier_types {
-                let category_sum: f32 = values.1
+                let category_sum: f32 = values.0
                     .iter()
                     .filter_map(|(&mod_tags, value)| {
                         if mod_tags.has_all(search_tags) {
@@ -265,7 +265,7 @@ impl StatLike for ComplexModifiable {
                         }
                     })
                     .sum();
-                context.set_value(category.clone(), Value::Float((category_sum + values.0) as f64)).ok();
+                context.set_value(category.clone(), Value::Float(category_sum as f64)).ok();
             }
             let total = self.total.value
                 .eval_with_context(&context)
@@ -282,7 +282,7 @@ impl StatLike for ComplexModifiable {
                 return 0.0;
             };
 
-            return values.1
+            return values.0
                 .iter()
                 .filter_map(|(&mod_tags, value)| {
                     if mod_tags.has_all(search_tags) {

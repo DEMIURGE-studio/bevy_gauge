@@ -22,10 +22,27 @@ impl Stats {
         }
     }
 
-    pub fn set<V: Into<ValueType>>(&mut self, stat_path: &str, modifier: V) -> &mut Self {
-        let vt = modifier.into();
-        // destroy current entry
-        self.add_modifier_value(&StatPath::parse(stat_path), vt);
+    // this is an ugly way to do this and uses about 50 different unwraps. TODO
+    pub fn set_base(&mut self, stat_path: &str, base: f32) -> &mut Self {
+        let current_stat = self.definitions.get(stat_path);
+        let Some(current_stat) = current_stat else {
+            return self;
+        };
+
+        let stat_path = StatPath::parse(stat_path);
+
+        let current_value = match current_stat {
+            StatType::Simple(simple) => simple.base,
+            StatType::Modifiable(modifiable) => {
+                modifiable.modifier_steps.get(&stat_path.segments[1]).unwrap().base
+            },
+            StatType::Complex(complex_modifiable) => {
+                complex_modifiable.modifier_types.get(&stat_path.segments[1]).unwrap().0.get(&stat_path.segments[2].parse::<u32>().unwrap()).unwrap().base
+            },
+        };
+
+        self.remove_modifier_value(&stat_path, &ValueType::Literal(current_value));
+        self.add_modifier_value(&stat_path, ValueType::Literal(base));
         self
     }
     
