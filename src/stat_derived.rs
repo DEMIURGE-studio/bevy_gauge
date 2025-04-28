@@ -1,4 +1,4 @@
-use crate::prelude::Stats;
+use crate::prelude::{StatAccessor, Stats};
 
 pub trait StatDerived {
     fn from_stats(stats: &Stats) -> Self;
@@ -11,5 +11,5 @@ pub trait StatDerived {
 }
 
 pub trait WriteBack {
-    fn write_back(&self, stats: &mut Stats);
+    fn write_back(&self, stat_accessor: &mut StatAccessor);
 }

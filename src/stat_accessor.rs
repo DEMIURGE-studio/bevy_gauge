@@ -1,6 +1,10 @@
 use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
 use super::prelude::*;
 
+// TODO:
+// 1. Some way to set a stat
+// 2. Some way to initialize a Stats component
+
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
@@ -8,6 +12,8 @@ pub struct StatAccessor<'w, 's> {
 }
 
 impl StatAccessor<'_, '_> {
+    pub fn set_base(&mut self, stat_path: &str, value: f32) {}
+
     pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
         let Ok(stats) = self.stats_query.get(target_entity) else {
             return 0.0;

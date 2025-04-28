@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use crate::stat_accessor;
+
 use super::prelude::*;
 
 pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
@@ -35,9 +37,10 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component>(
 }
 
 pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
-    mut stats_query: Query<(&mut Stats, &T), Changed<T>>,
+    stats_query: Query<&T, Changed<T>>,
+    mut stat_accessor: StatAccessor,
 ) {
-    for (mut stat_component, writeback) in stats_query.iter_mut() {
-        writeback.write_back(&mut stat_component);
+    for write_back in stats_query.iter() {
+        write_back.write_back(&mut stat_accessor);
     }
 }

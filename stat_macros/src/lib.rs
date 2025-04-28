@@ -15,7 +15,7 @@ pub fn derive_named(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
     };
 
-    proc_macro::TokenStream::from(expanded).into()
+    proc_macro::TokenStream::from(expanded).into() 
 }
 
 #[proc_macro_derive(SimpleStatDerived)]
@@ -81,53 +81,26 @@ struct StatStructInput {
 /// Direction for the field
 #[derive(Debug, Clone, Copy)]
 enum Direction {
-    WriteTo,    // =>
-    WriteBack,  // <=
-    Both,       // <>
+    ReadFrom,    // <-
+    WriteTo,     // ->
+    Both,        // <->
 }
 
 /// One field in the user's DSL, e.g.
 /// 
 /// ```plain
-///   foo: "Stats.foo",
-///   bar: => "Stats.bar",
-///   baz: <= "Stats.baz",
-///   qux: <> "Stats.qux"
+///   foo: <- "Stats.foo",
+///   bar: -> "Stats.bar",
+///   baz: <-> "Stats.baz"
 /// ```
 enum StatField {
-    // For legacy support, we'll keep the old forms
-    LegacyDerived {
+    WithDirection {
         name: Ident,
         _colon_token: Token![:],
-        _dots_token: Token![..],
-    },
-    LegacyWriteBack {
-        name: Ident,
-        _colon_token: Token![:],
-        _writeback_ident: Ident,
-    },
-    LegacyDerivedWriteBack {
-        name: Ident,
-        _colon_token: Token![:],
-        _dots_token: Token![..],
-        _writeback_ident: Ident,
-    },
-    LegacyNested {
-        name: Ident,
-        _colon_token: Token![:],
-        type_name: Ident,
-        _brace_token: Brace,
-        nested_fields: Punctuated<StatField, Token![,]>,
-    },
-    
-    // New forms with explicit paths
-    WithPath {
-        name: Ident,
-        _colon_token: Token![:],
+        direction: Direction,
         path: LitStr,
-        direction: Option<Direction>,
     },
-    NestedWithPath {
+    Nested {
         name: Ident,
         _colon_token: Token![:],
         type_name: Ident,
@@ -139,15 +112,11 @@ enum StatField {
 /// Represents one field after parsing
 #[derive(Debug)]
 enum ParsedField {
-    Derived { 
+    ReadFrom { 
         name: Ident, 
         path: String 
     },
     WriteTo { 
-        name: Ident, 
-        path: String 
-    },
-    WriteBack { 
         name: Ident, 
         path: String 
     },
@@ -214,52 +183,17 @@ impl Parse for StatField {
         let name: Ident = input.parse()?;
         let colon_token: Token![:] = input.parse()?;
 
-        // First check for legacy forms
-        
-        // Check if next token is `..`
-        if input.peek(Token![..]) {
-            let dots_token: Token![..] = input.parse()?;
-
-            // See if it's `..WriteBack`
-            if input.peek(Ident) {
-                let maybe_wb: Ident = input.parse()?;
-                if maybe_wb == "WriteBack" {
-                    return Ok(StatField::LegacyDerivedWriteBack {
-                        name,
-                        _colon_token: colon_token,
-                        _dots_token: dots_token,
-                        _writeback_ident: maybe_wb,
-                    });
-                } else {
-                    return Err(input.error("expected `WriteBack` after `..`"));
-                }
-            }
-
-            // Regular Derived with `..`
-            return Ok(StatField::LegacyDerived {
-                name,
-                _colon_token: colon_token,
-                _dots_token: dots_token,
-            });
-        }
-        else if input.peek(Ident) {
-            // Check for WriteBack or nested type
-            let ident2: Ident = input.parse()?;
-            if ident2 == "WriteBack" {
-                return Ok(StatField::LegacyWriteBack {
-                    name,
-                    _colon_token: colon_token,
-                    _writeback_ident: ident2,
-                });
-            } else if input.peek(Brace) {
-                // Nested type
+        // Check if we're parsing a nested type first
+        if input.peek(Ident) {
+            let type_name: Ident = input.parse()?;
+            if input.peek(Brace) {
                 let content;
                 let brace_token = syn::braced!(content in input);
                 let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
-                return Ok(StatField::LegacyNested {
+                return Ok(StatField::Nested {
                     name,
                     _colon_token: colon_token,
-                    type_name: ident2,
+                    type_name,
                     _brace_token: brace_token,
                     nested_fields,
                 });
@@ -268,77 +202,76 @@ impl Parse for StatField {
             }
         }
         
-        // Check for new forms with directions
+        // Now check for direction operators
         
-        // Write-to: =>
-        if input.peek(Token![=]) && input.peek2(Token![>]) {
-            let _eq_token: Token![=] = input.parse()?;
-            let _gt_token: Token![>] = input.parse()?;
-
-            // Parse the path string
-            if input.peek(LitStr) {
-                let path: LitStr = input.parse()?;
-                return Ok(StatField::WithPath {
-                    name,
-                    _colon_token: colon_token,
-                    path,
-                    direction: Some(Direction::WriteTo),
-                });
-            } else {
-                return Err(input.error("expected string literal after `=>`"));
-            }
-        }
-        
-        // Write-back: <=
-        if input.peek(Token![<]) && input.peek2(Token![=]) {
+        // ReadFrom: <-
+        if input.peek(Token![<]) {
             let _lt_token: Token![<] = input.parse()?;
-            let _eq_token: Token![=] = input.parse()?;
-
-            // Parse the path string
-            if input.peek(LitStr) {
-                let path: LitStr = input.parse()?;
-                return Ok(StatField::WithPath {
-                    name,
-                    _colon_token: colon_token,
-                    path,
-                    direction: Some(Direction::WriteBack),
-                });
+            
+            // Check if next token is -
+            if input.peek(Token![-]) {
+                let _minus_token: Token![-] = input.parse()?;
+                
+                // Now check if it's followed by > for <->
+                if input.peek(Token![>]) {
+                    let _gt_token: Token![>] = input.parse()?;
+                    
+                    // It's bidirectional: <->
+                    if input.peek(LitStr) {
+                        let path: LitStr = input.parse()?;
+                        return Ok(StatField::WithDirection {
+                            name,
+                            _colon_token: colon_token,
+                            direction: Direction::Both,
+                            path,
+                        });
+                    } else {
+                        return Err(input.error("expected string literal after `<->`"));
+                    }
+                }
+                
+                // It's read-from: <-
+                if input.peek(LitStr) {
+                    let path: LitStr = input.parse()?;
+                    return Ok(StatField::WithDirection {
+                        name,
+                        _colon_token: colon_token,
+                        direction: Direction::ReadFrom,
+                        path,
+                    });
+                } else {
+                    return Err(input.error("expected string literal after `<-`"));
+                }
             } else {
-                return Err(input.error("expected string literal after `<=`"));
+                return Err(input.error("expected `-` after `<`"));
             }
         }
         
-        // Both: <>
-        if input.peek(Token![<]) && input.peek2(Token![>]) {
-            let _lt_token: Token![<] = input.parse()?;
-            let _gt_token: Token![>] = input.parse()?;
-
-            // Parse the path string
-            if input.peek(LitStr) {
-                let path: LitStr = input.parse()?;
-                return Ok(StatField::WithPath {
-                    name,
-                    _colon_token: colon_token,
-                    path,
-                    direction: Some(Direction::Both),
-                });
+        // WriteTo: ->
+        else if input.peek(Token![-]) {
+            let _minus_token: Token![-] = input.parse()?;
+            
+            if input.peek(Token![>]) {
+                let _gt_token: Token![>] = input.parse()?;
+                
+                // It's write-to: ->
+                if input.peek(LitStr) {
+                    let path: LitStr = input.parse()?;
+                    return Ok(StatField::WithDirection {
+                        name,
+                        _colon_token: colon_token,
+                        direction: Direction::WriteTo,
+                        path,
+                    });
+                } else {
+                    return Err(input.error("expected string literal after `->`"));
+                }
             } else {
-                return Err(input.error("expected string literal after `<>`"));
+                return Err(input.error("expected `>` after `-`"));
             }
         }
-        
-        // Simple path without direction (defaults to Derived)
-        if input.peek(LitStr) {
-            let path: LitStr = input.parse()?;
-            return Ok(StatField::WithPath {
-                name,
-                _colon_token: colon_token,
-                path,
-                direction: None,  // None means Derived (read-only)
-            });
-        }
 
-        Err(input.error("expected `..`, `..WriteBack`, `WriteBack`, `TypeName { ... }`, `\"path\"`, `=> \"path\"`, `<= \"path\"`, or `<> \"path\"`"))
+        Err(input.error("expected one of `<- \"path\"`, `-> \"path\"`, `<-> \"path\"`, or `TypeName { ... }`"))
     }
 }
 
@@ -398,13 +331,10 @@ fn expand_single_struct_def(
     // Generate field definitions
     let field_defs = fields.iter().map(|f| {
         match f {
-            ParsedField::Derived { name, .. } => {
+            ParsedField::ReadFrom { name, .. } => {
                 quote! { pub #name: f32 }
             },
             ParsedField::WriteTo { name, .. } => {
-                quote! { pub #name: f32 }
-            },
-            ParsedField::WriteBack { name, .. } => {
                 quote! { pub #name: f32 }
             },
             ParsedField::Both { name, .. } => {
@@ -450,8 +380,6 @@ fn expand_trait_impls_for_variant(
 ) -> proc_macro2::TokenStream {
     let struct_name_with_variant = quote! { #struct_ident<#variant_ident> };
 
-    // Note: path_prefix_str is not needed in the new implementation since we use explicit paths
-
     // Build implementation bodies
     let should_update_body = collect_should_update_lines(fields, quote!(self));
     let update_body = collect_update_lines(fields, quote!(self));
@@ -477,7 +405,7 @@ fn expand_trait_impls_for_variant(
         }
 
         impl WriteBack for #struct_name_with_variant {
-            fn write_back(&self, stats: &mut Stats) {
+            fn write_back(&self, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
                 #wb_body
             }
         }
@@ -513,61 +441,24 @@ fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<V
     let mut results = Vec::new();
     for f in fields {
         let pf = match f {
-            // Legacy forms
-            StatField::LegacyDerived { name, .. } => {
-                // Auto-derive path from struct.field
-                let path = format!("{}.{}", name.to_string(), name.to_string());
-                ParsedField::Derived { 
-                    name: name.clone(), 
-                    path 
-                }
-            },
-            StatField::LegacyWriteBack { name, .. } => {
-                let path = format!("{}.{}", name.to_string(), name.to_string());
-                ParsedField::WriteBack { 
-                    name: name.clone(), 
-                    path 
-                }
-            },
-            StatField::LegacyDerivedWriteBack { name, .. } => {
-                let path = format!("{}.{}", name.to_string(), name.to_string());
-                ParsedField::Both { 
-                    name: name.clone(), 
-                    path 
-                }
-            },
-            StatField::LegacyNested { name, type_name, nested_fields, .. } => {
-                let sub = parse_fields_list(nested_fields)?;
-                ParsedField::Nested {
-                    name: name.clone(),
-                    type_name: type_name.clone(),
-                    fields: sub,
-                }
-            },
-            
-            // New forms with explicit paths
-            StatField::WithPath { name, path, direction, .. } => {
+            StatField::WithDirection { name, path, direction, .. } => {
                 let path_str = path.value();
                 match direction {
-                    Some(Direction::WriteTo) => ParsedField::WriteTo { 
+                    Direction::ReadFrom => ParsedField::ReadFrom { 
                         name: name.clone(), 
                         path: path_str 
                     },
-                    Some(Direction::WriteBack) => ParsedField::WriteBack { 
+                    Direction::WriteTo => ParsedField::WriteTo { 
                         name: name.clone(), 
                         path: path_str 
                     },
-                    Some(Direction::Both) => ParsedField::Both { 
+                    Direction::Both => ParsedField::Both { 
                         name: name.clone(), 
                         path: path_str 
                     },
-                    None => ParsedField::Derived { 
-                        name: name.clone(), 
-                        path: path_str 
-                    }, // Default is Derived
                 }
             },
-            StatField::NestedWithPath { name, type_name, nested_fields, .. } => {
+            StatField::Nested { name, type_name, nested_fields, .. } => {
                 let sub = parse_fields_list(nested_fields)?;
                 ParsedField::Nested {
                     name: name.clone(),
@@ -593,7 +484,7 @@ fn collect_update_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::Derived { name, path } => {
+            ParsedField::ReadFrom { name, path } => {
                 lines.push(quote! {
                     #self_expr.#name = stats.get(#path).unwrap_or(0.0);
                 });
@@ -605,9 +496,6 @@ fn collect_update_lines(
             },
             ParsedField::WriteTo { .. } => {
                 // WriteTo fields aren't updated from stats
-            },
-            ParsedField::WriteBack { .. } => {
-                // WriteBack fields aren't updated from stats
             },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_update_lines(fields, quote!(#self_expr.#name));
@@ -627,7 +515,7 @@ fn collect_should_update_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::Derived { name, path } => {
+            ParsedField::ReadFrom { name, path } => {
                 lines.push(quote! {
                     #self_expr.#name != stats.get(#path).unwrap_or(0.0)
                 });
@@ -637,7 +525,6 @@ fn collect_should_update_lines(
                     #self_expr.#name != stats.get(#path).unwrap_or(0.0)
                 });
             },
-            ParsedField::WriteBack { .. } => { /* skip */ },
             ParsedField::WriteTo { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_should_update_lines(fields, quote!(#self_expr.#name));
@@ -660,17 +547,12 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
     
     for pf in fields {
         match pf {
-            ParsedField::Derived { path, .. } => {
+            ParsedField::ReadFrom { path, .. } => {
                 lines.push(quote! {
                     stats.get(#path).is_ok()
                 });
             },
             ParsedField::WriteTo { path, .. } => {
-                lines.push(quote! {
-                    stats.get(#path).is_ok()
-                });
-            },
-            ParsedField::WriteBack { path, .. } => {
                 lines.push(quote! {
                     stats.get(#path).is_ok()
                 });
@@ -704,18 +586,17 @@ fn collect_writeback_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::WriteBack { name, path } => {
+            ParsedField::WriteTo { name, path } => {
                 lines.push(quote! {
-                    let _ = stats.set(#path, #self_expr.#name);
+                    let _ = stat_accessor.set_base(#path, #self_expr.#name);
                 });
             },
             ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    let _ = stats.set(#path, #self_expr.#name);
+                    let _ = stat_accessor.set_base(#path, #self_expr.#name);
                 });
             },
-            ParsedField::Derived { .. } => { /* skip */ },
-            ParsedField::WriteTo { .. } => { /* skip */ },
+            ParsedField::ReadFrom { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
@@ -757,12 +638,26 @@ fn expand_trait_impls_for_no_variant(
         }
 
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
-            fn write_back(&self, stats: &mut Stats) {
+            fn write_back(&self, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
                 #writeback_body
             }
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Keep the Tag-related code unchanged
 use syn::token::Comma;
