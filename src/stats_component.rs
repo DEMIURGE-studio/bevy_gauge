@@ -8,7 +8,7 @@ use super::prelude::*;
 pub struct Stats {
     pub(crate) definitions: HashMap<String, StatType>,
     pub(crate) cached_stats: SyncContext,
-    pub(crate) dependency_graph: SyncDependents,
+    pub(crate) dependents: SyncDependents,
     pub(crate) sources: HashMap<String, Entity>,
 }
 
@@ -17,7 +17,7 @@ impl Stats {
         Self {
             definitions: HashMap::new(),
             cached_stats: SyncContext::new(),
-            dependency_graph: SyncDependents::new(),
+            dependents: SyncDependents::new(),
             sources: HashMap::new(),
         }
     }
@@ -63,19 +63,19 @@ impl Stats {
     }
 
     pub(crate) fn add_dependent(&self, stat: &str, dependent: DependentType) {
-        self.dependency_graph.add_dependent(stat, dependent);
+        self.dependents.add_dependent(stat, dependent);
     }
 
     pub(crate) fn remove_dependent(&self, stat: &str, dependent: DependentType) {
-        self.dependency_graph.remove_dependent(stat, dependent);
+        self.dependents.remove_dependent(stat, dependent);
     }
 
     pub(crate) fn get_stat_dependents(&self, stat: &str) -> Vec<DependentType> {
-        self.dependency_graph.get_stat_dependents(stat)
+        self.dependents.get_stat_dependents(stat)
     }
 
     pub(crate) fn get_dependents(&self) -> HashMap<String, HashMap<DependentType, u32>> {
-        self.dependency_graph.get_dependents()
+        self.dependents.get_dependents()
     }
 
     pub fn evaluate_by_string(&self, stat_path: &str) -> f32 {

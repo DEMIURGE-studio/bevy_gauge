@@ -1,9 +1,15 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use super::prelude::*;
 
 // TODO:
 // 1. Some way to set a stat
 // 2. Some way to initialize a Stats component
+// 3. Need to update stat values whenever we register a source relevant to those values
+//    This will require getting the changed source entity, iterating through all the DependentType::Entity in SyncDependents, finding any that are dependent
+//    on the old source entity, changing them to be dependent on the new source entity, and then updating them. 
+//    It may be worth thinking about the way we store dependent stats. Maybe DependentType::Entity actually holds a string, and we map that string to the 
+//    entity via the "sources" field
+//    Will require some kind of "depends on" tracking
 
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
@@ -12,6 +18,10 @@ pub struct StatAccessor<'w, 's> {
 }
 
 impl StatAccessor<'_, '_> {
+    pub fn initialize_stat_entity<V: Into<ValueType>>(&mut self, entity: Entity, modifiers: HashMap<String, &[V]>) {
+
+    }
+
     pub fn set_base(&mut self, stat_path: &str, value: f32) {}
 
     pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
@@ -176,7 +186,16 @@ impl StatAccessor<'_, '_> {
 
     pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
         if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
+            let old_source = stats.sources.get(name);
             stats.sources.insert(name.to_string(), source_entity);
+
+            let Some(&old_source_entity) = old_source else {
+                return;
+            };
+
+            // need some way to map stats that are dependent on a particular source to the source
+            // they are dependent on. This might mean that dependency tracking needs to be 2-way.
+            // We track stats that are dependent on this stat, and stats this stat is dependent on.
         }
     }
 

@@ -39,6 +39,7 @@ pub mod expressions;
 pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
+pub mod sources;
 pub mod stat_accessor;
 pub mod stat_addressing;
 pub mod stat_derived;
