@@ -13,16 +13,15 @@ fn test_modifier_set_apply() {
     // Register and run the system to apply a ModifierSet
     let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
-            // Create a ModifierSet with multiple stats and modifiers
-            let mut modifier_set = ModifierSet::new();
-            
-            // Add some modifiers to the set
-            modifier_set.add("Life.Added", 10.0);
-            modifier_set.add("Mana.Added", 20.0);
-            modifier_set.add("Strength.Added", 5.0);
+            // Create a ModifierSet with multiple stats and modifiers using the macro
+            let modifier_set = modifier_set! {
+                "Life.Added" => 10.0,
+                "Mana.Added" => 20.0,
+                "Strength.Added" => 5.0
+            };
             
             // Apply the ModifierSet to the entity
-            stat_accessor.apply_modifier_set(&modifier_set, entity);
+            stat_accessor.apply_modifier_set(entity, &modifier_set);
         }
     });
     let _ = app.world_mut().run_system(system_id);
@@ -51,19 +50,16 @@ fn test_modifier_set_with_expressions() {
     // Register and run the system to apply a ModifierSet with expressions
     let system_id = app.world_mut().register_system(|mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
-            // Create a ModifierSet
-            let mut modifier_set = ModifierSet::new();
-            
-            // Add base stats
-            modifier_set.add("Strength.Added", 10.0);
-            modifier_set.add("Intelligence.Added", 20.0);
-            
-            // Add derived stats using expressions
-            modifier_set.add("PhysicalDamage.Added", "Strength.Added * 2.0");
-            modifier_set.add("SpellDamage.Added", "Intelligence.Added * 1.5");
+            // Create a ModifierSet using the macro
+            let modifier_set = modifier_set! {
+                "Strength.Added" => 10.0,
+                "Intelligence.Added" => 20.0,
+                "PhysicalDamage.Added" => "Strength.Added * 2.0",
+                "SpellDamage.Added" => "Intelligence.Added * 1.5"
+            };
             
             // Apply the ModifierSet
-            stat_accessor.apply_modifier_set(&modifier_set, entity);
+            stat_accessor.apply_modifier_set(entity, &modifier_set);
         }
     });
     let _ = app.world_mut().run_system(system_id);
@@ -87,11 +83,11 @@ fn test_modifier_set_remove() {
     // Spawn an entity with Stats component
     let entity = app.world_mut().spawn(Stats::new()).id();
 
-    // Create a ModifierSet to test with
-    let mut test_modifier_set = ModifierSet::new();
-    
-    test_modifier_set.add("Life.Added", 15.0);
-    test_modifier_set.add("Mana.Added", 25.0);
+    // Create a ModifierSet to test with using the macro
+    let test_modifier_set = modifier_set! {
+        "Life.Added" => 15.0,
+        "Mana.Added" => 25.0
+    };
     
     // Clone the ModifierSet for use in the second system
     let test_modifier_set_clone = test_modifier_set.clone();
@@ -100,7 +96,7 @@ fn test_modifier_set_remove() {
     let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
             // Apply the test ModifierSet
-            stat_accessor.apply_modifier_set(&test_modifier_set, entity);
+            stat_accessor.apply_modifier_set(entity, &test_modifier_set);
         }
     });
     let _ = app.world_mut().run_system(apply_system_id);
@@ -118,7 +114,7 @@ fn test_modifier_set_remove() {
     let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
             // Remove the test ModifierSet
-            stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
+            stat_accessor.remove_modifier_set(entity, &test_modifier_set_clone);
         }
     });
     let _ = app.world_mut().run_system(remove_system_id);
@@ -142,17 +138,11 @@ fn test_modifier_set_mixed_types() {
     // Spawn an entity with Stats component
     let entity = app.world_mut().spawn(Stats::new()).id();
     
-    // Create a ModifierSet with multiple types of modifiers
-    let mut test_modifier_set = ModifierSet::new();
-    
-    // Add flat modifiers
-    test_modifier_set.add("Life.Added", 10.0);
-    
-    // Add expression modifiers
-    test_modifier_set.add("Damage.Added", "Life.Added * 0.5");
-    
-    // Add multiple modifiers to the same stat
-    test_modifier_set.add("Life.Added", 5.0);
+    // Create a ModifierSet with multiple types of modifiers using the macro
+    let test_modifier_set = modifier_set! {
+        "Life.Added" => [10.0, 5.0],
+        "Damage.Added" => "Life.Added * 0.5"
+    };
     
     // Clone for use in the second system
     let test_modifier_set_clone = test_modifier_set.clone();
@@ -160,7 +150,7 @@ fn test_modifier_set_mixed_types() {
     // Register and run a system to apply the ModifierSet
     let apply_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
-            stat_accessor.apply_modifier_set(&test_modifier_set, entity);
+            stat_accessor.apply_modifier_set(entity, &test_modifier_set);
         }
     });
     let _ = app.world_mut().run_system(apply_system_id);
@@ -177,7 +167,7 @@ fn test_modifier_set_mixed_types() {
     // Now run a system to remove the ModifierSet
     let remove_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
-            stat_accessor.remove_modifier_set(&test_modifier_set_clone, entity);
+            stat_accessor.remove_modifier_set(entity, &test_modifier_set_clone);
         }
     });
     let _ = app.world_mut().run_system(remove_system_id);
@@ -201,15 +191,17 @@ fn test_multiple_modifier_sets() {
     // Spawn an entity with Stats component
     let entity = app.world_mut().spawn(Stats::new()).id();
     
-    // Create the first ModifierSet - base stats
-    let mut base_modifier_set = ModifierSet::new();
-    base_modifier_set.add("Life.Added", 100.0);
-    base_modifier_set.add("Mana.Added", 50.0);
+    // Create the first ModifierSet - base stats using the macro
+    let base_modifier_set = modifier_set! {
+        "Life.Added" => 100.0,
+        "Mana.Added" => 50.0
+    };
     
-    // Create the second ModifierSet - buff effect
-    let mut buff_modifier_set = ModifierSet::new();
-    buff_modifier_set.add("Life.Added", 20.0);
-    buff_modifier_set.add("LifeRegen.Added", 5.0);
+    // Create the second ModifierSet - buff effect using the macro
+    let buff_modifier_set = modifier_set! {
+        "Life.Added" => 20.0,
+        "LifeRegen.Added" => 5.0
+    };
     
     // Clone both for the first system
     let base_modifier_set_clone1 = base_modifier_set.clone();
@@ -219,8 +211,8 @@ fn test_multiple_modifier_sets() {
     let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
             // Apply both ModifierSets
-            stat_accessor.apply_modifier_set(&base_modifier_set_clone1, entity);
-            stat_accessor.apply_modifier_set(&buff_modifier_set_clone1, entity);
+            stat_accessor.apply_modifier_set(entity, &base_modifier_set_clone1);
+            stat_accessor.apply_modifier_set(entity, &buff_modifier_set_clone1);
         }
     });
     let _ = app.world_mut().run_system(system_id);
@@ -240,7 +232,7 @@ fn test_multiple_modifier_sets() {
     let remove_buff_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor, query: Query<Entity, With<Stats>>| {
         for entity in &query {
             // Remove only the buff ModifierSet
-            stat_accessor.remove_modifier_set(&buff_modifier_set, entity);
+            stat_accessor.remove_modifier_set(entity, &buff_modifier_set);
         }
     });
     let _ = app.world_mut().run_system(remove_buff_id);

@@ -79,32 +79,49 @@ macro_rules! stats {
 
 #[macro_export]
 macro_rules! modifier_set {
-    ( $( $key:expr => $value:expr ),* $(,)? ) => {{
-        // Ensure that you bring the required traits into scope.
-        use bevy_gauge::prelude::*;
-        let mut map = ::bevy_utils::HashMap::new();
-        $(
-            // For each key, if the entry doesn't exist, create a new Vec
-            let entry = map.entry($key.to_string()).or_insert_with(Vec::new);
-            // Push the value to the Vec
-            entry.push($value.into());
-        )*
-        ModifierSet::new(map)
-    }};
-    
-    // Add an alternative syntax to allow multiple values per key in a single line
-    ( $( $key:expr => [ $( $value:expr ),* $(,)? ] ),* $(,)? ) => {{
-        // Ensure that you bring the required traits into scope.
-        use bevy_gauge::prelude::*;
-        let mut map = ::bevy_utils::HashMap::new();
-        $(
-            let entry = map.entry($key.to_string()).or_insert_with(Vec::new);
+    // Empty case
+    () => {
+        bevy_gauge::prelude::ModifierSet::default()
+    };
+
+    // Recursive cases with special array handling
+    ( $stat:expr => [ $($val:expr),+ ], $($rest:tt)* ) => {
+        {
+            let mut ms = modifier_set!($($rest)*);
             $(
-                entry.push($value.into());
-            )*
-        )*
-        ModifierSet::new(map)
-    }};
+                ms.add($stat, $val);
+            )+
+            ms
+        }
+    };
+
+    // Single value case
+    ( $stat:expr => $val:expr, $($rest:tt)* ) => {
+        {
+            let mut ms = modifier_set!($($rest)*);
+            ms.add($stat, $val);
+            ms
+        }
+    };
+
+    // Terminal cases (without trailing comma)
+    ( $stat:expr => [ $($val:expr),+ ] ) => {
+        {
+            let mut ms = bevy_gauge::prelude::ModifierSet::default();
+            $(
+                ms.add($stat, $val);
+            )+
+            ms
+        }
+    };
+
+    ( $stat:expr => $val:expr ) => {
+        {
+            let mut ms = bevy_gauge::prelude::ModifierSet::default();
+            ms.add($stat, $val);
+            ms
+        }
+    };
 }
 
 #[macro_export]

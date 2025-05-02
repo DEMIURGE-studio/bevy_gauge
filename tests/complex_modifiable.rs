@@ -342,3 +342,50 @@ fn test_mixed_entity_local_dependencies() {
     
     assert_eq!(final_damage, 90.0);  // Owner Power (20.0 + 10.0 = 30.0) * Local Multiplier 3.0
 }
+
+// Test overwriting a source entity reference
+#[test]
+fn test_overwriting_source_reference() {
+    // Setup app
+    let mut app = App::new();
+
+    // Spawn entities with Stats component
+    let source_entity_1 = app.world_mut().spawn(Stats::new()).id();
+    let source_entity_2 = app.world_mut().spawn(Stats::new()).id();
+    let dependent_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // Setup initial values and register first source
+    let setup_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+        // Add base stats to source entities
+        stat_accessor.add_modifier(source_entity_1, "Power.Added", 10.0);
+        stat_accessor.add_modifier(source_entity_2, "Power.Added", 30.0);
+        
+        // Register the first source entity
+        stat_accessor.register_source(dependent_entity, "Source", source_entity_1);
+        
+        // Create dependency on the dependent entity
+        stat_accessor.add_modifier(
+            dependent_entity,
+            "Damage.Added",
+            "Source@Power.Added * 2.0"
+        );
+    });
+    let _ = app.world_mut().run_system(setup_system_id);
+
+    // Verify initial dependency with source_entity_1
+    let stats = app.world_mut().query::<&Stats>().get(app.world(), dependent_entity).unwrap();
+    let initial_damage = stats.evaluate_by_string("Damage.Added");
+    assert_eq!(initial_damage, 20.0); // 10.0 * 2.0
+    
+    // Overwrite the source reference
+    let overwrite_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
+        // Register the second source entity with the same name
+        stat_accessor.register_source(dependent_entity, "Source", source_entity_2);
+    });
+    let _ = app.world_mut().run_system(overwrite_system_id);
+    
+    // Verify the value has updated to use source_entity_2's stat
+    let updated_stats = app.world_mut().query::<&Stats>().get(app.world(), dependent_entity).unwrap();
+    let updated_damage = updated_stats.evaluate_by_string("Damage.Added");
+    assert_eq!(updated_damage, 60.0); // 30.0 * 2.0
+}

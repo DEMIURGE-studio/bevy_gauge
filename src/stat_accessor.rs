@@ -11,6 +11,11 @@ use super::prelude::*;
 //    entity via the "sources" field
 //    Will require some kind of "depends on" tracking
 
+/// Problem:
+/// When we add a source or change a source after adding a modifier that uses that source, relevant stats are not updated.
+/// Example: Our weapons damage stat has a modifier that looks like "Owner@Life * 0.2" indicating that the weapons damage is based on its owners life.
+/// If the weapon changes hands, we need to be able to match "Owner" to any dependent stats and update them. 
+
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
@@ -186,10 +191,10 @@ impl StatAccessor<'_, '_> {
 
     pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
         if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
-            let old_source = stats.sources.get(name);
+            let old_source = {stats.sources.get(name).cloned()};
             stats.sources.insert(name.to_string(), source_entity);
 
-            let Some(&old_source_entity) = old_source else {
+            let Some(old_source_entity) = old_source else {
                 return;
             };
 
