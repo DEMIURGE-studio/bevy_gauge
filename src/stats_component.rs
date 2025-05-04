@@ -22,7 +22,17 @@ impl Stats {
         }
     }
 
-    // this is an ugly way to do this and uses about 50 different unwraps. TODO
+    pub fn from_set(modifier_set: &ModifierSet) -> Self {
+        let mut stats = Stats::new();
+        for (stat, modifiers) in modifier_set.iter() {
+            for modifier in modifiers.iter() {
+                stats.add_modifier_value(&StatPath::parse(stat), modifier.clone());
+            }
+        }
+        return stats;
+    }
+
+    // this is an ugly way to do this and uses about 50 different unwraps. Also requires Stats to know about the internals of stat types. TODO
     pub fn set_base(&mut self, stat_path: &str, base: f32) -> &mut Self {
         let current_stat = self.definitions.get(stat_path);
         let Some(current_stat) = current_stat else {
@@ -43,6 +53,7 @@ impl Stats {
 
         self.remove_modifier_value(&stat_path, &ValueType::Literal(current_value));
         self.add_modifier_value(&stat_path, ValueType::Literal(base));
+        self.set_cached(&stat_path.path, base);
         self
     }
     
@@ -54,6 +65,7 @@ impl Stats {
         self.cached_stats.set(key, value)
     }
 
+    // TODO should remove the entry, no?
     pub(crate) fn remove_cached(&self, key: &str) {
         self.cached_stats.set(key, 0.0);
     }

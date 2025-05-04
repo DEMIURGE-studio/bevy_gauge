@@ -1,5 +1,6 @@
 pub use super::app_extension::*;
 pub use super::asset_like::*;
+pub use super::dirty::*;
 pub use super::expressions::*;
 pub use super::modifier_set::*;
 pub use super::stat_accessor::*;

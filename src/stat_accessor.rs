@@ -1,20 +1,9 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
+use bevy::{ecs::system::SystemParam, prelude::*, utils::HashSet};
 use super::prelude::*;
 
-// TODO:
+// TODO:  
 // 1. Some way to set a stat
 // 2. Some way to initialize a Stats component
-// 3. Need to update stat values whenever we register a source relevant to those values
-//    This will require getting the changed source entity, iterating through all the DependentType::Entity in SyncDependents, finding any that are dependent
-//    on the old source entity, changing them to be dependent on the new source entity, and then updating them. 
-//    It may be worth thinking about the way we store dependent stats. Maybe DependentType::Entity actually holds a string, and we map that string to the 
-//    entity via the "sources" field
-//    Will require some kind of "depends on" tracking
-
-/// Problem:
-/// When we add a source or change a source after adding a modifier that uses that source, relevant stats are not updated.
-/// Example: Our weapons damage stat has a modifier that looks like "Owner@Life * 0.2" indicating that the weapons damage is based on its owners life.
-/// If the weapon changes hands, we need to be able to match "Owner" to any dependent stats and update them. 
 
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
@@ -23,18 +12,20 @@ pub struct StatAccessor<'w, 's> {
 }
 
 impl StatAccessor<'_, '_> {
-    pub fn initialize_stat_entity<V: Into<ValueType>>(&mut self, entity: Entity, modifiers: HashMap<String, &[V]>) {
-
-    }
-
-    pub fn set_base(&mut self, stat_path: &str, value: f32) {}
-
     pub fn get(&self, target_entity: Entity, stat_path: &str) -> f32 {
         let Ok(stats) = self.stats_query.get(target_entity) else {
             return 0.0;
         };
 
         stats.get(stat_path).unwrap_or(0.0)
+    }
+
+    pub fn set_base(&mut self, target_entity: Entity, stat_path: &str, value: f32) {
+        let Ok(mut stats) = self.stats_query.get_mut(target_entity) else {
+            return;
+        };
+
+        stats.set_base(stat_path, value);
     }
     
     pub fn get_stats(&self, target_entity: Entity) -> Result<&Stats, ()> {
@@ -189,18 +180,96 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &stat_path);
     }
 
+    // This is filthy
     pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
-        if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
-            let old_source = {stats.sources.get(name).cloned()};
-            stats.sources.insert(name.to_string(), source_entity);
-
-            let Some(old_source_entity) = old_source else {
-                return;
-            };
-
-            // need some way to map stats that are dependent on a particular source to the source
-            // they are dependent on. This might mean that dependency tracking needs to be 2-way.
-            // We track stats that are dependent on this stat, and stats this stat is dependent on.
+        // Check if entity exists before proceeding
+        if !self.stats_query.contains(target_entity) {
+            return;
+        }
+    
+        // First, collect all the necessary information from the target_entity
+        let mut stats_to_update = Vec::new();
+        let mut deps_to_register = Vec::new();
+        
+        // Collect dependent stats and prepare source registration
+        {
+            if let Ok(mut stats) = self.stats_query.get_mut(target_entity) {
+                // Store the old source if it exists (for potential cleanup later)
+                let old_source = stats.sources.get(name).cloned();
+                
+                // Update the source
+                stats.sources.insert(name.to_string(), source_entity);
+                
+                // Collect stats that need updating and dependencies to register
+                for (stat, dependents) in stats.get_dependents() {
+                    if stat.contains('@') && stat.starts_with(name) {
+                        let parts: Vec<&str> = stat.split('@').collect();
+                        if parts.len() > 1 {
+                            // Add to list of dependencies to register with source entity
+                            deps_to_register.push((source_entity, parts[1].to_string(), target_entity));
+                            
+                            // Collect stats that need to be updated
+                            for (dependent, _) in dependents.iter() {
+                                if let DependentType::LocalStat(dependent_stat) = dependent {
+                                    stats_to_update.push(dependent_stat.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Remove dependencies from old source if it exists and is different
+                if let Some(old_source_entity) = old_source {
+                    if old_source_entity != source_entity {
+                        for (stat, _) in stats.get_dependents() {
+                            if stat.contains('@') && stat.starts_with(name) {
+                                let parts: Vec<&str> = stat.split('@').collect();
+                                if parts.len() > 1 {
+                                    // Schedule removal of dependency from old source
+                                    if let Ok(old_source_stats) = self.stats_query.get(old_source_entity) {
+                                        old_source_stats.remove_dependent(
+                                            &parts[1].to_string(), 
+                                            DependentType::EntityStat(target_entity)
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Register dependencies with the source entity
+        for (source_entity, stat_path, target_entity) in deps_to_register {
+            if let Ok(source_stats) = self.stats_query.get(source_entity) {
+                source_stats.add_dependent(
+                    &stat_path,
+                    DependentType::EntityStat(target_entity)
+                );
+            }
+        }
+        
+        // Now update the cached values for stats that depend on the new source
+        {
+            if let Ok(stats) = self.stats_query.get(target_entity) {
+                // Update cached values
+                for stat in stats.get_dependents().keys() {
+                    if stat.contains('@') && stat.starts_with(name) {
+                        let parts: Vec<&str> = stat.split('@').collect();
+                        if parts.len() > 1 {
+                            // Get the value from the new source
+                            let value = self.get(source_entity, parts[1]);
+                            stats.cache_stat(stat, value);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Finally, update all dependent stats
+        for dependent_stat in stats_to_update {
+            self.update_stat(target_entity, &StatPath::parse(&dependent_stat));
         }
     }
 

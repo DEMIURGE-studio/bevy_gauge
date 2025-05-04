@@ -176,15 +176,19 @@ impl StatLike for Modifiable  {
     fn evaluate(&self, stat_path: &StatPath, stats: &Stats) -> f32 {
         match stat_path.len() {
             1 => {
-                self.total.value
+                let total = self.total.value
                     .eval_with_context(stats.get_context())
                     .unwrap()
                     .as_number()
-                    .unwrap() as f32
+                    .unwrap() as f32;
+                stats.set_cached(&stat_path.path, total);
+                total
             }
             2 => {
                 let Some(part) = self.modifier_steps.get(&stat_path.segments[1]) else { return 0.0; };
-                part.evaluate(stat_path, stats)
+                let part_total = part.evaluate(stat_path, stats);
+                stats.set_cached(&stat_path.path, part_total);
+                part_total
             }
             _ => 0.0
         }
@@ -200,6 +204,10 @@ impl StatLike for Modifiable  {
                 stats.set_cached(&full_modifier_path, val);
             }
         }
+        let total = self.evaluate(&StatPath::parse(base_name), stats);
+        stats.set_cached(base_name, total);
+
+        
     }
 }
 
