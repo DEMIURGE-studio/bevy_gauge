@@ -11,7 +11,8 @@ use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMa
 struct Stats {
     definitions: HashMap<String, StatType>,
     cached_values: SyncContext,
-    dependents_map: SyncDependents,
+    dependents_map: DependencyMap,
+    depends_on_map: DependencyMap,
     sources: HashMap<String, Entity>,
 }
 
@@ -45,7 +46,7 @@ impl Stats {
         stat.evaluate(path, self)
     }
 
-    fn get_dependents(&self) -> HashMap<String, HashMap<DependentType, u32>> {
+    fn get_dependents(&self) -> &HashMap<String, HashMap<DependentType, u32>> {
         self.dependents_map.get_dependents()
     }
 
@@ -122,57 +123,46 @@ pub enum DependentType {
 // "Damage.Added.PHYSICAL" += "Strength@EquippedTo / 2". This indicates that a weapons
 // damage is dependent on the entity it's equipped to's strength. This would also require
 // an entry in "sources" for "EquippedTo" to map to a specific entity.
-struct SyncDependents(Arc<RwLock<HashMap<String, HashMap<DependentType, u32>>>>);
+struct DependencyMap(HashMap<String, HashMap<DependentType, u32>>);
 
-impl SyncDependents {
+impl DependencyMap {
     fn new() -> Self {
-        Self(Arc::new(RwLock::new(HashMap::new())))
+        Self(HashMap::new())
     }
    
-    fn add_dependent(&self, path: &str, dependent: DependentType) {
-        if let Ok(mut graph) = self.0.write() {
-            let entry = graph.entry(path.to_string()).or_insert_with(HashMap::new);
-            *entry.entry(dependent).or_insert(0) += 1;
-        }
-    }
-    
-    fn remove_dependent(&self, path: &str, dependent: DependentType) {
-        let Ok(mut graph) = self.0.write() else {
-            return;
-        };
-
-        let Some(dependents) = graph.get_mut(path) else {
-            return;
-        };
+    fn add_dependent(&mut self, path: &str, dependent: DependentType) {
+        let entry = self.0
+            .entry(path.to_string())
+            .or_insert_with(HashMap::new);
         
-        if let Some(weight) = dependents.get_mut(&dependent) {
-            *weight -= 1;
-            if *weight == 0 {
-                dependents.remove(&dependent);
+        *entry.entry(dependent).or_insert(0) += 1;
+    }
+   
+    fn remove_dependent(&mut self, path: &str, dependent: DependentType) {
+        if let Some(dependents) = self.0.get_mut(path) {
+            if let Some(weight) = dependents.get_mut(&dependent) {
+                *weight -= 1;
+                if *weight == 0 {
+                    dependents.remove(&dependent);
+                }
+            }
+            
+            if dependents.is_empty() {
+                self.0.remove(path);
             }
         }
-        if dependents.is_empty() {
-            graph.remove(path);
-        }
     }
-    
+   
     fn get_stat_dependents(&self, path: &str) -> Vec<DependentType> {
-        if let Ok(graph) = self.0.read() {
-            graph.get(path)
-                .map(|dependents| dependents.keys().cloned().collect())
-                .unwrap_or_else(Vec::new)
-        } else {
-            Vec::new()
-        }
+        self.0
+            .get(path)
+            .map(|dependents| dependents.keys().cloned().collect())
+            .unwrap_or_else(Vec::new)
     }
-    
-    // TODO do we need this clone?
-    fn get_dependents(&self) -> HashMap<String, HashMap<DependentType, u32>> {
-        if let Ok(graph) = self.0.read() {
-            graph.clone()
-        } else {
-            HashMap::new()
-        }
+   
+    // No need for the clone note anymore since we're not dealing with locks
+    fn get_dependents(&self) -> &HashMap<String, HashMap<DependentType, u32>> {
+        &self.0
     }
 }
 
@@ -245,15 +235,14 @@ impl StatAccessor<'_, '_> {
     // the local stat "Strength".
     fn add_dependents(&mut self, target: Entity, modified_path: &StatPath, dependencies: Vec<DependentType>) {
         let modified_dependent = DependentType::Local(modified_path.path.clone()); // What depends *locally*
-    
+        
         for dependency in dependencies {
             match dependency {
                 // The modified stat depends on a *local* stat (dep_path)
                 DependentType::Local(dep_path) => {
-                    if let Ok(stats) = self.query.get(target) {
-                        let mut map = stats.dependents_map.0.write().unwrap(); // Handle potential poisoning
-                        let dependents = map.entry(dep_path).or_default();
-                        *dependents.entry(modified_dependent.clone()).or_insert(0) += 1;
+                    if let Ok(mut stats) = self.query.get_mut(target) {
+                        stats.dependents_map.add_dependent(&dep_path, modified_dependent.clone());
+                        stats.depends_on_map.add_dependent(&modified_path.path, DependentType::Local(dep_path.clone()));
                     } else {
                         error!("Target entity {} not found for adding local dependency", target);
                     }
@@ -261,11 +250,19 @@ impl StatAccessor<'_, '_> {
                 // The modified stat depends on a stat (dep_path) on *another* entity (source_entity)
                 DependentType::Entity(source_entity, dep_path) => {
                     // We need to tell the *source* entity that the *target* entity's stat depends on it.
-                    if let Ok(source_stats) = self.query.get(source_entity) {
-                         let dependent_entry = DependentType::Entity(target, modified_path.path.clone());
-                         let mut map = source_stats.dependents_map.0.write().unwrap(); // Handle potential poisoning
-                         let dependents = map.entry(dep_path).or_default();
-                        *dependents.entry(dependent_entry).or_insert(0) += 1;
+                    if let Ok(mut source_stats) = self.query.get_mut(source_entity) {
+                        let dependent_entry = DependentType::Entity(target, modified_path.path.clone());
+                        source_stats.dependents_map.add_dependent(&dep_path, dependent_entry.clone());
+                        
+                        // No need to modify this entity's depends_on_map, since depends_on_map is a local map
+                    }
+                    
+                    // Update the target entity's depends_on_map to indicate it depends on an external stat
+                    if let Ok(mut target_stats) = self.query.get_mut(target) {
+                        target_stats.depends_on_map.add_dependent(
+                            &modified_path.path,
+                            DependentType::Entity(source_entity, dep_path.clone())
+                        );
                     }
                     // It is not an error if the source entity does not exist yet. 
                 }
@@ -275,40 +272,28 @@ impl StatAccessor<'_, '_> {
     
     fn remove_dependents(&mut self, target: Entity, modified_path: &StatPath, dependencies: Vec<DependentType>) {
         let modified_dependent = DependentType::Local(modified_path.path.clone());
-    
-         for dependency in dependencies {
+        
+        for dependency in dependencies {
             match dependency {
                 DependentType::Local(dep_path) => {
-                    if let Ok(stats) = self.query.get_mut(target) {
-                        let mut map = stats.dependents_map.0.write().unwrap();
-                        if let Some(dependents) = map.get_mut(&dep_path) {
-                            if let Some(count) = dependents.get_mut(&modified_dependent) {
-                                *count -= 1;
-                                if *count == 0 {
-                                    dependents.remove(&modified_dependent);
-                                }
-                            }
-                            if dependents.is_empty() {
-                                map.remove(&dep_path);
-                            }
-                        }
+                    if let Ok(mut stats) = self.query.get_mut(target) {
+                        stats.dependents_map.remove_dependent(&dep_path, modified_dependent.clone());
+                        stats.depends_on_map.remove_dependent(&modified_path.path, DependentType::Local(dep_path.clone()));
                     } // Else: Log error or handle missing entity
                 }
                 DependentType::Entity(source_entity, dep_path) => {
-                    if let Ok(source_stats) = self.query.get_mut(source_entity) {
+                    // Update source entity's dependents_map
+                    if let Ok(mut source_stats) = self.query.get_mut(source_entity) {
                         let dependent_entry = DependentType::Entity(target, modified_path.path.clone());
-                        let mut map = source_stats.dependents_map.0.write().unwrap();
-                        if let Some(dependents) = map.get_mut(&dep_path) {
-                            if let Some(count) = dependents.get_mut(&dependent_entry) {
-                                *count -= 1;
-                                if *count == 0 {
-                                    dependents.remove(&dependent_entry);
-                                }
-                            }
-                            if dependents.is_empty() {
-                                map.remove(&dep_path);
-                            }
-                        }
+                        source_stats.dependents_map.remove_dependent(&dep_path, dependent_entry.clone());
+                    }
+                    
+                    // Update target entity's depends_on_map
+                    if let Ok(mut target_stats) = self.query.get_mut(target) {
+                        target_stats.depends_on_map.remove_dependent(
+                            &modified_path.path,
+                            DependentType::Entity(source_entity, dep_path.clone())
+                        );
                     } // Else: Log error or handle missing entity
                 }
             }
@@ -342,7 +327,7 @@ impl StatAccessor<'_, '_> {
         }
 
         let stats = self.query.get(target).unwrap(); // Assume exists after cache update check
-        let dependents = stats.get_dependents();
+        let dependents = stats.get_dependents().clone(); // TODO Bad clone
         let Some(dependents_to_update) = dependents.get(&path_str) else {
             return;
         };
@@ -368,9 +353,88 @@ impl StatAccessor<'_, '_> {
         stats.evaluate(&StatPath::parse(path_str).unwrap())
     }
 
-    // TODO handle safe tear-down of a destroyed stat entity. Should remove all dependencies from relevant entities
+    // handles safe tear-down of a destroyed stat entity. Removes all dependencies from relevant entities
     pub fn remove_stat_entity(&mut self, target_entity: Entity) {
+        
+        // Step 1: Clean up all outgoing dependencies (dependencies on other entities)
+        // We need to find all cross-entity dependencies this entity has
+        let outgoing_dependencies = {
+            // Get the stats component for the target entity
+            let Ok(stats) = self.query.get(target_entity) else {
+                // If the entity doesn't have stats, nothing to do
+                return;
+            };
 
+            let mut dependencies = Vec::new();
+            
+            // Go through all paths that this entity depends on
+            for (stat_path, dependent_map) in stats.depends_on_map.get_dependents() {
+                for (dependent, _weight) in dependent_map {
+                    if let DependentType::Entity(source_entity, source_path) = dependent {
+                        // This entity depends on another entity
+                        dependencies.push((*source_entity, source_path.clone(), stat_path.clone()));
+                    }
+                }
+            }
+            
+            dependencies
+        };
+        
+        // Remove the outgoing dependencies from other entities' dependents_map
+        for (source_entity, source_path, local_path) in outgoing_dependencies {
+            if let Ok(mut source_stats) = self.query.get_mut(source_entity) {
+                // Remove this entity as a dependent from the source entity
+                let dependent_entry = DependentType::Entity(target_entity, local_path);
+                source_stats.dependents_map.remove_dependent(&source_path, dependent_entry);
+            }
+        }
+        
+        // Step 2: Clean up all incoming dependencies (other entities that depend on this one)
+        let incoming_dependencies = {
+            // Get the stats component for the target entity
+            let Ok(stats) = self.query.get(target_entity) else {
+                // If the entity doesn't have stats, nothing to do
+                return;
+            };
+
+            let mut dependencies = Vec::new();
+            
+            // Go through all stats that other entities might depend on
+            for (stat_path, dependent_map) in stats.dependents_map.get_dependents() {
+                for (dependent, _weight) in dependent_map {
+                    if let DependentType::Entity(dependent_entity, dependent_path) = dependent {
+                        // Another entity depends on this one
+                        dependencies.push((*dependent_entity, dependent_path.clone(), stat_path.clone()));
+                    }
+                }
+            }
+            
+            dependencies
+        };
+        
+        // Remove the incoming dependencies from other entities' depends_on_map
+        for (dependent_entity, dependent_path, local_path) in incoming_dependencies {
+            if let Ok(mut dependent_stats) = self.query.get_mut(dependent_entity) {
+                // Remove the dependency on this entity from the dependent entity
+                let source_entry = DependentType::Entity(target_entity, local_path);
+                dependent_stats.depends_on_map.remove_dependent(&dependent_path, source_entry);
+                
+                // Also update the dependent entity's cached values that relied on this entity
+                // First get the path with the cache value to update
+                let cache_key = dependent_path;
+                
+                // Then update that value with a default (usually 0.0)
+                dependent_stats.cached_values.set(&cache_key, 0.0);
+                
+                // And propagate the change through the entity's dependency graph
+                let stat_path = StatPath::parse(&cache_key).unwrap();
+                self.update(dependent_entity, &stat_path);
+            }
+        }
+        
+        // The entity will be removed by Bevy's ECS after this function completes,
+        // so we don't need to explicitly clean up its own internal maps -
+        // those will be dropped when the entity is removed
     }
 }
 
