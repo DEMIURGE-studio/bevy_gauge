@@ -227,7 +227,109 @@ impl StatAccessor<'_, '_> {
     // we change who the sword is equipped to, we must update the "Strength@EquippedTo" cached value for the sword
     // and all dependent stat values (via the update function)
     fn register_source(&mut self, target: Entity, source_type: String, source: Entity) {
+        // Get the target entity's stats
+        let Ok(mut target_stats) = self.query.get_mut(target) else {
+            error!("Target entity {:?} not found for registering source", target);
+            return;
+        };
+        
+        // Check if this is replacing an existing source
+        let old_source = target_stats.sources.get(&source_type).cloned();
+        
+        // Update the source mapping
+        target_stats.sources.insert(source_type.clone(), source);
+        
+        // If replacing a source, we need to update all dependencies
+        if let Some(old_source_entity) = old_source {
+            if old_source_entity == source {
+                // Nothing changed, so no need to update
+                return;
+            }
+            
+            // Find all stats that depend on the changed source
+            let affected_stats = {
+                let mut affected = Vec::new();
+                
+                // Look through depends_on_map to find all stats that depend on the old source
+                for (local_path, deps) in target_stats.depends_on_map.get_dependents() {
+                    for (dep, _weight) in deps {
+                        if let DependentType::Entity(entity, _) = dep {
+                            if *entity == old_source_entity {
+                                affected.push(local_path.clone());
+                            }
+                        }
+                    }
+                }
+                
+                affected
+            };
+            
+            // We need to drop the mutable borrow before updating
+            drop(target_stats);
+            
+            // Update dependencies on the old source to point to the new source
+            self.update_source_dependencies(target, old_source_entity, source, &source_type);
+            
+            // Update affected stats with new values from the new source
+            for path_str in affected_stats {
+                let path = StatPath::parse(&path_str).unwrap();
+                self.update(target, &path);
+            }
+        } else {
+            // If this is a new source (not replacing an existing one), we don't need to
+            // update any existing dependencies since there are none yet
+        }
+    }
 
+    // Helper method to update dependencies when a source changes
+    fn update_source_dependencies(&mut self, target: Entity, old_source: Entity, new_source: Entity, source_type: &str) {
+        // Get all dependencies that need to be updated
+        let dependencies_to_update = {
+            let Ok(target_stats) = self.query.get(target) else {
+                return;
+            };
+            
+            let mut to_update = Vec::new();
+            
+            // Find all dependencies that reference the old source
+            for (local_path, deps) in target_stats.depends_on_map.get_dependents() {
+                for (dep, _weight) in deps {
+                    if let DependentType::Entity(entity, remote_path) = dep {
+                        if *entity == old_source {
+                            to_update.push((local_path.clone(), remote_path.clone()));
+                        }
+                    }
+                }
+            }
+            
+            to_update
+        };
+        
+        // For each dependency that needs updating
+        for (local_path, remote_path) in dependencies_to_update {
+            // 1. Remove the dependency from the old source entity
+            if let Ok(mut old_source_stats) = self.query.get_mut(old_source) {
+                let dependent_entry = DependentType::Entity(target, local_path.clone());
+                old_source_stats.dependents_map.remove_dependent(&remote_path, dependent_entry);
+            }
+            
+            // 2. Add the dependency to the new source entity
+            if let Ok(mut new_source_stats) = self.query.get_mut(new_source) {
+                let dependent_entry = DependentType::Entity(target, local_path.clone());
+                new_source_stats.dependents_map.add_dependent(&remote_path, dependent_entry);
+            }
+            
+            // 3. Update the depends_on_map in the target entity
+            if let Ok(mut target_stats) = self.query.get_mut(target) {
+                // Remove the old dependency
+                let old_dependency = DependentType::Entity(old_source, remote_path.clone());
+                target_stats.depends_on_map.remove_dependent(&local_path, old_dependency);
+                
+                // Add the new dependency
+                let new_dependency = DependentType::Entity(new_source, remote_path);
+                target_stats.depends_on_map.add_dependent(&local_path, new_dependency);
+            }
+        }
     }
 
     // go through all dependencies and add them in reverse. That is, DependentType::Entity(equipped_to_entity, "Strength")
@@ -355,7 +457,6 @@ impl StatAccessor<'_, '_> {
 
     // handles safe tear-down of a destroyed stat entity. Removes all dependencies from relevant entities
     pub fn remove_stat_entity(&mut self, target_entity: Entity) {
-        
         // Step 1: Clean up all outgoing dependencies (dependencies on other entities)
         // We need to find all cross-entity dependencies this entity has
         let outgoing_dependencies = {
