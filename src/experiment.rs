@@ -1,7 +1,8 @@
-use std::{cell::SyncUnsafeCell, sync::{Arc, RwLock}};
+use std::{cell::SyncUnsafeCell, sync::{Arc, Mutex, OnceLock, RwLock}};
 
 use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
+use regex::Regex;
 
 // Internal mutability used for cached_values and dependents_map because those should
 // be able to be safely updated due to their values being derived from internal values.
@@ -169,9 +170,199 @@ impl DependencyMap {
 // Since stats are just strings, we need some way of knowing how a stat is configured based
 // on its name alone. For instance, when we add "Life.Added" we need to know that that's a 
 // StatType::Modifiable, where "Damage.Added.LIGHTNING" is a StatType::Tagged
-#[derive(Resource)]
-struct StatConfig {
+#[derive(Default)]
+pub struct StatConfig {
+    // Maps stat path patterns to their corresponding StatType
+    stat_type_patterns: HashMap<String, StatTypePattern>,
+    
+    // Default bases for common modifiable parts
+    default_bases: HashMap<String, f32>,
+    
+    // Default expression templates
+    default_expressions: HashMap<String, String>,
+}
 
+// Pattern matching to determine stat types based on path structure
+struct StatTypePattern {
+    pattern: Regex,
+    stat_type_factory: fn() -> StatType,
+}
+
+impl StatConfig {
+    // Get the global instance
+    pub fn global() -> &'static Mutex<StatConfig> {
+        static INSTANCE: OnceLock<Mutex<StatConfig>> = OnceLock::new();
+        INSTANCE.get_or_init(|| Mutex::new(StatConfig::create_default()))
+    }
+    
+    // Creates a default configuration
+    fn create_default() -> Self {
+        let mut config = StatConfig::default();
+        
+        // Set up default bases for common modifiers
+        config.default_bases.insert("Added".to_string(), 0.0);
+        config.default_bases.insert("Increased".to_string(), 1.0);
+        config.default_bases.insert("More".to_string(), 1.0);
+        config.default_bases.insert("Base".to_string(), 0.0);
+        
+        // Set up default expressions for complex stats
+        config.default_expressions.insert(
+            "Default".to_string(), 
+            "Base + Added * (1 + Increased) * (1 + More)".to_string()
+        );
+        config.default_expressions.insert(
+            "Damage".to_string(), 
+            "Added + Base * (1 + Increased) * (1 + More)".to_string()
+        );
+        
+        // Set up stat type patterns
+        
+        // Simple flat stats (e.g., "Strength", "Dexterity")
+        config.add_pattern(
+            r"^(Strength|Dexterity|Intelligence|Vitality)$",
+            || StatType::Flat(Flat { base: 10.0 }) // Default base of 10 for primary attributes
+        );
+        
+        // Derived complex stats (e.g., "Life", "Mana")
+        config.add_pattern(
+            r"^(Life|Mana|Shield|Energy)$",
+            || {
+                let mut parts = HashMap::new();
+                
+                // Add default parts
+                parts.insert("Added".to_string(), Modifiable {
+                    base: 0.0,
+                    expressions: Vec::new(),
+                });
+                
+                parts.insert("Increased".to_string(), Modifiable {
+                    base: 1.0,
+                    expressions: Vec::new(),
+                });
+                
+                parts.insert("More".to_string(), Modifiable {
+                    base: 1.0,
+                    expressions: Vec::new(),
+                });
+                
+                parts.insert("Base".to_string(), Modifiable {
+                    base: 100.0, // Default base pool size
+                    expressions: Vec::new(),
+                });
+                
+                StatType::Complex(Complex {
+                    total: Expression::new("Base + Added * (1 + Increased) * (1 + More)"),
+                    parts,
+                })
+            }
+        );
+        
+        // Modifiable parts of complex stats (e.g., "Life.Added", "Mana.Increased")
+        config.add_pattern(
+            r"^(Life|Mana|Shield|Energy)\.(Added|Increased|More|Base)$",
+            || {
+                StatType::Modifiable(Modifiable {
+                    base: 0.0, // Will be replaced based on the part type
+                    expressions: Vec::new(),
+                })
+            }
+        );
+        
+        // Damage stats with tags (e.g., "Damage.Added.FIRE", "Damage.Increased.PHYSICAL")
+        config.add_pattern(
+            r"^Damage(\..*)?$",
+            || {
+                let total = Expression::new("Added + Base * (1 + Increased) * More");
+                StatType::Tagged(Tagged::new())
+            }
+        );
+        
+        config
+    }
+    
+    // Add a new pattern to match against stat paths
+    fn add_pattern<S: Into<String>>(&mut self, pattern: S, factory: fn() -> StatType) {
+        let regex = Regex::new(&pattern.into()).expect("Invalid regex pattern");
+        self.stat_type_patterns.insert(
+            regex.as_str().to_string(),
+            StatTypePattern {
+                pattern: regex,
+                stat_type_factory: factory,
+            }
+        );
+    }
+    
+    // Set a default base value for a modifier type
+    fn set_default_base<S: Into<String>>(&mut self, modifier_type: S, value: f32) {
+        self.default_bases.insert(modifier_type.into(), value);
+    }
+    
+    // Set a default expression template
+    fn set_default_expression<S1: Into<String>, S2: Into<String>>(&mut self, name: S1, expression: S2) {
+        self.default_expressions.insert(name.into(), expression.into());
+    }
+    
+    // Get default base value for a modifier type
+    fn get_default_base(&self, modifier_type: &str) -> f32 {
+        *self.default_bases.get(modifier_type).unwrap_or(&0.0)
+    }
+    
+    // Get default expression template
+    fn get_default_expression(&self, name: &str) -> Option<&String> {
+        self.default_expressions.get(name).or_else(|| self.default_expressions.get("Default"))
+    }
+    
+    // Create a StatType from a stat path
+    fn create_stat_type(&self, path: &StatPath) -> StatType {
+        // First check for exact match on the full path
+        let path_str = &path.path;
+        
+        // Try to match patterns
+        for (_, pattern) in &self.stat_type_patterns {
+            if pattern.pattern.is_match(path_str) {
+                let mut stat_type = (pattern.stat_type_factory)();
+                
+                // Customize based on path components
+                self.customize_stat_type(&mut stat_type, path);
+                
+                return stat_type;
+            }
+        }
+        
+        // Default to a Flat stat if no patterns match
+        StatType::Flat(Flat { base: 0.0 })
+    }
+    
+    // Customize a stat type based on the path
+    fn customize_stat_type(&self, stat_type: &mut StatType, path: &StatPath) {
+        match stat_type {
+            StatType::Modifiable(modifiable) => {
+                // If it's a modifiable part of a complex stat (e.g., "Life.Added")
+                if path.parts.len() >= 2 {
+                    let part_type = &path.parts[1];
+                    modifiable.base = self.get_default_base(part_type);
+                }
+            },
+            StatType::Complex(complex) => {
+                // If stat name matches one of our expression templates, use it
+                if let Some(expression_template) = self.get_default_expression(&path.parts[0]) {
+                    complex.total = Expression::new(expression_template);
+                }
+                
+                // Set default bases for all parts
+                for (part_name, part) in &mut complex.parts {
+                    part.base = self.get_default_base(part_name);
+                }
+            },
+            StatType::Tagged(tagged) => {
+                // If stat name matches one of our expression templates, use it
+                if let Some(expression_template) = self.get_default_expression(&path.parts[0]) {
+                    tagged.total = Expression::new(expression_template);
+                }
+            },
+            _ => {}
+        }
+    }
 }
 
 // Stats cannot handle cross-entity stat updates, so all stat value changes must be done
@@ -179,7 +370,6 @@ struct StatConfig {
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
     query: Query<'w, 's, &'static mut Stats>,
-    config: Res<'w, StatConfig>,
 }
 
 impl StatAccessor<'_, '_> {
@@ -801,10 +991,9 @@ impl StatLike for Complex {
         // Get the appropriate part based on the path
         if path.parts.len() > 1 {
             let part_name = &path.parts[1]; // Second part of the path is the modifier type (e.g., "Added")
+            let config = StatConfig::global().lock().unwrap();
+            let default_base = config.get_default_base(part_name);
             let part = self.parts.entry(part_name.clone()).or_insert_with(|| {
-                // Create default Modifiable with appropriate base value
-                // For multipliers, default to 1.0, for additive values, default to 0.0
-                let default_base = if part_name == "Added" { 0.0 } else { 1.0 };
                 Modifiable {
                     base: default_base,
                     expressions: Vec::new(),
@@ -872,8 +1061,8 @@ impl StatLike for Complex {
             let part_value = if let Some(part) = self.parts.get(part_name) {
                 part.evaluate(&path_obj, stats)
             } else {
-                // Default values: 0.0 for Added, 1.0 for multipliers
-                if part_name == "Added" { 0.0 } else { 1.0 }
+                let config = StatConfig::global().lock().unwrap();
+                config.get_default_base(part_name)
             };
             
             // Cache the part value
@@ -962,12 +1151,18 @@ impl Tagged {
         // Evaluate the tag
         let part_entry = match self.parts.get(part) {
             Some(entry) => entry,
-            None => return if part == "Added" { 0.0 } else { 1.0 }, // Default
+            None => {
+                let config = StatConfig::global().lock().unwrap();
+                return config.get_default_base(part);
+            },
         };
         
         let tag_entry = match part_entry.parts.get(&tag) {
             Some(entry) => entry,
-            None => return if part == "Added" { 0.0 } else { 1.0 }, // Default
+            None => {
+                let config = StatConfig::global().lock().unwrap();
+                return config.get_default_base(part);
+            },
         };
         
         // Create a temporary path for evaluation
@@ -1010,9 +1205,11 @@ impl StatLike for Tagged {
             .or_insert_with(|| TaggedEntry { parts: HashMap::new() });
         
         // Get or create the specific tag entry
+        let config = StatConfig::global().lock().unwrap();
+        let default_base = config.get_default_base(part_name);
         let tag_entry = part_entry.parts.entry(tag)
-            .or_insert_with(|| Modifiable { 
-                base: if part_name == "Added" { 0.0 } else { 1.0 },
+            .or_insert_with(|| Modifiable {
+                base: default_base,
                 expressions: Vec::new()
             });
             
@@ -1053,7 +1250,9 @@ impl StatLike for Tagged {
         tag_entry.remove_modifier(path, value, stats);
         
         // Clean up empty entries
-        if tag_entry.expressions.is_empty() && tag_entry.base == (if part_name == "Added" { 0.0 } else { 1.0 }) {
+        let config = StatConfig::global().lock().unwrap();
+        let default_base = config.get_default_base(part_name);
+        if tag_entry.expressions.is_empty() && tag_entry.base == default_base {
             part_entry.parts.remove(&tag);
         }
         
@@ -1086,9 +1285,11 @@ impl StatLike for Tagged {
             .or_insert_with(|| TaggedEntry { parts: HashMap::new() });
         
         // Get or create the specific tag entry
+        let config = StatConfig::global().lock().unwrap();
+        let default_base = config.get_default_base(part_name);
         let tag_entry = part_entry.parts.entry(tag)
-            .or_insert_with(|| Modifiable { 
-                base: if part_name == "Added" { 0.0 } else { 1.0 },
+            .or_insert_with(|| Modifiable {
+                base: default_base,
                 expressions: Vec::new()
             });
         
@@ -1145,7 +1346,8 @@ impl StatLike for Tagged {
                 Ok(num) => num,
                 Err(_) => {
                     error!("Invalid tag format: {}", tag_str);
-                    return if part_name == "Added" { 0.0 } else { 1.0 }; // Default value
+                    let config = StatConfig::global().lock().unwrap();
+                    return config.get_default_base(part_name);
                 }
             };
             
