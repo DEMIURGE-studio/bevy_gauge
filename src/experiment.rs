@@ -1,8 +1,72 @@
-use std::{cell::SyncUnsafeCell, sync::{Arc, Mutex, OnceLock, RwLock}};
+use std::{cell::SyncUnsafeCell, fmt, sync::{Arc, Mutex, OnceLock, RwLock}};
 
 use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 use regex::Regex;
+
+/// Error type for the stat system
+#[derive(Debug, Clone, PartialEq)]
+pub enum StatError {
+    /// Failed to parse a stat path
+    InvalidStatPath { path: String, details: String },
+    
+    /// Error when evaluating an expression
+    ExpressionError { expression: String, details: String },
+    
+    /// Entity not found
+    EntityNotFound { entity: Entity },
+    
+    /// Stat not found
+    StatNotFound { path: String },
+    
+    /// Invalid tag format in path
+    InvalidTagFormat { tag: String, path: String },
+    
+    /// Dependency cycle detected
+    DependencyCycle { path: String },
+    
+    /// Missing source entity reference
+    MissingSource { source_name: String, path: String },
+    
+    /// Internal error
+    Internal { details: String },
+}
+
+impl fmt::Display for StatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StatError::InvalidStatPath { path, details } => {
+                write!(f, "Invalid stat path '{}': {}", path, details)
+            }
+            StatError::ExpressionError { expression, details } => {
+                write!(f, "Failed to evaluate expression '{}': {}", expression, details)
+            }
+            StatError::EntityNotFound { entity } => {
+                write!(f, "Entity {:?} not found", entity)
+            }
+            StatError::StatNotFound { path } => {
+                write!(f, "Stat '{}' not found", path)
+            }
+            StatError::InvalidTagFormat { tag, path } => {
+                write!(f, "Invalid tag format '{}' in path '{}'", tag, path)
+            }
+            StatError::DependencyCycle { path } => {
+                write!(f, "Dependency cycle detected for stat '{}'", path)
+            }
+            StatError::MissingSource { source_name, path } => {
+                write!(f, "Missing source '{}' referenced by '{}'", source_name, path)
+            }
+            StatError::Internal { details } => {
+                write!(f, "Internal error: {}", details)
+            }
+        }
+    }
+}
+
+impl std::error::Error for StatError {}
+
+// Type alias for Result with StatError
+pub type StatResult<T> = Result<T, StatError>;
 
 // Internal mutability used for cached_values and dependents_map because those should
 // be able to be safely updated due to their values being derived from internal values.
@@ -29,10 +93,6 @@ impl Stats {
     fn set(&mut self, path: &StatPath, value: f32) {
         // get the stat entry
         // if there is no stat at that address, make it a StatType::Flat and set its base
-    }
-
-    fn register_dependent(&mut self, dependent: &DependentType) {
-
     }
 
     fn get(&self, path: &StatPath) -> f32 {
@@ -251,7 +311,7 @@ impl StatConfig {
                 });
                 
                 StatType::Complex(Complex {
-                    total: Expression::new("Base + Added * (1 + Increased) * (1 + More)"),
+                    total: Expression::new_unchecked("Base + Added * (1 + Increased) * (1 + More)"),
                     parts,
                 })
             }
@@ -346,7 +406,7 @@ impl StatConfig {
             StatType::Complex(complex) => {
                 // If stat name matches one of our expression templates, use it
                 if let Some(expression_template) = self.get_default_expression(&path.parts[0]) {
-                    complex.total = Expression::new(expression_template);
+                    complex.total = Expression::new_unchecked(expression_template);
                 }
                 
                 // Set default bases for all parts
@@ -357,7 +417,7 @@ impl StatConfig {
             StatType::Tagged(tagged) => {
                 // If stat name matches one of our expression templates, use it
                 if let Some(expression_template) = self.get_default_expression(&path.parts[0]) {
-                    tagged.total = Expression::new(expression_template);
+                    tagged.total = Expression::new_unchecked(expression_template);
                 }
             },
             _ => {}
@@ -742,14 +802,28 @@ struct Expression {
 }
 
 impl Expression {
-    fn new(expression: &str) -> Self {
-        Self {
+    fn new(expression: &str) -> StatResult<Self> {
+        let compiled = evalexpr::build_operator_tree(expression)
+            .map_err(|err| StatError::ExpressionError {
+                expression: expression.to_string(),
+                details: err.to_string(),
+            })?;
+            
+        Ok(Self {
             definition: expression.to_string(),
-            compiled: evalexpr::build_operator_tree(expression).unwrap(),
-        }
+            compiled,
+        })
+    }
+    
+    // Safe version that panics on error, for backwards compatibility
+    fn new_unchecked(expression: &str) -> Self {
+        Self::new(expression).unwrap_or_else(|err| {
+            panic!("Failed to create expression: {}", err)
+        })
     }
 
-    pub(crate) fn evaluate(&self, context: &HashMapContext) -> f32 {
+    // Updated evaluate to handle errors
+    fn evaluate(&self, context: &HashMapContext) -> f32 {
         self.compiled
             .eval_with_context(context)
             .unwrap_or(Value::Float(0.0))
@@ -767,8 +841,8 @@ struct StatPath {
 }
 
 impl StatPath {
-    // Simplified parser, needs more robust error handling
-    fn parse<S: AsRef<str>>(path_str_ref: S) -> Result<Self, String> { // Return Result
+    // Parse a string into a StatPath
+    fn parse<S: AsRef<str>>(path_str_ref: S) -> StatResult<Self> {
         let path_str = path_str_ref.as_ref();
         let mut owner = None;
         let local_path_str;
@@ -782,9 +856,11 @@ impl StatPath {
 
         let parts: Vec<String> = local_path_str.split('.').map(String::from).collect();
         if parts.is_empty() || parts.iter().any(|p| p.is_empty()) {
-           return Err(format!("Invalid stat path format: {}", path_str));
+            return Err(StatError::InvalidStatPath {
+                path: path_str.to_string(),
+                details: "Path cannot be empty or contain empty parts".to_string(),
+            });
         }
-
 
         Ok(Self {
             owner,
@@ -795,10 +871,13 @@ impl StatPath {
     }
 }
 
-impl<T: Into<String>> From<T> for StatPath where T: AsRef<str> { // Generic From based on AsRef<str>
-     fn from(value: T) -> Self {
-         Self::parse(value.as_ref()).expect("Failed to parse stat path")
-     }
+// Update the From implementation to propagate errors
+impl<T: Into<String>> From<T> for StatPath where T: AsRef<str> {
+    fn from(value: T) -> Self {
+        Self::parse(value.as_ref()).unwrap_or_else(|err| {
+            panic!("Failed to parse stat path: {}", err)
+        })
+    }
 }
 
 // A common interface for adding modifiers, removing modifiers, etc. Should gracefully handle
@@ -1115,7 +1194,7 @@ struct Tagged {
 impl Tagged {
     fn new() -> Self {
         Self {
-            total: Expression::new("Added + Base * Increased * More"),
+            total: Expression::new_unchecked("Added + Base * Increased * More"),
             parts: HashMap::new(),
             queried_combinations: SyncUnsafeCell::new(HashMap::new()),
         }
