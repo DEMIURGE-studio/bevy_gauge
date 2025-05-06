@@ -83,7 +83,11 @@ struct Stats {
 
 impl Stats {
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
+        if let Some(stat) = self.definitions.get_mut(&path.path) {
+            stat.add_modifier(path, modifier);
+        } else {
 
+        }
     }
     
     fn remove_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
@@ -887,16 +891,16 @@ impl<T: Into<String>> From<T> for StatPath where T: AsRef<str> {
 // we add "Life" as a dependent of "Life.Added", "Life.Increased", etc., AND we add "Life.Added" and
 // the other variants to the cache.)
 trait StatLike {
-    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats);
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats);
-    fn set(&mut self, path: &StatPath, value: f32, stats: &Stats);
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType);
+    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType);
+    fn set(&mut self, path: &StatPath, value: f32);
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32;
     
     // Register dependencies and initialize caches when a stat is first added or updated
-    fn register(&self, path: &StatPath, stats: &mut Stats) { }
+    fn register(&self, _path: &StatPath, _stats: &mut Stats) { }
     
     // Unregister dependencies when a stat is removed
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) { }
+    fn unregister(&self, _path: &StatPath, _stats: &mut Stats) { }
 }
 
 // A catch-all for stat types.
@@ -908,30 +912,30 @@ enum StatType {
 }
 
 impl StatLike for StatType {
-    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType) {
         match self {
-            StatType::Flat(flat) => flat.add_modifier(path, value, stats),
-            StatType::Modifiable(modifiable) => modifiable.add_modifier(path, value, stats),
-            StatType::Complex(complex) => complex.add_modifier(path, value, stats),
-            StatType::Tagged(tagged) => tagged.add_modifier(path, value, stats),
+            StatType::Flat(flat) => flat.add_modifier(path, value),
+            StatType::Modifiable(modifiable) => modifiable.add_modifier(path, value),
+            StatType::Complex(complex) => complex.add_modifier(path, value),
+            StatType::Tagged(tagged) => tagged.add_modifier(path, value),
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
         match self {
-            StatType::Flat(flat) => flat.remove_modifier(path, value, stats),
-            StatType::Modifiable(modifiable) => modifiable.remove_modifier(path, value, stats),
-            StatType::Complex(complex) => complex.remove_modifier(path, value, stats),
-            StatType::Tagged(tagged) => tagged.remove_modifier(path, value, stats),
+            StatType::Flat(flat) => flat.remove_modifier(path, value),
+            StatType::Modifiable(modifiable) => modifiable.remove_modifier(path, value),
+            StatType::Complex(complex) => complex.remove_modifier(path, value),
+            StatType::Tagged(tagged) => tagged.remove_modifier(path, value),
         }
     }
 
-    fn set(&mut self, path: &StatPath, value: f32, stats: &Stats) {
+    fn set(&mut self, path: &StatPath, value: f32) {
         match self {
-            StatType::Flat(flat) => flat.set(path, value, stats),
-            StatType::Modifiable(modifiable) => {},
-            StatType::Complex(complex) => {},
-            StatType::Tagged(tagged) => {},
+            StatType::Flat(flat) => flat.set(path, value),
+            StatType::Modifiable(_) => {},
+            StatType::Complex(_) => {},
+            StatType::Tagged(_) => {},
         }
     }
 
@@ -969,7 +973,7 @@ struct Flat {
 }
 
 impl StatLike for Flat {
-    fn add_modifier(&mut self, _path: &StatPath, value: ModifierType, _stats: &Stats) {
+    fn add_modifier(&mut self, _path: &StatPath, value: ModifierType) {
         // For Flat stats, we only handle Literal values
         if let ModifierType::Literal(val) = value {
             self.base += val;
@@ -977,7 +981,7 @@ impl StatLike for Flat {
         // Silently ignore Expression modifiers as they're not applicable
     }
 
-    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType, _stats: &Stats) {
+    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType) {
         // For Flat stats, we only handle Literal values
         if let ModifierType::Literal(val) = value {
             self.base -= val;
@@ -985,7 +989,7 @@ impl StatLike for Flat {
         // Silently ignore Expression modifiers as they're not applicable
     }
 
-    fn set(&mut self, _path: &StatPath, value: f32, _stats: &Stats) {
+    fn set(&mut self, _path: &StatPath, value: f32) {
         // Direct setting replaces the base value
         self.base = value;
     }
@@ -1003,7 +1007,7 @@ struct Modifiable {
 }
 
 impl StatLike for Modifiable {
-    fn add_modifier(&mut self, _path: &StatPath, value: ModifierType, _stats: &Stats) {
+    fn add_modifier(&mut self, _path: &StatPath, value: ModifierType) {
         match value {
             ModifierType::Literal(val) => {
                 // For literal values, we just add to the base
@@ -1016,7 +1020,7 @@ impl StatLike for Modifiable {
         }
     }
 
-    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType, _stats: &Stats) {
+    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType) {
         match value {
             ModifierType::Literal(val) => {
                 // For literal values, we subtract from the base
@@ -1031,7 +1035,7 @@ impl StatLike for Modifiable {
         }
     }
 
-    fn set(&mut self, _path: &StatPath, _value: f32, _stats: &Stats) { return }
+    fn set(&mut self, _path: &StatPath, _value: f32) { return }
 
     fn evaluate(&self, _path: &StatPath, stats: &Stats) -> f32 {
         // Start with the base value
@@ -1066,7 +1070,7 @@ struct Complex {
 }
 
 impl StatLike for Complex {
-    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType) {
         // Get the appropriate part based on the path
         if path.parts.len() > 1 {
             let part_name = &path.parts[1]; // Second part of the path is the modifier type (e.g., "Added")
@@ -1080,26 +1084,26 @@ impl StatLike for Complex {
             });
             
             // Add the modifier to the appropriate part
-            part.add_modifier(path, value, stats);
+            part.add_modifier(path, value);
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
         // Get the appropriate part based on the path
         if path.parts.len() > 1 {
             let part_name = &path.parts[1];
             if let Some(part) = self.parts.get_mut(part_name) {
-                part.remove_modifier(path, value, stats);
+                part.remove_modifier(path, value);
             }
         }
     }
 
-    fn set(&mut self, path: &StatPath, value: f32, stats: &Stats) {
+    fn set(&mut self, path: &StatPath, value: f32) {
         // Get the appropriate part based on the path
         if path.parts.len() > 1 {
             let part_name = &path.parts[1];
             if let Some(part) = self.parts.get_mut(part_name) {
-                part.set(path, value, stats);
+                part.set(path, value);
             }
         }
     }
@@ -1188,7 +1192,7 @@ struct Tagged {
     total: Expression,
     parts: HashMap<String, TaggedEntry>,
     // Track which paths have been queried for each tag using a HashSet
-    queried_combinations: SyncUnsafeCell<HashMap<u32, HashSet<String>>>,
+    cached_queries: SyncUnsafeCell<HashMap<u32, HashSet<String>>>,
 }
 
 impl Tagged {
@@ -1196,16 +1200,16 @@ impl Tagged {
         Self {
             total: Expression::new_unchecked("Added + Base * Increased * More"),
             parts: HashMap::new(),
-            queried_combinations: SyncUnsafeCell::new(HashMap::new()),
+            cached_queries: SyncUnsafeCell::new(HashMap::new()),
         }
     }
     
-    fn update_cached_tags(&self, part_name: &str, tag: u32, stats: &Stats) {
+    fn update_cached_queries(&self, tag: u32, stats: &Stats) {
         unsafe {
-            let combinations = &mut *self.queried_combinations.get();
+            let queries = &mut *self.cached_queries.get();
             
             // If this tag has been queried before
-            if let Some(paths) = combinations.get(&tag) {
+            if let Some(paths) = queries.get(&tag) {
                 for path_str in paths {
                     // Re-evaluate the path with this tag
                     let path = StatPath::parse(path_str).unwrap();
@@ -1253,7 +1257,7 @@ impl Tagged {
         
         // Remember that this tag was queried
         unsafe {
-            let combinations = &mut *self.queried_combinations.get();
+            let combinations = &mut *self.cached_queries.get();
             let tag_paths = combinations.entry(tag).or_insert_with(HashSet::new);
             tag_paths.insert(path_str);
         }
@@ -1263,7 +1267,7 @@ impl Tagged {
 }
 
 impl StatLike for Tagged {
-    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType) {
         // Extract tag from path (assuming format like "Damage.Added.FIRE" where FIRE is a u32)
         if path.parts.len() < 3 {
             return; // Invalid path for tagged stat
@@ -1293,13 +1297,10 @@ impl StatLike for Tagged {
             });
             
         // Add the modifier to the specific tag entry
-        tag_entry.add_modifier(path, value, stats);
-        
-        // Update all cached values for this tag
-        self.update_cached_tags(part_name, tag, stats);
+        tag_entry.add_modifier(path, value);
     }
     
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType, stats: &Stats) {
+    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
         // Similar to add_modifier but removing
         if path.parts.len() < 3 {
             return; // Invalid path for tagged stat
@@ -1326,7 +1327,7 @@ impl StatLike for Tagged {
         };
         
         // Remove the modifier
-        tag_entry.remove_modifier(path, value, stats);
+        tag_entry.remove_modifier(path, value);
         
         // Clean up empty entries
         let config = StatConfig::global().lock().unwrap();
@@ -1338,12 +1339,9 @@ impl StatLike for Tagged {
         if part_entry.parts.is_empty() {
             self.parts.remove(part_name);
         }
-        
-        // Update all cached values for this tag
-        self.update_cached_tags(part_name, tag, stats);
     }
     
-    fn set(&mut self, path: &StatPath, value: f32, stats: &Stats) {
+    fn set(&mut self, path: &StatPath, value: f32) {
         // For direct setting of tag values
         if path.parts.len() < 3 {
             return; // Invalid path for tagged stat
@@ -1374,9 +1372,6 @@ impl StatLike for Tagged {
         
         // Set the base value directly
         tag_entry.base = value;
-        
-        // Update cached values
-        self.update_cached_tags(part_name, tag, stats);
     }
 
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
@@ -1433,7 +1428,7 @@ impl StatLike for Tagged {
             return self.get_or_evaluate_tag(&path.parts[0], part_name, tag, stats);
         }
         
-        0.0 // Fallback
+        0.0
     }
     
     fn register(&self, path: &StatPath, stats: &mut Stats) {
@@ -1476,7 +1471,7 @@ impl StatLike for Tagged {
                     
                     // Remember that this tag was queried
                     unsafe {
-                        let combinations = &mut *self.queried_combinations.get();
+                        let combinations = &mut *self.cached_queries.get();
                         let tag_paths = combinations.entry(tag).or_insert_with(HashSet::new);
                         tag_paths.insert(part_tag_path);
                     }
@@ -1505,7 +1500,7 @@ impl StatLike for Tagged {
             
             // Remove from cache
             unsafe {
-                let combinations = &mut *self.queried_combinations.get();
+                let combinations = &mut *self.cached_queries.get();
                 if let Some(tag_paths) = combinations.get_mut(&tag) {
                     tag_paths.remove(&part_tag_path);
                     if tag_paths.is_empty() {
