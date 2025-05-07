@@ -72,7 +72,7 @@ pub type StatResult<T> = Result<T, StatError>;
 // be able to be safely updated due to their values being derived from internal values.
 // We actively update the values whenever a modifier changes, ensuring the cache is
 // always up to date. 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct Stats {
     definitions: HashMap<String, StatType>,
     cached_values: SyncContext,
@@ -111,7 +111,7 @@ impl Stats {
     }
     
     // Similar pattern for other modification methods
-    fn remove_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
+    fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
         // Get paths to update before applying the modification
         let paths_to_update = if let Some(stat) = self.definitions.get(&path.path) {
             stat.get_affected_paths(path)
@@ -216,6 +216,7 @@ impl Stats {
 // Holds the memoized values for stats in the form of a HashMapContext, which can be
 // used to evaluate stat values. When a stats value changes, it's cached value must be
 // actively updated anywhere it exists.
+#[derive(Default)]
 struct SyncContext(SyncUnsafeCell<HashMapContext>);
 
 impl SyncContext {
@@ -276,6 +277,7 @@ pub enum DependentType {
 // "Damage.Added.PHYSICAL" += "Strength@EquippedTo / 2". This indicates that a weapons
 // damage is dependent on the entity it's equipped to's strength. This would also require
 // an entry in "sources" for "EquippedTo" to map to a specific entity.
+#[derive(Default)]
 struct DependencyMap(HashMap<String, HashMap<DependentType, u32>>);
 
 impl DependencyMap {
@@ -421,7 +423,13 @@ impl StatConfig {
         );
         
         // Damage stats with tags (e.g., "Damage.Added.FIRE", "Damage.Increased.PHYSICAL")
-        //config.add_pattern(...);
+        config.add_pattern(
+            r"^(Damage)$", // Base pattern for Tagged stats like "Damage"
+            || {
+                // The string "Damage" here is used to fetch the default expression for the total.
+                StatType::Tagged(Tagged::new("Damage"))
+            }
+        );
         
         config
     }
@@ -549,6 +557,9 @@ impl StatAccessor<'_, '_> {
 
         // Apply the modifier
         let mut stats = self.query.get_mut(target).unwrap();
+        if !stats.definitions.contains_key(&path.local_path) {
+            // TODO maybe a stats.initialize(path) that calls stat.register on adding a new stat.
+        }
         stats.add_modifier(path, modifier);
         
         // Update all affected paths
@@ -559,11 +570,11 @@ impl StatAccessor<'_, '_> {
     }
     
     // add_modifier_value but in reverse.
-    pub fn remove_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: ModifierType) {
+    pub fn remove_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: &ModifierType) {
         let stats = self.query.get(target).unwrap();
 
         // Remove dependencies for expressions
-        if let ModifierType::Expression(expression) = &modifier {
+        if let ModifierType::Expression(expression) = modifier {
             let dependencies = stats.get_dependencies(expression);
             self.remove_dependents(target, path, dependencies);
         }
@@ -943,12 +954,14 @@ impl StatAccessor<'_, '_> {
 }
 
 // Modifiers can be flat (literal) values or expressions.
+#[derive(Clone)]
 pub enum ModifierType {
     Literal(f32),
     Expression(Expression),
 }
 
 // Expressions store their definition and use evalexpr to calculate stat values.
+#[derive(Clone)]
 pub struct Expression {
     definition: String,
     compiled: Node<DefaultNumericTypes>,
@@ -1041,15 +1054,12 @@ impl<T: Into<String>> From<T> for StatPath where T: AsRef<str> {
 // the other variants to the cache.)
 trait StatLike {
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType);
-    fn remove_modifier(&mut self, path: &StatPath, modifier: ModifierType);
+    fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType);
     fn set(&mut self, path: &StatPath, value: f32);
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32;
     
     // Register dependencies and initialize caches when a stat is first added or updated
-    fn register(&self, path: &StatPath, stats: &mut Stats) { }
-    
-    // Unregister dependencies when a stat is removed
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) { }
+    fn register(&self, _path: &StatPath, _stats: &mut Stats) { }
     
     // New method to identify which paths need to be updated when this stat changes
     fn get_affected_paths(&self, path: &StatPath) -> Vec<String> {
@@ -1059,10 +1069,7 @@ trait StatLike {
 
     // Called after a stat's cached value has been updated
     // This allows the stat to perform any post-update operations like registering dependencies
-    fn post_update(&self, path: &StatPath, stats: &Stats) -> Vec<(String, DependentType)> {
-        // Default implementation returns empty list
-        Vec::new()
-    }
+    fn post_update(&self, _path: &StatPath, _stats: &Stats) { }
 }
 
 // A catch-all for stat types.
@@ -1083,7 +1090,7 @@ impl StatLike for StatType {
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         match self {
             StatType::Flat(flat) => flat.remove_modifier(path, value),
             StatType::Modifiable(modifiable) => modifiable.remove_modifier(path, value),
@@ -1118,15 +1125,6 @@ impl StatLike for StatType {
             StatType::Tagged(tagged) => tagged.register(path, stats),
         }
     }
-    
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) {
-        match self {
-            StatType::Flat(_) => {}, // No unregistration needed
-            StatType::Modifiable(_) => {}, // No unregistration needed
-            StatType::Complex(complex) => complex.unregister(path, stats),
-            StatType::Tagged(tagged) => tagged.unregister(path, stats),
-        }
-    }
 }
 
 // Only has a base value. Cannot have expression modifiers added to it.
@@ -1143,7 +1141,7 @@ impl StatLike for Flat {
         // Silently ignore Expression modifiers as they're not applicable
     }
 
-    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType) {
+    fn remove_modifier(&mut self, _path: &StatPath, value: &ModifierType) {
         // For Flat stats, we only handle Literal values
         if let ModifierType::Literal(val) = value {
             self.base -= val;
@@ -1182,7 +1180,7 @@ impl StatLike for Modifiable {
         }
     }
 
-    fn remove_modifier(&mut self, _path: &StatPath, value: ModifierType) {
+    fn remove_modifier(&mut self, _path: &StatPath, value: &ModifierType) {
         match value {
             ModifierType::Literal(val) => {
                 // For literal values, we subtract from the base
@@ -1250,7 +1248,7 @@ impl StatLike for Complex {
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         // Get the appropriate part based on the path
         if path.parts.len() > 1 {
             let part_name = &path.parts[1];
@@ -1321,17 +1319,6 @@ impl StatLike for Complex {
         // 3. Evaluate and cache the total
         let total_value = self.evaluate(path, stats);
         stats.cached_values.set(&base_name, total_value);
-    }
-    
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) {
-        let base_name = path.parts[0].clone();
-        
-        // Unregister the base stat as a dependent of each part
-        for (part_name, _) in &self.parts {
-            let part_path = format!("{}.{}", base_name, part_name);
-            let dependent = DependentType::Local(base_name.clone());
-            stats.dependents_map.remove_dependent(&part_path, dependent);
-        }
     }
 }
 
@@ -1523,7 +1510,7 @@ impl StatLike for Tagged {
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         // Similar to add_modifier but for removal
         if path.parts.len() < 3 {
             return;
@@ -1650,36 +1637,6 @@ impl StatLike for Tagged {
     }
     
     fn register(&self, path: &StatPath, stats: &mut Stats) { }
-    
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) {
-        // Clean up any dependencies that were registered
-        // This is important to prevent memory leaks
-        
-        let affected_queries = self.get_affected_queries();
-        
-        for (tag, parts) in affected_queries {
-            // Clean up total dependencies
-            if parts.contains("_total") {
-                let total_path = format!("{}.{}", path.parts[0], tag);
-                
-                // Clean up dependencies on parts
-                for part_name in self.total.compiled.iter_identifiers() {
-                    if parts.contains(part_name) {
-                        let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
-                        stats.dependents_map.remove_dependent(&part_path, DependentType::Local(total_path.clone()));
-                    }
-                }
-            }
-            
-            // Clean up any other registered dependencies
-            for part_name in parts {
-                let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
-                
-                // You might need to gather and remove various dependencies here
-                // The exact dependencies to clean up depend on your system design
-            }
-        }
-    }
 
     fn get_affected_paths(&self, path: &StatPath) -> Vec<String> {
         let mut affected_paths = Vec::new();
@@ -1735,30 +1692,405 @@ impl StatLike for Tagged {
         affected_paths
     }
     
-    fn post_update(&self, path: &StatPath, stats: &Stats) -> Vec<(String, DependentType)> {
-        let mut dependencies = Vec::new();
-        
-        if path.parts.len() < 2 {
-            return dependencies;
+    fn post_update(&self, path: &StatPath, stats: &Stats) {
+        if path.parts.len() < 1 {
+            return; // Invalid path
         }
         
-        // For a total path (e.g., "Damage.5")
-        if path.parts.len() == 2 {
-            if let Ok(tag) = path.parts[1].parse::<u32>() {
-                let affected_queries = self.get_affected_queries();
-                if let Some(parts) = affected_queries.get(&tag) {
-                    // Collect only LOCAL dependencies - no cross-entity dependencies
-                    for part_name in parts {
-                        if part_name != "_total" {
-                            let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
-                            // Only add LOCAL dependencies here
-                            dependencies.push((part_path, DependentType::Local(path.path.clone())));
-                        }
-                    }
+        let base_type = &path.parts[0]; // e.g., "Damage", "Resistance", etc.
+        
+        // Get all previously queried combinations from the cache
+        let cached_combinations = self.cached_queries.read().unwrap().clone();
+        
+        // For each previously queried tag
+        for (tag, parts) in cached_combinations {
+            // If the path had a specific tag, check if the queried tag is affected
+            let should_update = if path.parts.len() >= 3 {
+                if let Ok(modifier_tag) = path.parts[2].parse::<u32>() {
+                    has_matching_tag(modifier_tag, tag)
+                } else {
+                    // Can't parse the tag, so update conservatively
+                    true
                 }
+            } else {
+                // No specific tag in the path, update all
+                true
+            };
+            
+            if !should_update {
+                continue;
+            }
+            
+            // Update all parts that were previously queried
+            for part in &parts {
+                // For queries like "Damage.5" (top-level with tag)
+                if path.parts.len() == 2 {
+                    let total_path = format!("{}.{}", base_type, tag);
+                    let total_path_obj = StatPath::parse(&total_path).unwrap();
+                    let total_value = self.evaluate(&total_path_obj, stats);
+                    stats.cached_values.set(&total_path, total_value);
+                }
+                
+                // For queries like "Damage.Added.5" (specific part with tag)
+                let part_path = format!("{}.{}.{}", base_type, part, tag);
+                let part_path_obj = StatPath::parse(&part_path).unwrap();
+                let part_value = self.evaluate(&part_path_obj, stats);
+                stats.cached_values.set(&part_path, part_value);
             }
         }
+    }
+}
+
+pub trait StatEffect {
+    type Context: StatEffectContext = Entity;
+   
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context);
+
+    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {}
+}
+
+pub trait StatEffectContext {}
+
+impl StatEffectContext for Entity {}
+
+#[derive(Component, Clone, Default, Deref, DerefMut)]
+pub struct ModifierSet(HashMap<String, Vec<ModifierType>>);
+
+impl ModifierSet {
+    pub fn new(modifiers: HashMap<String, Vec<ModifierType>>) -> Self {
+        Self(modifiers)
+    }
+
+    pub fn add<V: Into<ModifierType>>(&mut self, stat_path: &str, value: V) {
+        self.entry(stat_path.to_string())
+            .or_insert_with(Vec::new)
+            .push(value.into());
+    }
+}
+
+impl StatEffect for ModifierSet {
+    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+        let target_entity = context;
+        for (stat, modifiers) in self.0.iter() {
+            for modifier in modifiers.iter() {
+                stat_accessor.add_modifier_value(*target_entity, &StatPath::parse(stat).unwrap(), modifier.clone());
+            }
+        }
+    }
+
+    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+        let target_entity = context;
+        for (stat, modifiers) in self.0.iter() {
+            for modifier in modifiers.iter() {
+                stat_accessor.remove_modifier_value(*target_entity, &StatPath::parse(stat).unwrap(), modifier);
+            }
+        }
+    }
+}
+
+#[derive(Component, Deref)]
+#[require(Stats)]
+struct StatsInitializer {
+    modifier_set: ModifierSet,
+}
+
+fn initialize_stat_entity(
+    trigger: Trigger<OnAdd, StatsInitializer>,
+    query: Query<&StatsInitializer>,
+    mut stat_accessor: StatAccessor,
+    mut commands: Commands,
+) {
+    let entity = trigger.entity();
+
+    let Ok(stats_initializer) = query.get(entity) else {
+        return;
+    };
+
+    stats_initializer.apply(&mut stat_accessor, &entity);
+
+    commands.entity(entity).remove::<StatsInitializer>();
+}
+
+pub fn plugin(app: &mut App) {
+    app.add_observer(initialize_stat_entity);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::app::App;
+    use bevy::ecs::system::RunSystemOnce;
+    // Assuming your crate items are accessible like this:
+    use super::{
+        plugin, Expression, Modifiable, ModifierSet, ModifierType, StatAccessor, StatConfig, StatPath, StatType, Stats, StatsInitializer, Tagged // User's new items
+    };
+    use bevy::prelude::*;
+    use bevy::utils::{HashMap, HashSet};
+
+    // Helper to create StatPath for tests more easily
+    fn sp(path_str: &str) -> StatPath {
+        StatPath::parse(path_str).unwrap()
+    }
+
+    // Helper for Literal ModifierType
+    fn lit(val: f32) -> ModifierType {
+        ModifierType::Literal(val)
+    }
+
+    // Helper for Expression ModifierType
+    fn expr_mod(val: &str) -> ModifierType {
+        ModifierType::Expression(Expression::new(val).unwrap())
+    }
+
+    // Tags for testing
+    const TAG_NONE: u32 = 0;
+    const TAG_FIRE: u32 = 1 << 0; // 1
+    // const TAG_AXE: u32 = 1 << 10; // 1024 (Not used in these minimal tests)
+
+    fn setup_app() -> App {
+        let mut app = App::new();
+        let mut config_guard = StatConfig::global().lock().unwrap();
+
+        // Ensure critical patterns for tests are present in StatConfig
+        if !config_guard.stat_type_patterns.contains_key(r"^(Damage|Resistance)$") {
+            config_guard.add_pattern(
+                r"^(Damage|Resistance)$",
+                || StatType::Tagged(Tagged::new("Damage"))
+            );
+        }
+        if !config_guard.stat_type_patterns.contains_key(r"^BonusStat$") {
+             config_guard.add_pattern(
+                r"^BonusStat$",
+                || StatType::Modifiable(Modifiable { base: 0.0, expressions: Vec::new() })
+            );
+        }
+        // Ensure "Power" defaults to Flat or has a pattern for it.
+        // If no pattern matches, it defaults to Flat { base: 0.0 }, which is fine.
+        drop(config_guard);
         
-        dependencies
+        app.add_plugins(plugin);
+
+        app.update(); // Apply any changes from setup
+        app
+    }
+
+    #[test]
+    fn test_flat_stat_modification() {
+        let mut app = setup_app();
+
+        let initial_modifiers = ModifierSet::new(HashMap::from([
+            // "Power" (Flat) defaults to base 0. Adding 50 makes it 50.
+            ("Power".to_string(), vec![lit(50.0)]),
+        ]));
+        let entity = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: initial_modifiers },
+        )).id();
+
+        app.update(); // Run initialize_stat_entity system
+
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("Power"), 50.0);
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.add_modifier_value(entity, &sp("Power"), lit(10.0));
+        });
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("Power"), 60.0); // 50 + 10
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.remove_modifier_value(entity, &sp("Power"), &lit(20.0));
+        });
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("Power"), 40.0); // 60 - 20
+    }
+
+    #[test]
+    fn test_modifiable_stat_modification() {
+        let mut app = setup_app();
+
+        let initial_modifiers = ModifierSet::new(HashMap::from([
+            // "BonusStat" (Modifiable) defaults to base 0.
+            ("BonusStat".to_string(), vec![lit(30.0), expr_mod("5*2")]),
+        ]));
+        let entity = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: initial_modifiers },
+        )).id();
+        app.update();
+
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("BonusStat"), 40.0); // 0 (base) + 30 (lit) + 10 (expr)
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.remove_modifier_value(entity, &sp("BonusStat"), &expr_mod("5*2"));
+        });
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("BonusStat"), 30.0);
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.remove_modifier_value(entity, &sp("BonusStat"), &lit(30.0));
+        });
+        let stats = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats.get("BonusStat"), 0.0);
+    }
+
+    #[test]
+    fn test_complex_stat_life() {
+        let mut app = setup_app();
+
+        // StatConfig for "Life" Complex's internal parts:
+        // Base.base=100, Added.base=0, Increased.base=1, More.base=1.
+        // We add lit(0.0) to "Life.Added" via initializer to ensure "Life" Complex is instantiated
+        // and its default configured parts are used.
+        // Internal "Added" part's base becomes 0 (initial from config) + 0 (from Initializer) = 0.
+        let initial_modifiers = ModifierSet::new(HashMap::from([
+            ("Life.Added".to_string(), vec![lit(100.0)]),
+            ("Life.Increased".to_string(), vec![lit(1.0)]),
+            ("Life.More".to_string(), vec![lit(1.0)]),
+        ]));
+        let entity = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: initial_modifiers },
+        )).id();
+        app.update();
+
+        // Initial Life = 100 (Base part) + 0 (Added part) * (1 + 1 (Incr part)) * (1 + 1 (More part)) = 100.
+        let stats_ro = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats_ro.get("Life"), 100.0, "Initial Life value");
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            // "Life.Added" part's base (0) + 50.0 = 50.0
+            accessor.add_modifier_value(entity, &sp("Life.Added"), lit(50.0));
+        });
+        // Life = 100 + 50 * (1+1) * (1+1) = 300.0
+        let stats_ro = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats_ro.get("Life"), 300.0, "Life after Added");
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            // "Life.Increased" part's base (1.0) + 0.5 = 1.5
+            accessor.add_modifier_value(entity, &sp("Life.Increased"), lit(0.5));
+        });
+        // Life = 100 + 50 * (1+1.5) * (1+1) = 350.0
+        let stats_ro = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats_ro.get("Life"), 350.0, "Life after Increased");
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            // accessor.set for a part should overwrite that part's base.
+            // "Life.Base" part's base (100.0) is set to 200.0.
+            accessor.set(entity, &sp("Life.Base"), 200.0);
+        });
+        // Life = 200 + 50 * (1+1.5) * (1+1) = 450.0
+        let stats_ro = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats_ro.get("Life"), 450.0, "Life after Set Base part");
+    }
+
+    #[test]
+    fn test_tagged_stat_damage() {
+        let mut app = setup_app();
+
+        // Initialize "Damage" Tagged stat by adding a dummy modifier through Initializer.
+        // This ensures the "Damage" StatType::Tagged is created for the entity.
+        // Parts (TaggedEntry) default bases from StatConfig: Added=0, Base=0, Increased=1.0, More=1.0.
+        let initial_setup_mods = ModifierSet::new(HashMap::from([
+            (format!("Damage.Added.{}", TAG_NONE), vec![lit(0.0)]),
+        ]));
+        let entity = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: initial_setup_mods.clone() }, // clone if needed again
+        )).id();
+        app.update(); // Apply initial_setup_mods
+
+        // Now apply actual test modifiers using run_system_once for clarity,
+        // though they could also be part of initial_setup_mods.
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.add_modifier_value(entity, &sp(&format!("Damage.Added.{}", TAG_FIRE)), lit(10.0));
+            accessor.add_modifier_value(entity, &sp(&format!("Damage.Increased.{}", TAG_FIRE)), lit(0.2));
+            accessor.add_modifier_value(entity, &sp(&format!("Damage.Base.{}", TAG_FIRE)), lit(5.0));
+        });
+        app.update(); // Process these additions
+
+        let stats_ro = app.world().get::<Stats>(entity).unwrap();
+        // Values of parts for TAG_FIRE:
+        // Added: 0 (default) + 10 = 10
+        // Increased: 1.0 (default) + 0.2 = 1.2
+        // Base: 0 (default) + 5 = 5
+        // More: 1.0 (default)
+        assert_eq!(stats_ro.get(&format!("Damage.Added.{}", TAG_FIRE)), 10.0);
+        assert_eq!(stats_ro.get(&format!("Damage.Increased.{}", TAG_FIRE)), 1.2);
+        assert_eq!(stats_ro.get(&format!("Damage.Base.{}", TAG_FIRE)), 5.0);
+        assert_eq!(stats_ro.get(&format!("Damage.More.{}", TAG_FIRE)), 1.0);
+
+        // Total Damage.FIRE: Added + Base * (1 + Increased) * (1 + More)
+        // = 10.0 + 5.0 * (1 + 1.2) * (1 + 1.0) = 10.0 + 22.0 = 32.0
+        assert_eq!(stats_ro.get(&format!("Damage.{}", TAG_FIRE)), 32.0);
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.remove_modifier_value(entity, &sp(&format!("Damage.Added.{}", TAG_FIRE)), &lit(3.0));
+        });
+        // Damage.Added.TAG_FIRE is now 10.0 - 3.0 = 7.0
+        let stats_ro_after_remove = app.world().get::<Stats>(entity).unwrap();
+        assert_eq!(stats_ro_after_remove.get(&format!("Damage.Added.{}", TAG_FIRE)), 7.0);
+        // Total Damage.FIRE: 7.0 + 22.0 = 29.0
+        assert_eq!(stats_ro_after_remove.get(&format!("Damage.{}", TAG_FIRE)), 29.0);
+    }
+
+    #[test]
+    fn test_source_entity_change() {
+        let mut app = setup_app();
+
+        let strength_a_mods = ModifierSet::new(HashMap::from([("Strength".to_string(), vec![lit(20.0)])]));
+        let source_a = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: strength_a_mods },
+        )).id();
+
+        let strength_b_mods = ModifierSet::new(HashMap::from([("Strength".to_string(), vec![lit(40.0)])]));
+        let source_b = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: strength_b_mods },
+        )).id();
+        app.update(); // Initialize source_a and source_b stats
+
+        let dependent_mods = ModifierSet::new(HashMap::from([
+            ("BonusStat".to_string(), vec![expr_mod("Strength@Player / 2")]),
+        ]));
+        let dependent_entity = app.world_mut().spawn((
+            Stats::default(),
+            StatsInitializer { modifier_set: dependent_mods },
+        )).id();
+        // Note: `register_source` is not part of StatsInitializer, so it's called separately.
+        // `BonusStat` will initially be 0 because "Strength@Player" is 0.
+        app.update(); // Initialize dependent_entity BonusStat (Strength@Player will be 0)
+
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.register_source(dependent_entity, "Player".to_string(), source_a);
+        });
+        app.update(); // Allow register_source to trigger updates
+
+        let dependent_stats = app.world().get::<Stats>(dependent_entity).unwrap();
+        assert_eq!(dependent_stats.get("BonusStat"), 10.0, "BonusStat with source A"); // 20/2
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+            accessor.register_source(dependent_entity, "Player".to_string(), source_b);
+        });
+        app.update();
+
+        let dependent_stats_updated = app.world().get::<Stats>(dependent_entity).unwrap();
+        assert_eq!(dependent_stats_updated.get("BonusStat"), 20.0, "BonusStat with source B"); // 40/2
+
+        app.world_mut().entity_mut(source_b).despawn();
+        app.update(); // Process despawn
+
+        let _ = app.world_mut().run_system_once(move |mut accessor: StatAccessor| {
+             if accessor.query.get(dependent_entity).is_ok() {
+                let path_obj = sp("BonusStat");
+                accessor.update(dependent_entity, &path_obj); // Force re-evaluation
+            }
+        });
+        app.update();
+
+        let dependent_stats_after_despawn = app.world().get::<Stats>(dependent_entity).unwrap();
+        assert_eq!(dependent_stats_after_despawn.get("BonusStat"), 0.0, "BonusStat after source despawn");
     }
 }
