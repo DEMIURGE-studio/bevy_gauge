@@ -9,8 +9,8 @@ impl ModifierSet {
         Self(modifiers)
     }
 
-    pub fn add<V: Into<ValueType>>(&mut self, stat_path: &str, value: V) {
-        self.entry(stat_path.to_string())
+    pub fn add<V: Into<ValueType>>(&mut self, path: &str, value: V) {
+        self.entry(path.to_string())
             .or_insert_with(Vec::new)
             .push(value.into());
     }

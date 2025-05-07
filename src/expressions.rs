@@ -1,14 +1,28 @@
 use evalexpr::{DefaultNumericTypes, HashMapContext, Node, Value};
+use crate::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct Expression {
-    pub(crate) string: String,
-    pub(crate) value: Node<DefaultNumericTypes>,
+    pub(crate) definition: String,
+    pub(crate) compiled: Node<DefaultNumericTypes>,
 }
 
 impl Expression {
+    pub fn new(expression: &str) -> StatResult<Self> {
+        let compiled = evalexpr::build_operator_tree(expression)
+            .map_err(|err| StatError::ExpressionError {
+                expression: expression.to_string(),
+                details: err.to_string(),
+            })?;
+            
+        Ok(Self {
+            definition: expression.to_string(),
+            compiled,
+        })
+    }
+
     pub(crate) fn evaluate(&self, context: &HashMapContext) -> f32 {
-        self.value
+        self.compiled
             .eval_with_context(context)
             .unwrap_or(Value::Float(0.0))
             .as_number()
@@ -18,7 +32,7 @@ impl Expression {
 
 impl PartialEq for Expression {
     fn eq(&self, other: &Self) -> bool {
-        self.string == other.string
+        self.definition == other.definition
     }
 }
 
@@ -43,8 +57,8 @@ impl From<Expression> for ValueType {
 impl From<&str> for ValueType {
     fn from(value: &str) -> Self {
         Self::Expression(Expression {
-            string: value.to_string(),
-            value: evalexpr::build_operator_tree(value).unwrap(),
+            definition: value.to_string(),
+            compiled: evalexpr::build_operator_tree(value).unwrap(),
         })
     }
 }
@@ -52,8 +66,8 @@ impl From<&str> for ValueType {
 impl From<String> for ValueType {
     fn from(value: String) -> Self {
         Self::Expression(Expression {
-            string: value.clone(),
-            value: evalexpr::build_operator_tree(&value).unwrap(),
+            definition: value.clone(),
+            compiled: evalexpr::build_operator_tree(&value).unwrap(),
         })
     }
 }

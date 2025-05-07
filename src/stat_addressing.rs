@@ -49,7 +49,7 @@ impl StatPath {
         self.segments.first().map(|s| s.as_str())
     }
 
-    pub(crate) fn with_owner(stat_path: &str, owner_prefix: &str) -> String {
-        format!("{}@{}", owner_prefix, stat_path)
+    pub(crate) fn with_owner(path: &str, owner_prefix: &str) -> String {
+        format!("{}@{}", owner_prefix, path)
     }
 }
