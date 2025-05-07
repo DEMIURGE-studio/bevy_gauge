@@ -1,4 +1,4 @@
-use std::{cell::SyncUnsafeCell, fmt, sync::{Arc, Mutex, OnceLock, RwLock}};
+use std::{cell::SyncUnsafeCell, fmt, sync::{Mutex, OnceLock, RwLock}};
 
 use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashMap, HashSet}};
 use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
@@ -73,7 +73,7 @@ pub type StatResult<T> = Result<T, StatError>;
 // We actively update the values whenever a modifier changes, ensuring the cache is
 // always up to date. 
 #[derive(Component)]
-struct Stats {
+pub struct Stats {
     definitions: HashMap<String, StatType>,
     cached_values: SyncContext,
     dependents_map: DependencyMap,
@@ -82,25 +82,86 @@ struct Stats {
 }
 
 impl Stats {
+    // Add a modifier to a stat with proper cache updates
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
+        // Get paths to update before applying the modification
+        let paths_to_update = if let Some(stat) = self.definitions.get(&path.path) {
+            stat.get_affected_paths(path)
+        } else {
+            // If the stat doesn't exist yet, we need to create it
+            let config = StatConfig::global().lock().unwrap();
+            let stat_type = config.create_stat_type(path);
+            
+            // Register the new stat in the definitions map
+            self.definitions.insert(path.path.clone(), stat_type);
+            
+            // For a new stat, we just update the path itself
+            vec![path.path.clone()]
+        };
+        
+        // Now apply the modifier
         if let Some(stat) = self.definitions.get_mut(&path.path) {
             stat.add_modifier(path, modifier);
-        } else {
-
+        }
+        
+        // Update all affected cached values
+        for affected_path in paths_to_update {
+            self.update_cached_value(&affected_path);
         }
     }
     
+    // Similar pattern for other modification methods
     fn remove_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
-
+        // Get paths to update before applying the modification
+        let paths_to_update = if let Some(stat) = self.definitions.get(&path.path) {
+            stat.get_affected_paths(path)
+        } else {
+            vec![path.path.clone()]
+        };
+        
+        // Apply the modification
+        if let Some(stat) = self.definitions.get_mut(&path.path) {
+            stat.remove_modifier(path, modifier);
+        }
+        
+        // Update all affected cached values
+        for affected_path in paths_to_update {
+            self.update_cached_value(&affected_path);
+        }
     }
 
     fn set(&mut self, path: &StatPath, value: f32) {
-        // get the stat entry
-        // if there is no stat at that address, make it a StatType::Flat and set its base
+        // Get paths to update before applying the modification
+        let paths_to_update = if let Some(stat) = self.definitions.get(&path.path) {
+            stat.get_affected_paths(path)
+        } else {
+            vec![path.path.clone()]
+        };
+        
+        // Apply the modification
+        if let Some(stat) = self.definitions.get_mut(&path.path) {
+            stat.set(path, value);
+        } else {
+            // Create a new Flat stat
+            let flat = Flat { base: value };
+            self.definitions.insert(path.path.clone(), StatType::Flat(flat));
+        }
+        
+        // Update all affected cached values
+        for affected_path in paths_to_update {
+            self.update_cached_value(&affected_path);
+        }
     }
 
-    fn get(&self, path: &StatPath) -> f32 {
-        self.cached_values.get(&path.path)
+    pub fn get(&self, path: &str) -> f32 {
+        if self.cached_values.get(path).is_err() {
+            self.cached_values.set(path, self.evaluate(&StatPath::parse(path).unwrap()));
+        }
+        self.cached_values.get(path).unwrap_or(0.0)
+    }
+
+    pub fn get_by_path(&self, path: &StatPath) -> f32 {
+        self.get(&path.path)
     }
 
     fn evaluate(&self, path: &StatPath) -> f32 {
@@ -134,6 +195,22 @@ impl Stats {
         }
         d
     }
+
+    // Helper method to update a cached value
+    fn update_cached_value(&mut self, path_str: &str) {
+        let path = StatPath::parse(path_str).unwrap();
+        
+        if let Some(stat) = self.definitions.get(path_str) {
+            let value = stat.evaluate(&path, self);
+            self.cached_values.set(path_str, value);
+        }
+    }
+
+    fn post_update_stat(&mut self, path: &StatPath) {
+        if let Some(stat) = self.definitions.get(&path.path) {
+            stat.post_update(path, self);
+        }
+    }
 }
 
 // Holds the memoized values for stats in the form of a HashMapContext, which can be
@@ -146,13 +223,24 @@ impl SyncContext {
         Self(SyncUnsafeCell::new(HashMapContext::new()))
     }
 
-    fn get(&self, path: &str) -> f32 {
+    fn get(&self, path: &str) -> StatResult<f32> {
         unsafe {
+            // Use .get_value_ref() if available and appropriate, or clone if necessary
+            // to avoid holding a reference across potential mutations if HashMapContext isn't Sync.
+            // However, evalexpr::Value is copyable for simple types like Float.
             if let Some(stat_value) = (*self.0.get()).get_value(path.into()) {
-                return stat_value.as_float().unwrap_or(0.0) as f32;
+                stat_value.as_float().map(|f| f as f32).map_err(|_eval_err| {
+                    StatError::ExpressionError { // Or a new error type like CacheCorruption
+                        expression: path.to_string(), // Path acts as the "expression" for cache lookup
+                        details: format!("Cached stat '{}' is not a valid float: {:?}", path, stat_value),
+                    }
+                })
+            } else {
+                Err(StatError::StatNotFound {
+                    path: path.to_string(),
+                })
             }
         }
-        0.0
     }
 
     fn set(&self, path: &str, value: f32) {
@@ -333,13 +421,7 @@ impl StatConfig {
         );
         
         // Damage stats with tags (e.g., "Damage.Added.FIRE", "Damage.Increased.PHYSICAL")
-        config.add_pattern(
-            r"^Damage(\..*)?$",
-            || {
-                let total = Expression::new("Added + Base * (1 + Increased) * More");
-                StatType::Tagged(Tagged::new())
-            }
-        );
+        //config.add_pattern(...);
         
         config
     }
@@ -437,50 +519,108 @@ pub struct StatAccessor<'w, 's> {
 }
 
 impl StatAccessor<'_, '_> {
+    pub fn add_modifier<M: Into<ModifierType>>(&mut self, target: Entity, path: &str, modifier: M) {
+
+    }
+    
+    pub fn remove_modifier<M: Into<ModifierType>>(&mut self, target: Entity, path: &str, modifier: M) {
+
+    }
+
     // Handle all value changing, cache updating, and dependency registration.
-    fn add_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: ModifierType) {
+    pub fn add_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: ModifierType) {
         let stats = self.query.get(target).unwrap();
 
+        // Register dependencies for expressions
         if let ModifierType::Expression(expression) = &modifier {
             let dependencies = stats.get_dependencies(expression);
             self.add_dependents(target, path, dependencies);
         }
+        
+        // Get paths that will be affected before modifying
+        let mut paths_to_update = Vec::new();
+        if let Ok(stats) = self.query.get(target) {
+            if let Some(stat) = stats.definitions.get(&path.path) {
+                paths_to_update = stat.get_affected_paths(path);
+            } else {
+                paths_to_update = vec![path.path.clone()];
+            }
+        }
 
+        // Apply the modifier
         let mut stats = self.query.get_mut(target).unwrap();
         stats.add_modifier(path, modifier);
-
-        self.update(target, path);
+        
+        // Update all affected paths
+        for affected_path in paths_to_update {
+            let affected_path_obj = StatPath::parse(&affected_path).unwrap();
+            self.update(target, &affected_path_obj);
+        }
     }
     
     // add_modifier_value but in reverse.
-    fn remove_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: ModifierType) {
+    pub fn remove_modifier_value(&mut self, target: Entity, path: &StatPath, modifier: ModifierType) {
         let stats = self.query.get(target).unwrap();
 
+        // Remove dependencies for expressions
         if let ModifierType::Expression(expression) = &modifier {
             let dependencies = stats.get_dependencies(expression);
             self.remove_dependents(target, path, dependencies);
         }
+        
+        // Get paths that will be affected before modifying
+        let mut paths_to_update = Vec::new();
+        if let Ok(stats) = self.query.get(target) {
+            if let Some(stat) = stats.definitions.get(&path.path) {
+                paths_to_update = stat.get_affected_paths(path);
+            } else {
+                // If the stat doesn't exist, nothing to update
+                return;
+            }
+        }
 
+        // Apply the modification
         let mut stats = self.query.get_mut(target).unwrap();
         stats.remove_modifier(path, modifier);
-
-        self.update(target, path);
+        
+        // Update all affected paths
+        for affected_path in paths_to_update {
+            let affected_path_obj = StatPath::parse(&affected_path).unwrap();
+            self.update(target, &affected_path_obj);
+        }
     }
-
-    fn set(&mut self, target: Entity, path: &StatPath, value: f32) {
-        let Ok(mut stats) = self.query.get_mut(target) else {
+    
+    pub fn set(&mut self, target: Entity, path: &StatPath, value: f32) {
+        // Get paths that will be affected before modifying
+        let mut paths_to_update = Vec::new();
+        if let Ok(stats) = self.query.get(target) {
+            if let Some(stat) = stats.definitions.get(&path.path) {
+                paths_to_update = stat.get_affected_paths(path);
+            } else {
+                // If the stat doesn't exist yet, we'll just update the path itself
+                paths_to_update = vec![path.path.clone()];
+            }
+        } else {
+            // Entity doesn't exist
             return;
-        };
+        }
 
+        // Apply the modification
+        let mut stats = self.query.get_mut(target).unwrap();
         stats.set(path, value);
-        self.update(target, path);
+        
+        // Update all affected paths
+        for affected_path in paths_to_update {
+            let affected_path_obj = StatPath::parse(&affected_path).unwrap();
+            self.update(target, &affected_path_obj);
+        }
     }
 
     // Registers a source. For instance target: item_entity, source_type: "EquippedTo", source: equipped_to_entity.
     // When a new source is registered the old cached values for that source must be updated. For instance, if 
     // we change who the sword is equipped to, we must update the "Strength@EquippedTo" cached value for the sword
     // and all dependent stat values (via the update function)
-    fn register_source(&mut self, target: Entity, source_type: String, source: Entity) {
+    pub fn register_source(&mut self, target: Entity, source_type: String, source: Entity) {
         // Get the target entity's stats
         let Ok(mut target_stats) = self.query.get_mut(target) else {
             error!("Target entity {:?} not found for registering source", target);
@@ -522,7 +662,7 @@ impl StatAccessor<'_, '_> {
             drop(target_stats);
             
             // Update dependencies on the old source to point to the new source
-            self.update_source_dependencies(target, old_source_entity, source, &source_type);
+            self.update_source_dependencies(target, old_source_entity, source);
             
             // Update affected stats with new values from the new source
             for path_str in affected_stats {
@@ -536,7 +676,7 @@ impl StatAccessor<'_, '_> {
     }
 
     // Helper method to update dependencies when a source changes
-    fn update_source_dependencies(&mut self, target: Entity, old_source: Entity, new_source: Entity, source_type: &str) {
+    fn update_source_dependencies(&mut self, target: Entity, old_source: Entity, new_source: Entity) {
         // Get all dependencies that need to be updated
         let dependencies_to_update = {
             let Ok(target_stats) = self.query.get(target) else {
@@ -663,8 +803,7 @@ impl StatAccessor<'_, '_> {
         self.update_recursive(target, path.path.clone(), &mut visited);
     }
 
-    // Helper function for recursion
-    fn update_recursive(&mut self, target: Entity, path_str: String, visited: &mut bevy::utils::HashSet<(Entity, String)>) {
+    fn update_recursive(&mut self, target: Entity, path_str: String, visited: &mut HashSet<(Entity, String)>) {
         let key = (target, path_str.clone());
         if visited.contains(&key) {
             return; // Already processed in this update chain
@@ -672,20 +811,30 @@ impl StatAccessor<'_, '_> {
         visited.insert(key);
 
         // 1. Recalculate the value for target/path_str
-        let new_value = self.evaluate_stat_internal(target, &path_str); // Need this helper
+        let new_value = self.evaluate_stat_internal(target, &path_str);
 
         // 2. Update the cache for target/path_str
-        if let Ok(stats) = self.query.get(target) {
-            stats.cached_values.set(path_str.as_str(), new_value.into());
+        if let Ok(mut stats) = self.query.get_mut(target) {
+            stats.cached_values.set(path_str.as_str(), new_value);
+            
+            // 3. Call post_update instead of register_dependencies_for_path
+            let path = StatPath::parse(&path_str).unwrap();
+            stats.post_update_stat(&path);
         } else {
             error!("Entity {} not found during cache update for path {}", target, path_str);
             return; // Cannot proceed without the entity
         }
 
-        let stats = self.query.get(target).unwrap(); // Assume exists after cache update check
-        let dependents = stats.get_dependents().clone(); // TODO Bad clone
-        let Some(dependents_to_update) = dependents.get(&path_str) else {
-            return;
+        // 4. Process dependents
+        let dependents_to_update = {
+            let stats = self.query.get(target).unwrap(); // Assume exists after cache update
+            
+            // Clone the dependents to avoid borrow conflicts
+            if let Some(deps) = stats.dependents_map.get_dependents().get(&path_str) {
+                deps.clone()
+            } else {
+                HashMap::new()
+            }
         };
 
         for (dependent_type, _count) in dependents_to_update {
@@ -696,7 +845,7 @@ impl StatAccessor<'_, '_> {
                 }
                 DependentType::Entity(dependent_entity, dependent_path) => {
                     // Recursively update the stat on the *other* entity
-                    self.update_recursive(*dependent_entity, dependent_path.clone(), visited);
+                    self.update_recursive(dependent_entity, dependent_path.clone(), visited);
                 }
             }
         }
@@ -794,13 +943,13 @@ impl StatAccessor<'_, '_> {
 }
 
 // Modifiers can be flat (literal) values or expressions.
-enum ModifierType {
+pub enum ModifierType {
     Literal(f32),
     Expression(Expression),
 }
 
 // Expressions store their definition and use evalexpr to calculate stat values.
-struct Expression {
+pub struct Expression {
     definition: String,
     compiled: Node<DefaultNumericTypes>,
 }
@@ -837,7 +986,7 @@ impl Expression {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)] // Added derives
-struct StatPath {
+pub struct StatPath {
     owner: Option<String>, // Name of the source (e.g., "EquippedTo", "Parent")
     path: String,          // The full original string (e.g., "Strength@EquippedTo")
     local_path: String,    // Path relative to the owner (e.g., "Strength")
@@ -891,16 +1040,29 @@ impl<T: Into<String>> From<T> for StatPath where T: AsRef<str> {
 // we add "Life" as a dependent of "Life.Added", "Life.Increased", etc., AND we add "Life.Added" and
 // the other variants to the cache.)
 trait StatLike {
-    fn add_modifier(&mut self, path: &StatPath, value: ModifierType);
-    fn remove_modifier(&mut self, path: &StatPath, value: ModifierType);
+    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType);
+    fn remove_modifier(&mut self, path: &StatPath, modifier: ModifierType);
     fn set(&mut self, path: &StatPath, value: f32);
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32;
     
     // Register dependencies and initialize caches when a stat is first added or updated
-    fn register(&self, _path: &StatPath, _stats: &mut Stats) { }
+    fn register(&self, path: &StatPath, stats: &mut Stats) { }
     
     // Unregister dependencies when a stat is removed
-    fn unregister(&self, _path: &StatPath, _stats: &mut Stats) { }
+    fn unregister(&self, path: &StatPath, stats: &mut Stats) { }
+    
+    // New method to identify which paths need to be updated when this stat changes
+    fn get_affected_paths(&self, path: &StatPath) -> Vec<String> {
+        // Default implementation just returns the original path
+        vec![path.path.clone()]
+    }
+
+    // Called after a stat's cached value has been updated
+    // This allows the stat to perform any post-update operations like registering dependencies
+    fn post_update(&self, path: &StatPath, stats: &Stats) -> Vec<(String, DependentType)> {
+        // Default implementation returns empty list
+        Vec::new()
+    }
 }
 
 // A catch-all for stat types.
@@ -1173,10 +1335,6 @@ impl StatLike for Complex {
     }
 }
 
-struct TaggedEntry {
-    parts: HashMap<u32, Modifiable>,
-}
-
 // Similar to Complex but allows & operation queries to match on different types.
 // This is most useful for Damage stats, which might look something like "Increased
 // fire damage with axes." Tags are a u32 so in actuality that could look like
@@ -1188,326 +1346,419 @@ struct TaggedEntry {
 // Instead we should only cache a value after it has been queried. I'm not sure how to handle 
 // this exacly. Maybe we use internal mutability to track previous queries, and then when 
 // a value is updated we iterate over all previous queries and update their values?
-struct Tagged {
-    total: Expression,
-    parts: HashMap<String, TaggedEntry>,
-    // Track which paths have been queried for each tag using a HashSet
-    cached_queries: SyncUnsafeCell<HashMap<u32, HashSet<String>>>,
+// A version of Modifiable for tag values
+struct TaggedEntry {
+    base: f32,
+    expressions: HashMap<u32, Vec<Expression>>,
 }
 
-impl Tagged {
-    fn new() -> Self {
+impl TaggedEntry {
+    fn new(modifier_type: &str) -> Self {
+        let config = StatConfig::global().lock().unwrap();
+        let default_base = config.get_default_base(modifier_type);
+        
         Self {
-            total: Expression::new_unchecked("Added + Base * Increased * More"),
-            parts: HashMap::new(),
-            cached_queries: SyncUnsafeCell::new(HashMap::new()),
+            base: default_base,
+            expressions: HashMap::new(),
         }
     }
     
-    fn update_cached_queries(&self, tag: u32, stats: &Stats) {
-        unsafe {
-            let queries = &mut *self.cached_queries.get();
-            
-            // If this tag has been queried before
-            if let Some(paths) = queries.get(&tag) {
-                for path_str in paths {
-                    // Re-evaluate the path with this tag
-                    let path = StatPath::parse(path_str).unwrap();
-                    let new_value = self.evaluate(&path, stats);
+    fn add_modifier(&mut self, tag: u32, value: ModifierType) {
+        match value {
+            ModifierType::Literal(val) => {
+                // For literal values, we just add to the base
+                self.base += val;
+            },
+            ModifierType::Expression(expr) => {
+                // For expressions, we add them to the list for the specific tag
+                self.expressions.entry(tag)
+                    .or_insert_with(Vec::new)
+                    .push(expr);
+            }
+        }
+    }
+    
+    fn remove_modifier(&mut self, tag: u32, value: ModifierType) {
+        match value {
+            ModifierType::Literal(val) => {
+                // For literal values, we subtract from the base
+                self.base -= val;
+            },
+            ModifierType::Expression(expr) => {
+                // For expressions, remove the matching one for the specific tag
+                if let Some(exprs) = self.expressions.get_mut(&tag) {
+                    if let Some(pos) = exprs.iter().position(|e| e.definition == expr.definition) {
+                        exprs.remove(pos);
+                    }
                     
-                    // Update the cached value in Stats only
-                    stats.cached_values.set(path_str, new_value);
+                    // If there are no more expressions, remove the tag entry
+                    if exprs.is_empty() {
+                        self.expressions.remove(&tag);
+                    }
                 }
             }
         }
     }
     
-    fn get_or_evaluate_tag(&self, base: &str, part: &str, tag: u32, stats: &Stats) -> f32 {
-        let path_str = format!("{}.{}.{}", base, part, tag);
+    fn evaluate_for_tag(&self, search_tag: u32, path: &StatPath, stats: &Stats) -> f32 {
+        // Start with the base value
+        let mut result = self.base;
         
-        // Check if already cached in Stats
-        let cached_value = stats.cached_values.get(&path_str);
-        if cached_value != 0.0 {
-            return cached_value;
+        // Sum all expressions from all matching tags
+        for (&tag, exprs) in &self.expressions {
+            if has_matching_tag(tag, search_tag) {
+                for expr in exprs {
+                    let context = stats.cached_values.context();
+                    result += expr.evaluate(context);
+                }
+            }
         }
         
-        // Evaluate the tag
-        let part_entry = match self.parts.get(part) {
-            Some(entry) => entry,
-            None => {
-                let config = StatConfig::global().lock().unwrap();
-                return config.get_default_base(part);
-            },
-        };
-        
-        let tag_entry = match part_entry.parts.get(&tag) {
-            Some(entry) => entry,
-            None => {
-                let config = StatConfig::global().lock().unwrap();
-                return config.get_default_base(part);
-            },
-        };
-        
-        // Create a temporary path for evaluation
-        let temp_path = StatPath::parse(&path_str).unwrap();
-        let value = tag_entry.evaluate(&temp_path, stats);
-        
-        // Cache the result in Stats
-        stats.cached_values.set(&path_str, value);
-        
-        // Remember that this tag was queried
-        unsafe {
-            let combinations = &mut *self.cached_queries.get();
-            let tag_paths = combinations.entry(tag).or_insert_with(HashSet::new);
-            tag_paths.insert(path_str);
+        result
+    }
+}
+
+// Helper function to check if tags match (e.g., has_all in your example)
+fn has_matching_tag(mod_tag: u32, search_tag: u32) -> bool {
+    // Implement your tag matching logic here
+    // For example, bit flags: (mod_tag & search_tag) == search_tag
+    (mod_tag & search_tag) == search_tag
+}
+
+// Similar to Complex but allows & operation queries to match on different types.
+
+// When modifiers are stored in a Tagged stat, they are stored permissively. That is,
+// "Damage.Added.ANY" will have a tag value of u32::ALL. Damage.Added.AXES will apply
+// to any physical or elemental damage, but not weapon types besides axes. We may also
+// store categories, such as "Damage.Added.MELEE" which includes all melee weapons.
+// When storing modifiers, we must specify that they are "Added" or "Increased," or
+// whichever modifier applies.
+
+// In contrast when we query for a tag, we query specifically. That means that we must
+// specify an item in every category to expect to get a meaningful result. For instance,
+// a query might look like "Damage.Added.AXE|FIRE," which represents "Added fire damage
+// with axes." Queries can also look for total values. You would do that by querying
+// "Damage.FIRE|AXE," which would total up the fire damage with axes.
+struct Tagged {
+    total: Expression,
+    parts: HashMap<String, TaggedEntry>,
+    // Track which tag/part combinations have been queried
+    cached_queries: RwLock<HashMap<u32, HashSet<String>>>,
+}
+
+impl Tagged {
+    fn new(name: &str) -> Self {
+        let config = StatConfig::global().lock().unwrap();
+        let expr_template = config.get_default_expression(name)
+            .unwrap_or_else(|| config.get_default_expression("Default").unwrap())
+            .clone();
+            
+        Self {
+            total: Expression::new_unchecked(&expr_template),
+            parts: HashMap::new(),
+            cached_queries: RwLock::new(HashMap::new()),
         }
+    }
+    
+    // Record that a particular tag/part combination has been queried
+    fn record_query(&self, tag: u32, part: Option<&str>) {
+        let mut cached_queries = self.cached_queries.write().unwrap();
         
-        value
+        let entry = cached_queries.entry(tag).or_insert_with(HashSet::new);
+        
+        match part {
+            Some(part_name) => {
+                entry.insert(part_name.to_string());
+            },
+            None => {
+                // When no specific part is queried, we're querying the total
+                // We might want to mark that all parts are needed for this tag
+                for identifier in self.total.compiled.iter_identifiers() {
+                    entry.insert(identifier.to_string());
+                }
+            }
+        }
+    }
+    
+    // Get all cached queries that might need updating
+    fn get_affected_queries(&self) -> HashMap<u32, HashSet<String>> {
+        self.cached_queries.read().unwrap().clone()
     }
 }
 
 impl StatLike for Tagged {
     fn add_modifier(&mut self, path: &StatPath, value: ModifierType) {
-        // Extract tag from path (assuming format like "Damage.Added.FIRE" where FIRE is a u32)
+        // Expect path format like "Damage.Added.PHYSICAL" where PHYSICAL is a tag (u32)
         if path.parts.len() < 3 {
-            return; // Invalid path for tagged stat
+            // Invalid path format for Tagged
+            return;
         }
-        
-        let part_name = &path.parts[1]; // e.g., "Added"
-        let tag_str = &path.parts[2]; // e.g., "14"
-        let tag: u32 = match tag_str.parse() {
-            Ok(num) => num,
-            Err(_) => {
-                error!("Invalid tag format: {}", tag_str);
-                return;
-            }
-        };
-        
-        // Get or create the appropriate part type
-        let part_entry = self.parts.entry(part_name.clone())
-            .or_insert_with(|| TaggedEntry { parts: HashMap::new() });
-        
-        // Get or create the specific tag entry
-        let config = StatConfig::global().lock().unwrap();
-        let default_base = config.get_default_base(part_name);
-        let tag_entry = part_entry.parts.entry(tag)
-            .or_insert_with(|| Modifiable {
-                base: default_base,
-                expressions: Vec::new()
-            });
-            
-        // Add the modifier to the specific tag entry
-        tag_entry.add_modifier(path, value);
-    }
     
+        // Get modifier type (e.g., "Added")
+        let modifier_type = &path.parts[1];
+    
+        // Parse the tag
+        let tag_str = &path.parts[2];
+        let Ok(tag) = tag_str.parse::<u32>() else {
+            // Could log an error here
+            return;
+        };
+    
+        // Get or create the entry for this modifier type
+        let entry = self.parts.entry(modifier_type.clone())
+            .or_insert_with(|| TaggedEntry::new(modifier_type));
+    
+        // Add the modifier directly to the TaggedEntry
+        match value {
+            ModifierType::Literal(val) => {
+                // For literal values, adjust the base
+                entry.base += val;
+            },
+            ModifierType::Expression(expr) => {
+                // For expressions, add to the map for the specific tag
+                entry.expressions.entry(tag)
+                    .or_insert_with(Vec::new)
+                    .push(expr);
+            }
+        }
+    }
+
     fn remove_modifier(&mut self, path: &StatPath, value: ModifierType) {
-        // Similar to add_modifier but removing
+        // Similar to add_modifier but for removal
         if path.parts.len() < 3 {
-            return; // Invalid path for tagged stat
+            return;
         }
-        
-        let part_name = &path.parts[1];
+       
+        let modifier_type = &path.parts[1];
         let tag_str = &path.parts[2];
-        let tag: u32 = match tag_str.parse() {
-            Ok(num) => num,
-            Err(_) => {
-                error!("Invalid tag format: {}", tag_str);
-                return;
+       
+        let Ok(tag) = tag_str.parse::<u32>() else {
+            return;
+        };
+       
+        // Try to get the entry for this modifier type
+        if let Some(entry) = self.parts.get_mut(modifier_type) {
+            match value {
+                ModifierType::Literal(val) => {
+                    // For literal values, subtract from the base
+                    entry.base -= val;
+                },
+                ModifierType::Expression(expr) => {
+                    // For expressions, remove from the specific tag
+                    if let Some(exprs) = entry.expressions.get_mut(&tag) {
+                        if let Some(pos) = exprs.iter().position(|e| e.definition == expr.definition) {
+                            exprs.remove(pos);
+                        }
+                        
+                        // If this tag has no more expressions, remove it
+                        if exprs.is_empty() {
+                            entry.expressions.remove(&tag);
+                        }
+                    }
+                }
             }
-        };
-        
-        // Find the part
-        let Some(part_entry) = self.parts.get_mut(part_name) else {
-            return; // Part doesn't exist
-        };
-        
-        // Find the tag
-        let Some(tag_entry) = part_entry.parts.get_mut(&tag) else {
-            return; // Tag doesn't exist
-        };
-        
-        // Remove the modifier
-        tag_entry.remove_modifier(path, value);
-        
-        // Clean up empty entries
-        let config = StatConfig::global().lock().unwrap();
-        let default_base = config.get_default_base(part_name);
-        if tag_entry.expressions.is_empty() && tag_entry.base == default_base {
-            part_entry.parts.remove(&tag);
-        }
-        
-        if part_entry.parts.is_empty() {
-            self.parts.remove(part_name);
         }
     }
-    
+
     fn set(&mut self, path: &StatPath, value: f32) {
-        // For direct setting of tag values
-        if path.parts.len() < 3 {
-            return; // Invalid path for tagged stat
-        }
-        
-        let part_name = &path.parts[1];
-        let tag_str = &path.parts[2];
-        let tag: u32 = match tag_str.parse() {
-            Ok(num) => num,
-            Err(_) => {
-                error!("Invalid tag format: {}", tag_str);
-                return;
-            }
-        };
-        
-        // Get or create the appropriate part type
-        let part_entry = self.parts.entry(part_name.clone())
-            .or_insert_with(|| TaggedEntry { parts: HashMap::new() });
-        
-        // Get or create the specific tag entry
-        let config = StatConfig::global().lock().unwrap();
-        let default_base = config.get_default_base(part_name);
-        let tag_entry = part_entry.parts.entry(tag)
-            .or_insert_with(|| Modifiable {
-                base: default_base,
-                expressions: Vec::new()
-            });
-        
-        // Set the base value directly
-        tag_entry.base = value;
+        // Tagged stats don't support direct setting
+        // Could implement if needed
     }
 
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
-        // Must have at least a tag (e.g., "Damage.FIRE" or "Damage.Added.FIRE")
-        if path.parts.len() < 2 {
-            return 0.0; // Tagged stats require a tag
-        }
-        
-        // Case: "Damage.FIRE" (base with tag)
+        let full_path = &path.path;
+       
+        // Record that this path was queried for efficient future updates
+        // This only uses interior mutability for the cached_queries, not for dependents_map
         if path.parts.len() == 2 {
-            let base_name = &path.parts[0];
-            let tag_str = &path.parts[1];
-            let tag: u32 = match tag_str.parse() {
-                Ok(num) => num,
-                Err(_) => {
-                    error!("Invalid tag format: {}", tag_str);
-                    return 0.0;
-                }
-            };
-            
-            // We need to evaluate all parts for this tag and apply the formula
-            let context = stats.cached_values.context();
-            
-            // Ensure all parts for this tag are cached
-            for part_name in self.total.compiled.iter_identifiers() {
-                let part_path = format!("{}.{}.{}", base_name, part_name, tag);
-                let value = self.get_or_evaluate_tag(base_name, part_name, tag, stats);
-                stats.cached_values.set(&part_path, value);
+            if let Ok(tag) = path.parts[1].parse::<u32>() {
+                self.record_query(tag, None);
             }
-            
-            // Evaluate the total formula for this tag
-            if let Ok(val) = self.total.compiled.eval_with_context(context) {
-                if let Ok(float_val) = val.as_float() {
-                    return float_val as f32;
-                }
+        } else if path.parts.len() == 3 {
+            if let Ok(tag) = path.parts[2].parse::<u32>() {
+                self.record_query(tag, Some(&path.parts[1]));
             }
-            
-            return 0.0;
         }
-        
-        // Case: "Damage.Added.FIRE" (specific part with tag)
-        if path.parts.len() == 3 {
-            let part_name = &path.parts[1];
-            let tag_str = &path.parts[2];
-            let tag: u32 = match tag_str.parse() {
-                Ok(num) => num,
-                Err(_) => {
-                    error!("Invalid tag format: {}", tag_str);
+       
+        // Evaluate based on the path structure
+        if path.parts.len() == 2 {
+            // Evaluating a total for a specific tag (e.g., "Damage.5")
+            if let Ok(search_tag) = path.parts[1].parse::<u32>() {
+                // Create a context for evaluating the total expression
+                let mut context = HashMapContext::new();
+               
+                // Initialize all variables in the expression with default values
+                for part_name in self.total.compiled.iter_identifiers() {
                     let config = StatConfig::global().lock().unwrap();
-                    return config.get_default_base(part_name);
+                    let default_value = config.get_default_base(part_name);
+                    context.set_value(part_name.to_string(), Value::Float(default_value as f64)).unwrap();
+                   
+                    // Calculate the value for each part
+                    let part_path = format!("{}.{}.{}", path.parts[0], part_name, search_tag);
+                    
+                    // Get the part value from cache if available, or calculate it
+                    let part_value = if stats.get(&part_path) > 0.0 {
+                        stats.get(&part_path)
+                    } else {
+                        let part_stat_path = StatPath::parse(&part_path).unwrap();
+                        self.evaluate(&part_stat_path, stats)
+                    };
+                   
+                    context.set_value(part_name.to_string(), Value::Float(part_value as f64)).unwrap();
                 }
-            };
-            
-            return self.get_or_evaluate_tag(&path.parts[0], part_name, tag, stats);
+               
+                // Evaluate the total expression with our context
+                let total = self.total.compiled
+                    .eval_with_context(&context)
+                    .unwrap_or(Value::Float(0.0))
+                    .as_number()
+                    .unwrap_or(0.0) as f32;
+               
+                return total;
+            }
+        } else if path.parts.len() == 3 {
+            // Evaluating a specific part for a specific tag (e.g., "Damage.Added.5")
+            let part_name = &path.parts[1];
+           
+            if let Ok(search_tag) = path.parts[2].parse::<u32>() {
+                // Get the entry for this part
+                if let Some(entry) = self.parts.get(part_name) {
+                    // Start with the base value
+                    let mut result = entry.base;
+                    
+                    // Add contributions from all matching tags
+                    for (&mod_tag, expressions) in &entry.expressions {
+                        if has_matching_tag(mod_tag, search_tag) {
+                            for expr in expressions {
+                                let context = stats.cached_values.context();
+                                result += expr.evaluate(context);
+                            }
+                        }
+                    }
+                    
+                    return result;
+                }
+               
+                // Part doesn't exist, return default value
+                let config = StatConfig::global().lock().unwrap();
+                return config.get_default_base(part_name);
+            }
         }
-        
+       
+        // Invalid path format for this type
         0.0
     }
     
-    fn register(&self, path: &StatPath, stats: &mut Stats) {
-        // For tagged stats, we don't pre-register all possible tags
-        // Instead, we register dependencies as they're evaluated
+    fn register(&self, path: &StatPath, stats: &mut Stats) { }
+    
+    fn unregister(&self, path: &StatPath, stats: &mut Stats) {
+        // Clean up any dependencies that were registered
+        // This is important to prevent memory leaks
         
-        // The base path (e.g., "Damage") depends on its components
-        if path.parts.len() == 1 {
-            // Register the formula parts
-            for part_name in self.total.compiled.iter_identifiers() {
-                // We'll register individual tag dependencies when they're first queried
-                // This avoids having to register all possible tags
-            }
-        }
+        let affected_queries = self.get_affected_queries();
         
-        // If a specific tag path (e.g., "Damage.Added.FIRE"), register it
-        if path.parts.len() == 3 {
-            let tag_str = &path.parts[2];
-            let tag: u32 = match tag_str.parse() {
-                Ok(num) => num,
-                Err(_) => return,
-            };
-            
-            // The base+tag (e.g., "Damage.FIRE") depends on its components
-            let base_name = &path.parts[0];
-            let part_name = &path.parts[1];
-            let base_tag_path = format!("{}.{}", base_name, tag_str);
-            
-            // Register this component as a dependency for the base+tag
-            let part_tag_path = format!("{}.{}.{}", base_name, part_name, tag_str);
-            let dependent = DependentType::Local(base_tag_path);
-            stats.dependents_map.add_dependent(&part_tag_path, dependent);
-            
-            // Cache the initial value
-            if let Some(part_entry) = self.parts.get(part_name) {
-                if let Some(tag_entry) = part_entry.parts.get(&tag) {
-                    let temp_path = StatPath::parse(&part_tag_path).unwrap();
-                    let value = tag_entry.evaluate(&temp_path, stats);
-                    stats.cached_values.set(&part_tag_path, value);
-                    
-                    // Remember that this tag was queried
-                    unsafe {
-                        let combinations = &mut *self.cached_queries.get();
-                        let tag_paths = combinations.entry(tag).or_insert_with(HashSet::new);
-                        tag_paths.insert(part_tag_path);
+        for (tag, parts) in affected_queries {
+            // Clean up total dependencies
+            if parts.contains("_total") {
+                let total_path = format!("{}.{}", path.parts[0], tag);
+                
+                // Clean up dependencies on parts
+                for part_name in self.total.compiled.iter_identifiers() {
+                    if parts.contains(part_name) {
+                        let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
+                        stats.dependents_map.remove_dependent(&part_path, DependentType::Local(total_path.clone()));
                     }
                 }
+            }
+            
+            // Clean up any other registered dependencies
+            for part_name in parts {
+                let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
+                
+                // You might need to gather and remove various dependencies here
+                // The exact dependencies to clean up depend on your system design
             }
         }
     }
-    
-    fn unregister(&self, path: &StatPath, stats: &mut Stats) {
-        // Similar to register but removing dependencies
-        if path.parts.len() == 3 {
-            let tag_str = &path.parts[2];
-            let tag: u32 = match tag_str.parse() {
-                Ok(num) => num,
-                Err(_) => return,
-            };
-            
-            let base_name = &path.parts[0];
+
+    fn get_affected_paths(&self, path: &StatPath) -> Vec<String> {
+        let mut affected_paths = Vec::new();
+        
+        // If this is a specific part/tag path, find all cached paths that might be affected
+        if path.parts.len() >= 3 {
+            let base_path = &path.parts[0];
             let part_name = &path.parts[1];
-            let base_tag_path = format!("{}.{}", base_name, tag_str);
-            let part_tag_path = format!("{}.{}.{}", base_name, part_name, tag_str);
             
-            // Unregister dependency
-            let dependent = DependentType::Local(base_tag_path);
-            stats.dependents_map.remove_dependent(&part_tag_path, dependent);
+            if let Ok(modified_tag) = path.parts[2].parse::<u32>() {
+                let affected_queries = self.get_affected_queries();
+                
+                for (tag, parts) in affected_queries {
+                    // Only include tags that match our modified tag
+                    if has_matching_tag(modified_tag, tag) {
+                        // If the modified part is in the cached queries, add it
+                        if parts.contains(part_name) {
+                            let part_path = format!("{}.{}.{}", base_path, part_name, tag);
+                            affected_paths.push(part_path);
+                        }
+                        
+                        // If the total is cached, add it
+                        if parts.contains("_total") {
+                            let total_path = format!("{}.{}", base_path, tag);
+                            affected_paths.push(total_path);
+                        }
+                    }
+                }
+            }
+        } else if path.parts.len() == 1 {
+            // If this is just the base path, add all cached paths for this stat
+            let base_path = &path.parts[0];
+            let affected_queries = self.get_affected_queries();
             
-            // Remove from cache
-            unsafe {
-                let combinations = &mut *self.cached_queries.get();
-                if let Some(tag_paths) = combinations.get_mut(&tag) {
-                    tag_paths.remove(&part_tag_path);
-                    if tag_paths.is_empty() {
-                        combinations.remove(&tag);
+            for (tag, parts) in affected_queries {
+                for part in parts {
+                    if part == "_total" {
+                        let total_path = format!("{}.{}", base_path, tag);
+                        affected_paths.push(total_path);
+                    } else {
+                        let part_path = format!("{}.{}.{}", base_path, part, tag);
+                        affected_paths.push(part_path);
                     }
                 }
             }
         }
+        
+        // If we didn't find any affected paths, include the original path
+        if affected_paths.is_empty() {
+            affected_paths.push(path.path.clone());
+        }
+        
+        affected_paths
+    }
+    
+    fn post_update(&self, path: &StatPath, stats: &Stats) -> Vec<(String, DependentType)> {
+        let mut dependencies = Vec::new();
+        
+        if path.parts.len() < 2 {
+            return dependencies;
+        }
+        
+        // For a total path (e.g., "Damage.5")
+        if path.parts.len() == 2 {
+            if let Ok(tag) = path.parts[1].parse::<u32>() {
+                let affected_queries = self.get_affected_queries();
+                if let Some(parts) = affected_queries.get(&tag) {
+                    // Collect only LOCAL dependencies - no cross-entity dependencies
+                    for part_name in parts {
+                        if part_name != "_total" {
+                            let part_path = format!("{}.{}.{}", path.parts[0], part_name, tag);
+                            // Only add LOCAL dependencies here
+                            dependencies.push((part_path, DependentType::Local(path.path.clone())));
+                        }
+                    }
+                }
+            }
+        }
+        
+        dependencies
     }
 }
