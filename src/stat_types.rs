@@ -88,7 +88,7 @@ impl Stat for Flat {
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
+    fn remove_modifier(&mut self, _path: &StatPath, modifier: &ModifierType) {
         if let ModifierType::Literal(value) = modifier {
             self.0 -= value;
         }
