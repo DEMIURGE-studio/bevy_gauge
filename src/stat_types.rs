@@ -18,7 +18,8 @@ pub(crate) enum StatType {
 }
 
 impl Stat for StatType {
-    fn new(path: &StatPath, config: &StatConfig) -> Self {
+    // StatType needs to use the path and config to derive the subtype of the stat
+    fn new(path: &StatPath, config: &Config) -> Self {
         match path.segments.len() {
             1 => {
                 let mut stat = Modifiable::new(&path.segments[0]);
@@ -39,16 +40,16 @@ impl Stat for StatType {
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, value: ValueType, config: &StatConfig) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, config: &Config) {
         match self {
             StatType::Flat(flat) => todo!(),
-            StatType::Modifiable(simple) => simple.add_modifier(path, value),
-            StatType::Complex(modifiable) => modifiable.add_modifier(path, value),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.add_modifier(path, value),
+            StatType::Modifiable(simple) => simple.add_modifier(path, value, config),
+            StatType::Complex(modifiable) => modifiable.add_modifier(path, value, config),
+            StatType::Tagged(complex_modifiable) => complex_modifiable.add_modifier(path, value, config),
         }
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: &ValueType, config: &StatConfig) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         match self {
             StatType::Flat(flat) => todo!(),
             StatType::Modifiable(simple) => simple.remove_modifier(path, value),
@@ -59,14 +60,14 @@ impl Stat for StatType {
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         match self {
-            StatType::Flat(flat) => todo!(),
+            StatType::Flat(flat) => flat.0,
             StatType::Modifiable(simple) => simple.evaluate(path, stats),
             StatType::Complex(modifiable) => modifiable.evaluate(path, stats),
             StatType::Tagged(complex_modifiable) => complex_modifiable.evaluate(path, stats),
         }
     }
     
-    fn set(&mut self, path: &StatPath, value: f32, config: &StatConfig) {
+    fn set(&mut self, path: &StatPath, value: f32) {
         todo!()
     }
 }
@@ -75,15 +76,15 @@ impl Stat for StatType {
 pub(crate) struct Flat(f32);
 
 impl Stat for Flat {
-    fn new(path: &StatPath, config: &StatConfig) -> Self {
+    fn new(path: &StatPath, config: &Config) -> Self {
         todo!()
     }
 
-    fn add_modifier(&mut self, path: &StatPath, value: ValueType, config: &StatConfig) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, config: &Config) {
         todo!()
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: &ValueType, config: &StatConfig) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         todo!()
     }
 
@@ -91,7 +92,7 @@ impl Stat for Flat {
         todo!()
     }
 
-    fn set(&mut self, _path: &StatPath, _value: f32, _config: &StatConfig) {
+    fn set(&mut self, _path: &StatPath, _value: f32) {
         todo!()
     }
 }
@@ -103,30 +104,28 @@ pub(crate) struct Modifiable {
     pub(crate) mods: Vec<Expression>,
 }
 
-impl Modifiable {
-}
-
 impl Stat for Modifiable {
-    fn new(path: &StatPath, _config: &StatConfig) -> Self {
-        todo!()
-        if path.path.to_lowercase().contains("more") {
-            Self { relationship: ModType::Mul, base: 0.0, mods: Vec::new() }
-        } else {
-            Self { relationship: ModType::Add, base: 0.0, mods: Vec::new() }
+    // Should derive the relationship from the path and the config.
+    // "Added" or "Increased" stats should have a ModType::Add
+    // "More" should have ModType::Mul
+    fn new(path: &StatPath, config: &Config) -> Self {
+        let relationship = ModType::Add; // TODO derive this from config
+        Self { relationship, base: 0.0, mods: Vec::new() }
+    }
+
+    // Should probably change add and remove for literals to take the relationship into account.
+    // For instance, ModType::Mul should have a *= for adding and reverse that for removing
+    fn add_modifier(&mut self, _path: &StatPath, value: ModifierType, config: &Config) {
+        match value {
+            ModifierType::Literal(vals) => { self.base += vals; }
+            ModifierType::Expression(expression) => { self.mods.push(expression.clone()); }
         }
     }
 
-    fn add_modifier(&mut self, _path: &StatPath, value: ValueType, _config: &StatConfig) {
+    fn remove_modifier(&mut self, _path: &StatPath, value: &ModifierType) {
         match value {
-            ValueType::Literal(vals) => { self.base += vals; }
-            ValueType::Expression(expression) => { self.mods.push(expression.clone()); }
-        }
-    }
-
-    fn remove_modifier(&mut self, _path: &StatPath, value: &ValueType, _config: &StatConfig) {
-        match value {
-            ValueType::Literal(vals) => { self.base -= vals; }
-            ValueType::Expression(expression) => {
+            ModifierType::Literal(vals) => { self.base -= vals; }
+            ModifierType::Expression(expression) => {
                 let Some(pos) = self.mods.iter().position(|e| e == expression) else { return; };
                 self.mods.remove(pos);
             }
@@ -149,13 +148,13 @@ pub(crate) struct Complex {
 }
 
 impl Stat for Complex  {
-    fn new(path: &StatPath, config: &StatConfig) -> Self {
-        let original_expr = get_total_expr_from_name(name);
+    fn new(path: &StatPath, config: &Config) -> Self {
+        let original_expr = total;
         let mut modifier_steps = HashMap::new();
         let modifier_names: Vec<&str> = original_expr.split(|c: char| !c.is_alphabetic())
             .filter(|s| !s.is_empty())
             .collect();
-        for modifier_name in modifier_names.iter() {
+        for modifier_name in modifier_names {
             let step = Modifiable::new(modifier_name);
             modifier_steps.insert(modifier_name.to_string(), step);
         }
@@ -176,17 +175,17 @@ impl Stat for Complex  {
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, value: ValueType, config: &StatConfig) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, config: &Config) {
         if path.len() != 2 { return; }
         let key = path.segments[1].to_string();
-        let part = self.modifier_steps.entry(key.clone()).or_insert(Modifiable::new(StatPath::parse(&key), config));
+        let part = self.modifier_steps.entry(key.clone()).or_insert(Modifiable::new(path, config));
         part.add_modifier(path, value);
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: &ValueType, _config: &StatConfig) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         if path.len() != 2 { return; }
         let key = path.segments[1].to_string();
-        let part = self.modifier_steps.entry(key.clone()).or_insert(Modifiable::new(&key));
+        let part = self.modifier_steps.get_mut(&key).unwrap();
         part.remove_modifier(path, value);
     }
     
@@ -222,30 +221,29 @@ pub(crate) struct Tagged {
 }
 
 impl Stat for Tagged {
-    fn new(path: &StatPath, config: &StatConfig) -> Self {
-        // TODO get default expression from the config based on the stat path
+    fn new(path: &StatPath, config: &Config) -> Self {
         Self {
-            total: Expression::new("").unwrap(), 
+            total: Expression::new(total).unwrap(), 
             modifier_types: HashMap::new(),
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, value: ValueType, config: &StatConfig) {
+    fn add_modifier(&mut self, path: &StatPath, value: ModifierType, config: &Config) {
         if path.len() != 3 { return; }
         let modifier_type = &path.segments[1];
         let Ok(tag) = path.segments[2].parse::<u32>() else { return; };
         let step_map = self.modifier_types.entry(modifier_type.to_string())
             .or_insert(TaggedEntry(HashMap::new()));
-        let step = step_map.0.entry(tag).or_insert(Modifiable::new(&StatPath::parse(modifier_type), config));
+        let step = step_map.0.entry(tag).or_insert(Modifiable::new(path, config));
         step.add_modifier(path, value, config);
     }
 
-    fn remove_modifier(&mut self, path: &StatPath, value: &ValueType, config: &StatConfig) {
+    fn remove_modifier(&mut self, path: &StatPath, value: &ModifierType) {
         if path.len() != 3 { return; }
         let Some(step_map) = self.modifier_types.get_mut(&path.segments[1]) else { return; };
         let Ok(tag) = path.segments[2].parse::<u32>() else { return; };
         let Some(step) = step_map.0.get_mut(&tag) else { return; };
-        step.remove_modifier(path, value, config);
+        step.remove_modifier(path, value);
     }
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
@@ -253,10 +251,6 @@ impl Stat for Tagged {
 
         if let Ok(search_tags) = path.segments.get(1).unwrap().parse::<u32>() {
             let mut context = HashMapContext::new();
-            for name in self.total.compiled.iter_variable_identifiers() {
-                let val = get_initial_value_for_modifier(name);
-                context.set_value(name.to_string(), Value::Float(val as f64)).unwrap();
-            }
             for (category, values) in &self.modifier_types {
                 let category_sum: f32 = values.0
                     .iter()
@@ -279,26 +273,6 @@ impl Stat for Tagged {
                 .unwrap() as f32;
             stats.set_cached(&full_path, total);
             return total;
-        }
-
-        if let Ok(search_tags) = path.segments.get(2).unwrap().parse::<u32>() {
-            let category = &path.segments[1];
-            let Some(values) = self.modifier_types.get(category) else {
-                return 0.0;
-            };
-
-            return values.0
-                .iter()
-                .filter_map(|(&mod_tags, value)| {
-                    if mod_tags.has_all(search_tags) {
-                        let dep_path = format!("{}.{}.{}", path.segments[0], category, mod_tags.to_string());
-                        stats.add_dependent(&dep_path, DependentType::LocalStat(full_path.to_string()));
-                        Some(value.evaluate(path, stats))
-                    } else {
-                        None
-                    }
-                })
-                .sum();
         }
 
         return 0.0;

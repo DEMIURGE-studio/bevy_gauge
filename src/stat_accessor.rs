@@ -9,7 +9,7 @@ use super::prelude::*;
 #[derive(SystemParam)]
 pub struct StatAccessor<'w, 's> {
     query: Query<'w, 's, &'static mut Stats>,
-    config: Res<'w, StatConfig>,
+    config: Res<'w, Config>,
 }
 
 impl StatAccessor<'_, '_> {
@@ -37,19 +37,19 @@ impl StatAccessor<'_, '_> {
         Ok(stats)
     }
 
-    pub fn add_modifier<V: Into<ValueType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
+    pub fn add_modifier<V: Into<ModifierType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
         let vt = modifier.into();
         self.add_modifier_value(target_entity, path, vt);
     }
 
-    pub fn add_modifier_value(&mut self, target_entity: Entity, path: &str, modifier: ValueType) {
+    pub fn add_modifier_value(&mut self, target_entity: Entity, path: &str, modifier: ModifierType) {
         let path = StatPath::parse(path);
 
         if !self.query.contains(target_entity) {
             return;
         }
         
-        if let ValueType::Expression(ref expression) = modifier {
+        if let ModifierType::Expression(ref expression) = modifier {
             // example entry: "Master@Life", master_entity, "Life"
             // i.e., map entities the modified_entity is dependent on to the stat modified_entity is dependent on, 
             // and the final path inside of the cached_stats of modified_entity.
@@ -124,12 +124,12 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &path);
     }
 
-    pub fn remove_modifier<V: Into<ValueType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
+    pub fn remove_modifier<V: Into<ModifierType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
         let vt = modifier.into();
         self.remove_modifier_value(target_entity, path, &vt);
     }
 
-    pub fn remove_modifier_value(&mut self, target_entity: Entity, path: &str, modifier: &ValueType) {
+    pub fn remove_modifier_value(&mut self, target_entity: Entity, path: &str, modifier: &ModifierType) {
         let path = StatPath::parse(path);
         
         // First, collect all the dependencies to remove
@@ -141,11 +141,11 @@ impl StatAccessor<'_, '_> {
                 Err(_) => return,
             };
             
-            if let ValueType::Expression(expression) = modifier {
+            if let ModifierType::Expression(expression) = modifier {
                 for depends_on in expression.compiled.iter_variable_identifiers() {
                     let depends_on = StatPath::parse(depends_on);
-                    if let Some(head) = &depends_on.owner {
-                        let dependency_path = &depends_on.path; // "Life_Added"
+                    if let Some(head) = depends_on.target {
+                        let dependency_path = depends_on.full_path; // "Life_Added"
                         
                         if let Some(&depends_on_entity) = target_stats.sources.get(head) {
                             dependencies_to_remove.push((
@@ -175,7 +175,7 @@ impl StatAccessor<'_, '_> {
 
         // Finally remove the modifier itself
         if let Ok(mut target_stats) = self.query.get_mut(target_entity) {
-            target_stats.remove_modifier_value(&path, modifier, &self.config);
+            target_stats.remove_modifier_value(&path, modifier);
         }
 
         self.update_stat(target_entity, &path);
@@ -299,7 +299,7 @@ impl StatAccessor<'_, '_> {
         // Calculate new value and update cache
         let current_value = if let Ok(stats) = self.query.get(target_entity) {
             let value = stats.evaluate(path);
-            stats.set_cached(&path.path, value);
+            stats.set_cached(path.full_path, value);
             value
         } else {
             return; // Entity doesn't have stats, nothing to do
@@ -310,7 +310,7 @@ impl StatAccessor<'_, '_> {
         
         if let Ok(stats) = self.query.get(target_entity) {
             // Get all dependents for this stat
-            for dependent in stats.get_stat_dependents(&path.path) {
+            for dependent in stats.get_stat_dependents(path.full_path) {
                 match dependent {
                     DependentType::LocalStat(local_stat) => {
                         local_dependents.push(StatPath::parse(&local_stat));
@@ -345,7 +345,7 @@ impl StatAccessor<'_, '_> {
                 // Update cached values and get stats to update
                 let mut stats_to_update = Vec::new();
                 for prefix in prefixes {
-                    let cache_key = format!("{}@{}", prefix, path.path);
+                    let cache_key = format!("{}@{}", prefix, path.full_path);
                     dependent_stats.set_cached(&cache_key, current_value);
                     
                     for cache_dependent in dependent_stats.get_stat_dependents(&cache_key) {

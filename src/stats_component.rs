@@ -13,6 +13,7 @@ pub struct Stats {
     pub(crate) sources: HashMap<String, Entity>,
 }
 
+// TODO needs to track dependencies BOTH WAYS
 impl Stats {
     pub fn new() -> Self {
         Self {
@@ -22,16 +23,6 @@ impl Stats {
             depends_on_map: DependencyMap::new(),
             sources: HashMap::new(),
         }
-    }
-
-    pub fn from_set(modifier_set: &ModifierSet, stat_config: &StatConfig) -> Self {
-        let mut stats = Stats::new();
-        for (stat, modifiers) in modifier_set.iter() {
-            for modifier in modifiers.iter() {
-                stats.add_modifier_value(&StatPath::parse(stat), modifier.clone(), stat_config);
-            }
-        }
-        return stats;
     }
     
     pub fn get(&self, path: &str) -> f32 {
@@ -81,55 +72,38 @@ impl Stats {
     }
 
     pub(crate) fn evaluate(&self, path: &StatPath) -> f32 {
-        if path.segments.is_empty() {
-            return 0.0;
-        }
-        
-        let head = &path.segments[0];
+        let head = path.name;
         let stat_type = self.definitions.get(head);
         let Some(stat_type) = stat_type else { return 0.0; };
 
         stat_type.evaluate(path, self)
     }
 
-    pub fn add_modifier<V: Into<ValueType>>(&mut self, path: &str, modifier: V, stat_config: &StatConfig) {
-        let vt = modifier.into();
-        self.add_modifier_value(&StatPath::parse(path), vt, stat_config);
-    }
-
-    pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ValueType, stat_config: &StatConfig) {
-        if path.segments.is_empty() {
-            return;
-        }
-        
-        let base_stat = path.segments[0].to_string();
+    pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
+        let base_stat = path.name;
 
         {
-            if let ValueType::Expression(ref depends_on_expression) = modifier {
+            if let ModifierType::Expression(ref depends_on_expression) = modifier {
                 self.register_dependencies(path, &depends_on_expression);
             }
-            if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.add_modifier(path, modifier, stat_config);
+            if let Some(stat) = self.definitions.get_mut(base_stat) {
+                stat.add_modifier(path, modifier, config);
             } else {
-                let mut new_stat = StatType::new(path, stat_config);
-                new_stat.add_modifier(path, modifier, stat_config);
-                self.definitions.insert(base_stat.clone(), new_stat);
+                let mut new_stat = StatType::new(path, config);
+                new_stat.add_modifier(path, modifier, config);
+                self.definitions.insert(base_stat.to_string(), new_stat);
             }
         }
     }
 
-    pub(crate) fn remove_modifier_value(&mut self, path: &StatPath, modifier: &ValueType, stat_config: &StatConfig) {
-        if path.segments.is_empty() {
-            return;
-        }
-        
-        let base_stat = path.segments[0].to_string();
+    pub(crate) fn remove_modifier_value(&mut self, path: &StatPath, modifier: &ModifierType) {
+        let base_stat = path.name.to_string();
 
         {
             if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.remove_modifier(path, modifier, stat_config);
+                stat.remove_modifier(path, modifier);
             }
-            if let ValueType::Expression(expression) = modifier {
+            if let ModifierType::Expression(expression) = modifier {
                 self.unregister_dependencies(&base_stat, &expression);
             }
         }
@@ -138,7 +112,7 @@ impl Stats {
     pub(crate) fn register_dependencies(&mut self, path: &StatPath, depends_on_expression: &Expression) {
         for var_name in depends_on_expression.compiled.iter_variable_identifiers() {
             self.evaluate(path);
-            self.add_dependent(var_name, DependentType::LocalStat(path.path.to_string()));
+            self.add_dependent(var_name, DependentType::LocalStat(path.to_string()));
         }
     }
 

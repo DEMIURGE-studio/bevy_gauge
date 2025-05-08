@@ -1,55 +1,117 @@
-
-// StatPath struct to handle path parsing and avoid repetitive string operations
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StatPath {
-    pub(crate) path: String,
-    pub(crate) owner: Option<String>,
-    pub(crate) segments: Vec<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StatPath<'a> {
+    /// The original full string path.
+    pub full_path: &'a str,
+    /// The primary name of the stat (e.g., "Strength"). First segment.
+    pub name: &'a str,
+    /// An optional single part of the path immediately following the name
+    /// (e.g., "Added" in "Strength.Added" or "Strength.Added.123").
+    /// This is None if the segment after 'name' is a numerical tag.
+    pub part: Option<&'a str>,
+    /// Optional u32 tag. This can be the segment after 'name' (if numerical)
+    /// or the segment after 'part' (if numerical).
+    pub tag: Option<u32>,
+    /// An optional target entity or context.
+    pub target: Option<&'a str>,
 }
 
-impl StatPath {
-    pub(crate) fn parse(string: &str) -> Self {
-        let (owner, segments) = if string.contains('@') {
-            let parts: Vec<&str> = string.split('@').collect();
-            let owner = Some(parts[0].to_string());
-            let segments = parts[1].split('.').map(|s| s.to_string()).collect();
-            (owner, segments)
-        } else {
-            let segments = string.split('.').map(|s| s.to_string()).collect();
-            (None, segments)
-        };
-        Self { 
-            path: string.to_string(), 
-            owner, 
-            segments,
+/// Parses a segment string to determine if it represents a u32 number.
+fn parse_segment_as_numerical_tag(segment: &str) -> Option<u32> {
+    // Trim whitespace to be a bit more lenient, though typically paths don't have spaces.
+    segment.trim().parse::<u32>().ok()
+}
+
+impl<'a> StatPath<'a> {
+    /// Parses a string slice into a `StatPath`.
+    ///
+    /// Parsing Logic:
+    /// 1. Handles `@target` prefix.
+    /// 2. `name` is the first segment of the remaining path.
+    /// 3. If a second segment (`s1`) exists:
+    ///    a. If `s1` is a numerical tag, it becomes `tag`; `part` is `None`.
+    ///    b. If `s1` is not a numerical tag, it becomes `part`.
+    ///       Then, if a third segment (`s2`) exists and is a numerical tag, it becomes `tag`.
+    /// 4. Any further segments are ignored by this structure.
+    pub fn parse(s: &'a str) -> Self {
+        let full_path = s;
+        let mut target_val: Option<&'a str> = None;
+        let mut path_to_parse: &'a str = s;
+
+        if let Some(at_idx) = path_to_parse.find('@') {
+            let (target_candidate, rest_path) = path_to_parse.split_at(at_idx);
+            if !target_candidate.is_empty() {
+                target_val = Some(target_candidate);
+            }
+            if !rest_path.is_empty() { // Check if there's anything after '@'
+                 path_to_parse = &rest_path[1..]; // Skip '@'
+            } else {
+                path_to_parse = ""; // Path after @ is empty
+            }
+        }
+
+        if path_to_parse.is_empty() {
+            return Self {
+                full_path,
+                name: "",
+                part: None,
+                tag: None,
+                target: target_val,
+            };
+        }
+
+        let all_segments: Vec<&'a str> = path_to_parse.split('.').collect();
+
+        let mut name_val: &'a str = "";
+        let mut part_val: Option<&'a str> = None;
+        let mut tag_val: Option<u32> = None;
+
+        // name_val is the first segment. If path_to_parse was ".", all_segments is ["", ""].
+        // If path_to_parse was "", all_segments is [""] (but caught by is_empty above).
+        if let Some(first_segment) = all_segments.get(0) {
+            name_val = first_segment;
+        }
+        // else name_val remains "", which is correct if all_segments was unexpectedly empty
+        // despite path_to_parse not being empty (highly unlikely with split).
+
+        if let Some(s1) = all_segments.get(1).cloned() { // Segment after name
+            if let Some(parsed_tag) = parse_segment_as_numerical_tag(s1) {
+                tag_val = Some(parsed_tag);
+                // part_val remains None as s1 was consumed as a tag.
+                // Any s2 (third segment) is ignored if s1 is a tag.
+            } else {
+                // s1 is not a numerical tag, so it's a part.
+                part_val = Some(s1);
+                if let Some(s2) = all_segments.get(2).cloned() { // Segment after part
+                    if let Some(parsed_tag_s2) = parse_segment_as_numerical_tag(s2) {
+                        tag_val = Some(parsed_tag_s2);
+                    }
+                    // Else s2 is not a numerical tag; it's ignored (as part is only s1).
+                }
+            }
+        }
+        // If only one segment (name_val), part_val and tag_val remain None.
+
+        Self {
+            full_path,
+            name: name_val,
+            part: part_val,
+            tag: tag_val,
+            target: target_val,
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.segments.len()
-    }
+    // --- Accessor Methods (remain the same) ---
+    pub fn full_path(&self) -> &'a str { self.full_path }
+    pub fn name(&self) -> &'a str { self.name }
+    pub fn part(&self) -> Option<&'a str> { self.part }
+    pub fn tag(&self) -> Option<u32> { self.tag }
+    pub fn target(&self) -> Option<&'a str> { self.target }
+    pub fn has_target(&self) -> bool { self.target.is_some() }
+    pub fn has_tags(&self) -> bool { self.tag.is_some() }
+}
 
-    pub(crate) fn to_string(&self) -> String {
-        self.path.clone()
-    }
-
-    pub(crate) fn has_owner(&self) -> bool {
-        self.owner.is_some()
-    }
-
-    pub(crate) fn owner(&self) -> Option<&str> {
-        self.owner.as_deref()
-    }
-
-    pub(crate) fn segments(&self) -> Vec<&str> {
-        self.segments.iter().map(|s| s.as_str()).collect()
-    }
-
-    pub(crate) fn base(&self) -> Option<&str> {
-        self.segments.first().map(|s| s.as_str())
-    }
-
-    pub(crate) fn with_owner(path: &str, owner_prefix: &str) -> String {
-        format!("{}@{}", owner_prefix, path)
+impl<'a> ToString for StatPath<'a> {
+    fn to_string(&self) -> String {
+        self.full_path.to_string()
     }
 }

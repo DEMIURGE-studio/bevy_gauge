@@ -37,24 +37,24 @@ impl PartialEq for Expression {
 }
 
 #[derive(Debug, Clone)]
-pub enum ValueType {
+pub enum ModifierType {
     Literal(f32),
     Expression(Expression),
 }
 
-impl Default for ValueType {
+impl Default for ModifierType {
     fn default() -> Self {
         Self::Literal(0.0)
     }
 }
 
-impl From<Expression> for ValueType {
+impl From<Expression> for ModifierType {
     fn from(value: Expression) -> Self {
         Self::Expression(value)
     }
 }
 
-impl From<&str> for ValueType {
+impl From<&str> for ModifierType {
     fn from(value: &str) -> Self {
         Self::Expression(Expression {
             definition: value.to_string(),
@@ -63,7 +63,7 @@ impl From<&str> for ValueType {
     }
 }
 
-impl From<String> for ValueType {
+impl From<String> for ModifierType {
     fn from(value: String) -> Self {
         Self::Expression(Expression {
             definition: value.clone(),
@@ -72,19 +72,19 @@ impl From<String> for ValueType {
     }
 }
 
-impl From<f32> for ValueType {
+impl From<f32> for ModifierType {
     fn from(value: f32) -> Self {
         Self::Literal(value)
     }
 }
 
-impl From<u32> for ValueType {
+impl From<u32> for ModifierType {
     fn from(value: u32) -> Self {
         Self::Literal(value as f32)
     }
 }
 
-impl From<i32> for ValueType {
+impl From<i32> for ModifierType {
     fn from(value: i32) -> Self {
         Self::Literal(value as f32)
     }

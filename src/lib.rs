@@ -9,6 +9,7 @@ use prelude::*;
 use bevy::prelude::*;
 
 pub mod app_extension;
+pub mod config;
 pub mod dirty;
 pub mod expressions;
 pub mod macros;
@@ -17,7 +18,6 @@ pub mod prelude;
 pub mod sources;
 pub mod stat_accessor;
 pub mod stat_addressing;
-pub mod stat_config;
 pub mod stat_derived;
 pub mod stat_effect;
 pub mod stat_error;
