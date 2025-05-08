@@ -21,7 +21,7 @@ impl StatAccessor<'_, '_> {
         stats.get(path)
     }
 
-    pub fn set_base(&mut self, target_entity: Entity, path: &str, value: f32) {
+    pub fn set(&mut self, target_entity: Entity, path: &str, value: f32) {
         let Ok(mut stats) = self.query.get_mut(target_entity) else {
             return;
         };
