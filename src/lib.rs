@@ -34,6 +34,7 @@ use prelude::*;
 use bevy::prelude::*;
 
 pub mod experiment;
+pub mod experiment2;
 
 pub mod app_extension;
 pub mod asset_like;
