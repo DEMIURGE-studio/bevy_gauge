@@ -183,94 +183,96 @@ impl StatAccessor<'_, '_> {
 
     // This is filthy
     pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
-        // Check if entity exists before proceeding
+        // Early return if target doesn't exist
         if !self.query.contains(target_entity) {
             return;
         }
-    
-        // First, collect all the necessary information from the target_entity
+
+        // Step 1: Collect all updates we need to make
+        let (updates, stats_to_update) = self.collect_source_updates(target_entity, name, source_entity);
+        if updates.is_empty() {
+            return;
+        }
+
+        // Step 2: Apply all dependency updates
+        self.apply_dependency_updates(&updates);
+
+        // Step 3: Update all affected stats
+        for stat in stats_to_update {
+            self.update_stat(stat.entity, &StatPath::parse(&stat.path));
+        }
+    }
+
+    fn collect_source_updates(
+        &mut self,
+        target_entity: Entity,
+        name: &str,
+        source_entity: Entity,
+    ) -> (Vec<DependencyUpdate>, Vec<StatUpdate>) {
+        let Ok(mut stats) = self.query.get_mut(target_entity) else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let mut dependency_updates = Vec::new();
         let mut stats_to_update = Vec::new();
-        let mut deps_to_register = Vec::new();
+
+        // Get old source for cleanup
+        let old_source = stats.sources.get(name).cloned();
         
-        // Collect dependent stats and prepare source registration
-        {
-            if let Ok(mut stats) = self.query.get_mut(target_entity) {
-                // Store the old source if it exists (for potential cleanup later)
-                let old_source = stats.sources.get(name).cloned();
-                
-                // Update the source
-                stats.sources.insert(name.to_string(), source_entity);
-                
-                // Collect stats that need updating and dependencies to register
-                for (stat, dependents) in stats.get_dependents() {
-                    if stat.contains('@') && stat.starts_with(name) {
-                        let parts: Vec<&str> = stat.split('@').collect();
-                        if parts.len() > 1 {
-                            // Add to list of dependencies to register with source entity
-                            deps_to_register.push((source_entity, parts[1].to_string(), target_entity));
-                            
-                            // Collect stats that need to be updated
-                            for (dependent, _) in dependents.iter() {
-                                if let DependentType::LocalStat(dependent_stat) = dependent {
-                                    stats_to_update.push(dependent_stat.clone());
-                                }
-                            }
-                        }
-                    }
+        // Update source mapping
+        stats.sources.insert(name.to_string(), source_entity);
+
+        // Collect updates for all dependent stats
+        for (stat, dependents) in stats.get_dependents() {
+            // Only process stats that reference this source
+            if !stat.contains('@') || !stat.starts_with(name) {
+                continue;
+            }
+
+            let Some(dependency_path) = stat.split('@').nth(1) else {
+                continue;
+            };
+
+            // Add new dependency
+            dependency_updates.push(DependencyUpdate {
+                source_entity,
+                path: dependency_path.to_string(),
+                target_entity,
+            });
+
+            // Collect stats that need updating
+            for (dependent, _) in dependents {
+                if let DependentType::LocalStat(path) = dependent {
+                    stats_to_update.push(StatUpdate {
+                        entity: target_entity,
+                        path: path.clone(),
+                    });
                 }
-                
-                // Remove dependencies from old source if it exists and is different
-                if let Some(old_source_entity) = old_source {
-                    if old_source_entity != source_entity {
-                        for (stat, _) in stats.get_dependents() {
-                            if stat.contains('@') && stat.starts_with(name) {
-                                let parts: Vec<&str> = stat.split('@').collect();
-                                if parts.len() > 1 {
-                                    // Schedule removal of dependency from old source
-                                    if let Ok(mut  old_source_stats) = self.query.get_mut(old_source_entity) {
-                                        old_source_stats.remove_dependent(
-                                            &parts[1].to_string(), 
-                                            DependentType::EntityStat(target_entity)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+            }
+
+            // Handle old source cleanup if needed
+            if let Some(old_source_entity) = old_source {
+                if old_source_entity != source_entity {
+                    dependency_updates.push(DependencyUpdate {
+                        source_entity: old_source_entity,
+                        path: dependency_path.to_string(),
+                        target_entity,
+                    });
                 }
             }
         }
-        
-        // Register dependencies with the source entity
-        for (source_entity, path, target_entity) in deps_to_register {
-            if let Ok(mut source_stats) = self.query.get_mut(source_entity) {
+
+        (dependency_updates, stats_to_update)
+    }
+
+    fn apply_dependency_updates(&mut self, updates: &[DependencyUpdate]) {
+        for update in updates {
+            if let Ok(mut source_stats) = self.query.get_mut(update.source_entity) {
                 source_stats.add_dependent(
-                    &path,
-                    DependentType::EntityStat(target_entity)
+                    &update.path,
+                    DependentType::EntityStat(update.target_entity)
                 );
             }
-        }
-        
-        // Now update the cached values for stats that depend on the new source
-        {
-            if let Ok(stats) = self.query.get(target_entity) {
-                // Update cached values
-                for stat in stats.get_dependents().keys() {
-                    if stat.contains('@') && stat.starts_with(name) {
-                        let parts: Vec<&str> = stat.split('@').collect();
-                        if parts.len() > 1 {
-                            // Get the value from the new source
-                            let value = self.get(source_entity, parts[1]);
-                            stats.cache_stat(stat, value);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Finally, update all dependent stats
-        for dependent_stat in stats_to_update {
-            self.update_stat(target_entity, &StatPath::parse(&dependent_stat));
         }
     }
 
@@ -406,6 +408,58 @@ impl StatAccessor<'_, '_> {
 
         for (dependent_entity, cache_key) in stat_dependencies {
             self.update_stat(dependent_entity, &StatPath::parse(&cache_key));
+        }
+    }
+}
+
+/// Represents a change in dependency relationship between stats of different entities.
+/// Used when registering or updating entity sources to track what dependencies need to be added or removed.
+#[derive(Debug, Clone)]
+struct DependencyUpdate {
+    /// The entity whose stat is being depended on
+    source_entity: Entity,
+    /// The path of the stat within the source entity
+    path: String,
+    /// The entity that depends on the source
+    target_entity: Entity,
+}
+
+impl DependencyUpdate {
+    /// Creates a new dependency update for adding a dependency
+    fn new_add(source_entity: Entity, path: &str, target_entity: Entity) -> Self {
+        Self {
+            source_entity,
+            path: path.to_string(),
+            target_entity,
+        }
+    }
+
+    /// Creates a new dependency update for removing a dependency
+    fn new_remove(source_entity: Entity, path: &str, target_entity: Entity) -> Self {
+        Self {
+            source_entity,
+            path: path.to_string(),
+            target_entity,
+        }
+    }
+}
+
+/// Represents a stat that needs to be recalculated due to dependency changes.
+/// Used to track which stats need to be updated after dependency changes are applied.
+#[derive(Debug, Clone)]
+struct StatUpdate {
+    /// The entity whose stat needs updating
+    entity: Entity,
+    /// The path of the stat to update
+    path: String,
+}
+
+impl StatUpdate {
+    /// Creates a new stat update
+    fn new(entity: Entity, path: &str) -> Self {
+        Self {
+            entity,
+            path: path.to_string(),
         }
     }
 }
