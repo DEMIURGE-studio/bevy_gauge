@@ -1,8 +1,26 @@
 use std::cell::SyncUnsafeCell;
 
 use bevy::{prelude::*, utils::HashMap};
-use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value};
+use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value, IterateVariablesContext};
 use super::prelude::*;
+
+/// A wrapper around the expression evaluation context, hiding `evalexpr` details.
+#[derive(Clone, Debug, Default)]
+pub struct StatContext(pub(crate) HashMapContext);
+
+impl StatContext {
+    /// Creates a new, empty context.
+    pub fn new() -> Self {
+        Self(HashMapContext::new())
+    }
+
+    /// Sets a variable in the context.
+    pub fn set_value(&mut self, key: String, value: f32) -> Result<(), String> {
+        self.0.set_value(key, Value::Float(value as f64)).map_err(|e| e.to_string())
+    }
+
+    // Potentially add get_value, iter_variables etc. if needed by users directly
+}
 
 #[derive(Component, Clone, Debug, Default)]
 pub struct Stats {
@@ -72,11 +90,17 @@ impl Stats {
     }
 
     pub(crate) fn evaluate(&self, path: &StatPath) -> f32 {
-        let head = path.name;
-        let stat_type = self.definitions.get(head);
-        let Some(stat_type) = stat_type else { return 0.0; };
+        let stat_definition_opt = self.definitions.get(path.name);
+        
+        let Some(stat_definition) = stat_definition_opt else {
+            return 0.0;
+        };
 
-        stat_type.evaluate(path, self)
+        let value = stat_definition.evaluate(path, self);
+        // Note: self.set_cached updates Stats::cached_stats, not the StatType's internal cache like TaggedStat::query_cache
+        // This is for direct lookups via Stats::get later.
+        self.set_cached(&path.full_path, value); 
+        value
     }
 
     pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
@@ -111,7 +135,6 @@ impl Stats {
 
     pub(crate) fn register_dependencies(&mut self, path: &StatPath, depends_on_expression: &Expression) {
         for var_name in depends_on_expression.compiled.iter_variable_identifiers() {
-            self.evaluate(path);
             self.add_dependent(var_name, DependentType::LocalStat(path.to_string()));
         }
     }
@@ -125,6 +148,36 @@ impl Stats {
     // Helper method to store an entity-dependent stat value
     pub(crate) fn cache_stat(&self, key: &str, value: f32) {
         self.set_cached(key, value);
+    }
+
+    // Made public, now uses StatContext wrapper
+    pub fn evaluate_expression(&self, expr_str: &str, base_context_opt: Option<&StatContext>) -> Result<f32, StatError> {
+        let mut new_eval_context = base_context_opt.map(|sc| sc.0.clone()).unwrap_or_else(HashMapContext::new);
+        
+        // Add own cached_stats to the context
+        for (key, val) in self.cached_stats.context().iter_variables() {
+            new_eval_context.set_value(key.into(), val.clone()).map_err(|e| StatError::Internal { details: format!("Failed to set internal context var: {}", e)})?;
+        }
+        
+        let eval_result = evalexpr::eval_with_context(expr_str, &new_eval_context)
+            .map_err(|e| StatError::ExpressionError { expression: expr_str.to_string(), details: e.to_string() })?;
+        
+        Ok(eval_result.as_number().unwrap_or(0.0) as f32)
+    }
+
+    pub(crate) fn clear_internal_cache_for_path(&mut self, path: &StatPath) {
+        if let Some(stat_definition) = self.definitions.get_mut(path.name) {
+            match stat_definition {
+                StatType::Tagged(tagged_stat) => {
+                    // Assuming Tagged has a method to clear its specific cache.
+                    // We also need to ensure the specific part.tag combination is cleared if possible,
+                    // or just clear the whole query_cache for that Tagged stat for simplicity.
+                    tagged_stat.clear_query_cache(); // Needs to be implemented on Tagged
+                }
+                // Other StatType variants might have their own caches in the future.
+                _ => {}
+            }
+        }
     }
 }
 
@@ -151,7 +204,7 @@ impl SyncContext {
         }
     }
 
-    fn context(&self) -> &HashMapContext {
+    pub(crate) fn context(&self) -> &HashMapContext {
         unsafe { &*self.0.get() }
     }
 }
@@ -166,11 +219,11 @@ impl Clone for SyncContext {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DependentType {
     LocalStat(String),
-    EntityStat(Entity),
+    EntityStat { entity: Entity, path: String, source_alias: String },
 }
 
 #[derive(Clone, Debug, Default)]
-struct DependencyMap(HashMap<String, HashMap<DependentType, u32>>);
+pub(crate) struct DependencyMap(HashMap<String, HashMap<DependentType, u32>>);
 
 impl DependencyMap {
     fn new() -> Self {
@@ -182,7 +235,7 @@ impl DependencyMap {
             .entry(path.to_string())
             .or_insert_with(HashMap::new);
         
-        *entry.entry(dependent).or_insert(0) += 1;
+        *entry.entry(dependent.clone()).or_insert(0) += 1;
     }
    
     fn remove_dependent(&mut self, path: &str, dependent: DependentType) {
@@ -201,10 +254,11 @@ impl DependencyMap {
     }
    
     fn get_stat_dependents(&self, path: &str) -> Vec<DependentType> {
-        self.0
+        let result = self.0
             .get(path)
             .map(|dependents| dependents.keys().cloned().collect())
-            .unwrap_or_else(Vec::new)
+            .unwrap_or_else(Vec::new);
+        result
     }
    
     // No need for the clone note anymore since we're not dealing with locks

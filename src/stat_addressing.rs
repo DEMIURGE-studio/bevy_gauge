@@ -37,25 +37,31 @@ impl<'a> StatPath<'a> {
         let mut target_val: Option<&'a str> = None;
         let mut path_to_parse: &'a str = s;
 
-        if let Some(at_idx) = path_to_parse.find('@') {
-            let (target_candidate, rest_path) = path_to_parse.split_at(at_idx);
-            if !target_candidate.is_empty() {
-                target_val = Some(target_candidate);
+        if let Some((base_candidate, source_candidate)) = path_to_parse.rsplit_once('@') {
+            if !source_candidate.is_empty() {
+                target_val = Some(source_candidate);
             }
-            if !rest_path.is_empty() { // Check if there's anything after '@'
-                 path_to_parse = &rest_path[1..]; // Skip '@'
-            } else {
-                path_to_parse = ""; // Path after @ is empty
-            }
+            path_to_parse = base_candidate;
         }
 
-        if path_to_parse.is_empty() {
+        if path_to_parse.is_empty() && target_val.is_some() {
+            // This case handles if the input was just "@SomeTarget"
+            // or if after splitting, base_candidate was empty (e.g. "@Target")
+            return Self {
+                full_path,
+                name: "", // No actual stat name part
+                part: None,
+                tag: None,
+                target: target_val,
+            };
+        } else if path_to_parse.is_empty() {
+            // Input was completely empty string or only "@"
             return Self {
                 full_path,
                 name: "",
                 part: None,
                 tag: None,
-                target: target_val,
+                target: None, // or target_val which would be None if path_to_parse is empty from just "@"
             };
         }
 
@@ -108,6 +114,14 @@ impl<'a> StatPath<'a> {
     pub fn target(&self) -> Option<&'a str> { self.target }
     pub fn has_target(&self) -> bool { self.target.is_some() }
     pub fn has_tags(&self) -> bool { self.tag.is_some() }
+
+    pub fn without_target_as_string(&self) -> String {
+        let mut parts = Vec::new();
+        parts.push(self.name.to_string());
+        if let Some(p) = self.part { parts.push(p.to_string()); }
+        if let Some(t) = self.tag { parts.push(t.to_string()); }
+        parts.join(".")
+    }
 }
 
 impl<'a> ToString for StatPath<'a> {

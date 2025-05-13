@@ -1,6 +1,4 @@
 use bevy::prelude::*;
-use crate::stat_accessor;
-
 use super::prelude::*;
 
 pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
