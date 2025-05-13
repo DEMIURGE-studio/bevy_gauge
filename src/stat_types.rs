@@ -1,32 +1,50 @@
 use bevy::utils::HashMap;
 use evalexpr::{ContextWithMutableVariables, HashMapContext, Value};
 use super::prelude::*;
+use std::collections::HashSet;
+use dashmap::DashMap;
 
+/// Represents different ways that modifiers can be combined in the stat system.
+/// 
+/// This enum determines how multiple modifiers to the same stat are combined together.
 #[derive(Debug, Clone, Default)]
 pub(crate) enum ModType {
+    /// Modifiers are added together linearly.
+    /// Example: "10% increased damage" + "20% increased damage" = 30% increased damage
     #[default]
     Add,
+    /// Modifiers are multiplied together.
+    /// Example: "10% more damage" * "20% more damage" = 32% more damage
     Mul,
 }
 
+/// The core enum representing different types of stats in the system.
+/// Each variant handles different complexity levels and modification patterns.
 #[derive(Debug, Clone)]
 pub(crate) enum StatType {
+    /// Simple numeric value with no complex modification rules.
+    /// Example: Base health that just gets directly modified
     Flat(Flat),
+    /// Value that can be modified by additive or multiplicative modifiers.
+    /// Example: Damage that can be increased by percentage modifiers
     Modifiable(Modifiable),
+    /// Stat composed of multiple parts combined through an expression.
+    /// Example: Final damage = base * (1 + increased) * (1 + more)
     Complex(Complex),
+    /// Stat that can be filtered and queried by tags.
+    /// Example: "Increased fire damage with axes" combines fire and axe modifiers
     Tagged(Tagged),
 }
 
 impl Stat for StatType {
-    // StatType needs to use the path and config to derive the subtype of the stat
     fn new(path: &StatPath, config: &Config) -> Self {
         let stat_type = config.get_stat_type(path);
         match stat_type {
-            "Flat" => { StatType::Flat(Flat::new(path, config)) },
-            "Modifiable" => { StatType::Modifiable(Modifiable::new(path, config)) },
-            "Complex" => { StatType::Complex(Complex::new(path, config)) },
-            "Tagged" => { StatType::Tagged(Tagged::new(path, config)) },
-            _ => { panic!("Invalid stat type!"); },
+            "Flat" => StatType::Flat(Flat::new(path, config)),
+            "Modifiable" => StatType::Modifiable(Modifiable::new(path, config)),
+            "Complex" => StatType::Complex(Complex::new(path, config)),
+            "Tagged" => StatType::Tagged(Tagged::new(path, config)),
+            _ => panic!("Invalid stat type!"),
         }
     }
 
@@ -57,15 +75,6 @@ impl Stat for StatType {
         }
     }
     
-    fn set(&mut self, path: &StatPath, value: f32) {
-        match self {
-            StatType::Flat(flat) => flat.set(path, value),
-            StatType::Modifiable(simple) => simple.set(path, value),
-            StatType::Complex(modifiable) => modifiable.set(path, value),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.set(path, value),
-        }
-    }
-    
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         match self {
             StatType::Flat(flat) => flat.0,
@@ -76,6 +85,19 @@ impl Stat for StatType {
     }
 }
 
+/// The simplest stat type - just holds a single numeric value.
+/// 
+/// # Examples
+/// 
+/// - Base health: Direct numeric value
+/// - Resource costs: Simple numbers that get modified directly
+/// - Level requirements: Plain numeric values
+/// 
+/// # Modification Behavior
+/// 
+/// - Only accepts literal number modifications
+/// - Modifications directly add to or subtract from the base value
+/// - No support for percentage or complex modifications
 #[derive(Debug, Clone)]
 pub(crate) struct Flat(f32);
 
@@ -99,6 +121,31 @@ impl Stat for Flat {
     fn evaluate(&self, _path: &StatPath, _stats: &Stats) -> f32 { self.0 }
 }
 
+/// A stat that can be modified by either additive or multiplicative modifiers.
+/// 
+/// # Fields
+/// 
+/// * `relationship`: Determines if modifiers are added or multiplied
+/// * `base`: The starting value before any modifiers
+/// * `mods`: List of expressions that modify the base value
+/// 
+/// # Examples
+/// 
+/// Additive (relationship = Add):
+/// ```
+/// base = 100
+/// mod1 = +50% (0.5)
+/// mod2 = +30% (0.3)
+/// final = 100 * (1 + 0.5 + 0.3) = 180
+/// ```
+/// 
+/// Multiplicative (relationship = Mul):
+/// ```
+/// base = 100
+/// mod1 = 50% more (1.5)
+/// mod2 = 30% more (1.3)
+/// final = 100 * 1.5 * 1.3 = 195
+/// ```
 #[derive(Debug, Clone)]
 pub(crate) struct Modifiable {
     pub(crate) relationship: ModType,
@@ -107,29 +154,20 @@ pub(crate) struct Modifiable {
 }
 
 impl Stat for Modifiable {
-    // Should derive the relationship from the path and the config.
-    // "Added" or "Increased" stats should have a ModType::Add
-    // "More" should have ModType::Mul
     fn new(path: &StatPath, config: &Config) -> Self {
         let relationship = config.get_relationship_type(path);
         Self { relationship, base: 0.0, mods: Vec::new() }
     }
 
-    // Should probably change add and remove for literals to take the relationship into account.
-    // For instance, ModType::Mul should have a *= for adding and reverse that for removing
     fn add_modifier(&mut self, _path: &StatPath, modifier: ModifierType, _config: &Config) {
         match modifier {
             ModifierType::Literal(vals) => { 
                 match self.relationship {
-                    ModType::Add => {
-                        self.base += vals;
-                    },
-                    ModType::Mul => {
-                        self.base *= vals;
-                    },
+                    ModType::Add => self.base += vals,
+                    ModType::Mul => self.base *= vals,
                 }
             }
-            ModifierType::Expression(expression) => { self.mods.push(expression.clone()); }
+            ModifierType::Expression(expression) => self.mods.push(expression.clone()),
         }
     }
 
@@ -137,23 +175,22 @@ impl Stat for Modifiable {
         match modifier {
             ModifierType::Literal(vals) => { 
                 match self.relationship {
-                    ModType::Add => {
-                        self.base -= vals;
-                    },
-                    ModType::Mul => {
-                        self.base /= vals;
-                    },
+                    ModType::Add => self.base -= vals,
+                    ModType::Mul => self.base /= vals,
                 }
             }
             ModifierType::Expression(expression) => {
-                let Some(pos) = self.mods.iter().position(|e| e == expression) else { return; };
-                self.mods.remove(pos);
+                if let Some(pos) = self.mods.iter().position(|e| e == expression) {
+                    self.mods.remove(pos);
+                }
             }
         }
     }
 
     fn evaluate(&self, _path: &StatPath, stats: &Stats) -> f32 {
-        let computed: Vec<f32> = self.mods.iter().map(|expr| expr.evaluate(stats.get_context())).collect();
+        let computed: Vec<f32> = self.mods.iter()
+            .map(|expr| expr.evaluate(stats.get_context()))
+            .collect();
         match self.relationship {
             ModType::Add => self.base + computed.iter().sum::<f32>(),
             ModType::Mul => self.base * computed.iter().product::<f32>(),
@@ -161,13 +198,32 @@ impl Stat for Modifiable {
     }
 }
 
+/// A stat composed of multiple parts that are combined through an expression.
+/// 
+/// # Fields
+/// 
+/// * `total`: Expression that defines how to combine the parts
+/// * `modifier_steps`: Named parts that can each be modified independently
+/// 
+/// # Example
+/// 
+/// Final damage calculation:
+/// ```
+/// parts:
+///   - base_damage: Flat value
+///   - increased_damage: Sum of all "increased" modifiers
+///   - more_damage: Product of all "more" modifiers
+/// total = "base_damage * (1 + increased_damage) * more_damage"
+/// ```
+/// 
+/// Each part can have its own modifiers and they're combined according to the expression.
 #[derive(Debug, Clone)]
 pub(crate) struct Complex {
     pub(crate) total: Expression,
     pub(crate) modifier_steps: HashMap<String, Modifiable>,
 }
 
-impl Stat for Complex  {
+impl Stat for Complex {
     fn new(path: &StatPath, config: &Config) -> Self {
         let total_expression = config.get_total_expression(path);
         let compiled_expression = Expression::new(total_expression).unwrap();
@@ -193,24 +249,20 @@ impl Stat for Complex  {
     }
 
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
-        let Some(part_key) = path.part else {
-            return;
-        };
+        let Some(part_key) = path.part else { return };
         let part = self.modifier_steps.get_mut(part_key).unwrap();
         part.add_modifier(path, modifier, config);
     }
 
     fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
-        let Some(part_key) = path.part else {
-            return;
-        };
+        let Some(part_key) = path.part else { return };
         let part = self.modifier_steps.get_mut(part_key).unwrap();
         part.remove_modifier(path, modifier);
     }
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         if let Some(part_key) = path.part {
-            let Some(part) = self.modifier_steps.get(part_key) else { return 0.0; };
+            let Some(part) = self.modifier_steps.get(part_key) else { return 0.0 };
             let part_total = part.evaluate(path, stats);
             stats.set_cached(path.full_path, part_total);
             return part_total;
@@ -226,38 +278,104 @@ impl Stat for Complex  {
     }
 }
 
+/// A stat that supports tag-based filtering and querying.
+/// 
+/// Tagged stats handle cases where modifiers can apply broadly but need to be
+/// queried specifically. For example, "increased fire damage" applies to all weapons,
+/// but we query it as "increased fire damage with axes" for specific calculations.
+/// 
+/// # Fields
+/// 
+/// * `total`: Expression combining all parts after tag filtering
+/// * `modifier_steps`: Map of parts to their tagged modifiers
+/// * `query_cache`: Thread-safe cache of previously computed queries
+/// 
+/// # Caching
+/// 
+/// Uses DashMap for thread-safe caching without blocking. Cache entries are
+/// invalidated when relevant modifiers change. The cache is eventually consistent,
+/// meaning duplicate work might happen but results will be correct.
+/// 
+/// # Example
+/// 
+/// ```
+/// // Adding modifiers:
+/// "50% increased fire damage" -> applies to all weapons
+/// "30% increased damage with axes" -> applies to all damage types
+/// 
+/// // Querying:
+/// "increased fire damage with axes" -> combines both modifiers
+/// ```
+#[derive(Debug, Clone)]
+pub(crate) struct Tagged {
+    pub(crate) total: Expression,
+    pub(crate) modifier_steps: HashMap<String, TaggedEntry>,
+    query_cache: DashMap<(String, u32), QueryCacheEntry>,
+}
+
+/// Entry in a Tagged stat's modifier map, storing modifiers for a specific combination of tags.
+/// The u32 key represents the tag bits, and the Modifiable contains the actual stat modifications.
 #[derive(Debug, Clone)]
 pub(crate) struct TaggedEntry(pub HashMap<u32, Modifiable>);
 
 impl TaggedEntry {
     fn new() -> Self {
-        TaggedEntry(HashMap::new())
+        Self(HashMap::new())
     }
 }
 
+/// Cache entry for a Tagged stat query, storing both the computed value and its tag dependencies.
+/// 
+/// # Fields
+/// 
+/// * `value`: The computed result of the query
+/// * `dependencies`: Set of tags this query depends on, used for cache invalidation
 #[derive(Debug, Clone)]
-pub(crate) struct Tagged {
-    pub(crate) total: Expression,
-    pub(crate) modifier_steps: HashMap<String, TaggedEntry>,
+struct QueryCacheEntry {
+    value: f32,
+    dependencies: HashSet<u32>,
 }
 
 impl Tagged {
     fn evaluate_part(&self, part: &str, tag: u32, stats: &Stats) -> f32 {
-        let Some(modifiers) = self.modifier_steps.get(part) else {
-            return 0.0;
-        };
+        let cache_key = (part.to_string(), tag);
+        
+        if let Some(cache_entry) = self.query_cache.get(&cache_key) {
+            return cache_entry.value;
+        }
 
-        let total: f32 = modifiers.0.iter()
-            .filter_map(|(&mod_tags, value)| {
-                if mod_tags.has_all(tag) {
-                    Some(value.evaluate(&StatPath::parse(part), stats))
-                } else {
-                    None
-                }
+        let mut dependencies = HashSet::new();
+        let total: f32 = self.modifier_steps.get(part)
+            .map(|modifiers| {
+                modifiers.0.iter()
+                    .filter_map(|(&mod_tags, value)| {
+                        if mod_tags.has_all(tag) {
+                            dependencies.insert(mod_tags);
+                            Some(value.evaluate(&StatPath::parse(part), stats))
+                        } else {
+                            None
+                        }
+                    })
+                    .sum()
             })
-            .sum();
+            .unwrap_or(0.0);
+
+        self.query_cache.insert(cache_key, QueryCacheEntry {
+            value: total,
+            dependencies,
+        });
 
         total
+    }
+
+    fn invalidate_dependent_cache_entries(&self, affected_tag: u32) {
+        self.query_cache.retain(|_, entry| {
+            !entry.dependencies.iter().any(|&dep_tag| dep_tag.has_any(affected_tag))
+        });
+    }
+
+    pub fn clear_cache(&self) {
+        self.query_cache.clear();
     }
 }
 
@@ -275,46 +393,37 @@ impl Stat for Tagged {
         Self {
             total: compiled_expression,
             modifier_steps,
+            query_cache: DashMap::new(),
         }
     }
 
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
-        let Some(tag) = path.tag else {
-            return;
-        };
-
-        let Some(part) = path.part else {
-            return;
-        };
+        let Some(tag) = path.tag else { return };
+        let Some(part) = path.part else { return };
 
         let step_map = self.modifier_steps.entry(part.to_string())
             .or_insert(TaggedEntry(HashMap::new()));
-
         let step = step_map.0.entry(tag).or_insert(Modifiable::new(path, config));
-
         step.add_modifier(path, modifier, config);
+
+        self.invalidate_dependent_cache_entries(tag);
     }
 
     fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
-        let Some(tag) = path.tag else {
-            return;
-        };
+        let Some(tag) = path.tag else { return };
+        let Some(part) = path.part else { return };
 
-        let Some(part) = path.part else {
-            return;
-        };
+        if let Some(step_map) = self.modifier_steps.get_mut(part) {
+            if let Some(step) = step_map.0.get_mut(&tag) {
+                step.remove_modifier(path, modifier);
+            }
+        }
 
-        let Some(step_map) = self.modifier_steps.get_mut(part) else { return; };
-        
-        let Some(step) = step_map.0.get_mut(&tag) else { return; };
-
-        step.remove_modifier(path, modifier);
+        self.invalidate_dependent_cache_entries(tag);
     }
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
-        let Some(tag) = path.tag else {
-            return 0.0;
-        };
+        let Some(tag) = path.tag else { return 0.0 };
 
         if let Some(part) = path.part {
             return self.evaluate_part(part, tag, stats);
