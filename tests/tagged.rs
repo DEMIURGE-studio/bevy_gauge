@@ -119,7 +119,7 @@ fn test_cache_invalidation() {
         }
     );
     // Evaluate initial value and store it for comparison (this one needs to be captured)
-    let mut initial_value_holder = app.world_mut().spawn_empty().id(); // Dummy entity to hold a component
+    let initial_value_holder = app.world_mut().spawn_empty().id(); // Dummy entity to hold a component
     #[derive(Component)] struct TempValue(f32);
     app.world_mut().entity_mut(initial_value_holder).insert(TempValue(0.0));
 
@@ -365,6 +365,245 @@ fn test_complex_dependency_chain_modifiable() {
 
             let new_child_val = stat_accessor.evaluate(child, "Power");
             assert_eq!(new_child_val, 85.0); // 80 (from P) + 5
+        }
+    );
+}
+
+#[test]
+fn test_add_modifier_then_register_source_tagged() {
+    let mut app = App::new();
+    app.insert_resource(create_test_config());
+    app.add_plugins(MinimalPlugins);
+
+    let target_entity = app.world_mut().spawn(Stats::new()).id();
+    let source_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // System 1: Add modifier to source
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(source_entity, "Damage.increased.1", 100.0f32);
+        }
+    );
+
+    // System 2: Add expression modifier to target, referencing a currently unknown source alias
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(
+                target_entity,
+                "Damage.increased.1", 
+                Expression::new("Damage.increased.1@MySource").unwrap(),
+            );
+        }
+    );
+
+    // System 3: Evaluate target (source not registered yet)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Damage.increased.1");
+            // Expression "Damage.increased.1@MySource" should eval to 0 as MySource provides 0
+            assert_eq!(val, 0.0, "Target should be 0 before source registration"); 
+        }
+    );
+
+    // System 4: Register the source
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.register_source(target_entity, "MySource", source_entity);
+        }
+    );
+
+    // System 5: Evaluate target (source IS registered)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Damage.increased.1");
+            assert_eq!(val, 100.0, "Target should be 100.0 after source registration");
+        }
+    );
+
+    // System 6: Modify source stat
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(source_entity, "Damage.increased.1", 50.0f32); // Source is now 100 + 50 = 150
+        }
+    );
+
+    // System 7: Evaluate target (should reflect source change)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Damage.increased.1");
+            assert_eq!(val, 150.0, "Target should update to 150.0 after source modification");
+        }
+    );
+}
+
+#[test]
+fn test_add_modifier_then_register_source_modifiable() {
+    let mut app = App::new();
+    app.insert_resource(create_modifiable_power_config());
+    app.add_plugins(MinimalPlugins);
+
+    let target_entity = app.world_mut().spawn(Stats::new()).id();
+    let source_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // System 1: Add modifier to source
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(source_entity, "Power", 100.0f32);
+        }
+    );
+
+    // System 2: Add expression modifier to target, referencing a currently unknown source alias
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(
+                target_entity,
+                "Power", 
+                Expression::new("Power@MySource + 10.0").unwrap(),
+            );
+        }
+    );
+
+    // System 3: Evaluate target (source not registered yet)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Power");
+            // Power@MySource = 0, so 0 + 10.0 = 10.0
+            assert_eq!(val, 10.0, "Target should be 10.0 before source registration"); 
+        }
+    );
+
+    // System 4: Register the source
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.register_source(target_entity, "MySource", source_entity);
+        }
+    );
+
+    // System 5: Evaluate target (source IS registered)
+    // Power@MySource = 100, so 100 + 10.0 = 110.0
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Power");
+            assert_eq!(val, 110.0, "Target should be 110.0 after source registration");
+        }
+    );
+
+    // System 6: Modify source stat
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(source_entity, "Power", 50.0f32); // Source Power is now 100 + 50 = 150
+        }
+    );
+
+    // System 7: Evaluate target (should reflect source change)
+    // Power@MySource = 150, so 150 + 10.0 = 160.0
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Power");
+            assert_eq!(val, 160.0, "Target should update to 160.0 after source modification");
+        }
+    );
+}
+
+#[test]
+fn test_source_despawn_updates_dependent_tagged() {
+    let mut app = App::new();
+    app.insert_resource(create_test_config());
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy_gauge::plugin); // Ensure the main plugin is added for observer
+
+    let source_entity = app.world_mut().spawn(Stats::new()).id();
+    let target_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // System 1: Initial setup - Add modifier to source, register source, add dependent expression to target
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            // Add modifier to source
+            sa.add_modifier(source_entity, "Damage.increased.1", 100.0f32);
+            
+            // Register source for target
+            sa.register_source(target_entity, "MySource", source_entity);
+            
+            // Add expression modifier to target, referencing the source
+            sa.add_modifier(
+                target_entity,
+                "Damage.increased.1", 
+                Expression::new("Damage.increased.1@MySource").unwrap(),
+            );
+        }
+    );
+
+    // System 2: Evaluate target (source is live)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Damage.increased.1");
+            assert_eq!(val, 100.0, "Target should be 100.0 before source despawn");
+        }
+    );
+
+    // System 3: Despawn the source entity
+    app.world_mut().despawn(source_entity);
+
+    // System 4: Update the app to process despawn and trigger observers/systems
+    // Run update twice: once for despawn/observer, once for stat propagation.
+    app.update(); 
+    app.update();
+
+    // System 5: Evaluate target (source is despawned)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Damage.increased.1");
+            // The expression "Damage.increased.1@MySource" should now evaluate with MySource contributing 0
+            // because remove_stat_entity should have cleared the cached value for this source variable.
+            assert_eq!(val, 0.0, "Target should be 0.0 after source despawn and update");
+        }
+    );
+}
+
+#[test]
+fn test_source_despawn_updates_dependent_modifiable() {
+    let mut app = App::new();
+    app.insert_resource(create_modifiable_power_config());
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy_gauge::plugin); // Ensure the main plugin is added for observer
+
+    let source_entity = app.world_mut().spawn(Stats::new()).id();
+    let target_entity = app.world_mut().spawn(Stats::new()).id();
+
+    // System 1: Initial setup
+    let _ = app.world_mut().run_system_once(
+        move |mut sa: StatAccessor| {
+            sa.add_modifier(source_entity, "Power", 75.0f32); // Source provides 75 Power
+            sa.register_source(target_entity, "MyPowerSource", source_entity);
+            sa.add_modifier(
+                target_entity,
+                "Power", 
+                Expression::new("Power@MyPowerSource + 10.0").unwrap(), // Target = Source Power + 10
+            );
+        }
+    );
+
+    // System 2: Evaluate target (source is live)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Power");
+            assert_eq!(val, 85.0, "Target should be 85.0 (75+10) before source despawn");
+        }
+    );
+    
+    // System 3: Despawn the source entity
+    app.world_mut().despawn(source_entity);
+
+    // System 4: Update the app
+    app.update();
+    app.update();
+
+    // System 5: Evaluate target (source is despawned)
+    let _ = app.world_mut().run_system_once(
+        move |sa: StatAccessor| {
+            let val = sa.evaluate(target_entity, "Power");
+            // Power@MyPowerSource should be 0, so expression evaluates to 0.0 + 10.0
+            assert_eq!(val, 10.0, "Target should be 10.0 after source despawn and update");
         }
     );
 }

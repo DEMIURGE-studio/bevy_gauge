@@ -12,7 +12,7 @@ pub use super::stat::*;
 pub use super::stat_requirements::*;
 pub(crate) use super::stat_types::*;
 pub use super::stats_component::*;
-pub use super::systems::*;
+pub(crate) use super::systems::*;
 pub use super::tags::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;

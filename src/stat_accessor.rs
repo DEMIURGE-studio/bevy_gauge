@@ -8,6 +8,11 @@ use crate::stat_types::StatUtilMethods;
 
 // SystemParam for accessing stats from systems
 #[derive(SystemParam)]
+/// A Bevy `SystemParam` that provides access to query and modify stats for entities.
+///
+/// `StatAccessor` is the primary way to interact with the stat system from within Bevy systems.
+/// It allows for operations like adding/removing modifiers, evaluating stat values,
+/// registering dependencies between entities (sources), and managing the lifecycle of stats.
 pub struct StatAccessor<'w, 's> {
     query: Query<'w, 's, &'static mut Stats>,
     config: Res<'w, Config>,
@@ -22,6 +27,19 @@ struct CacheUpdate {
 }
 
 impl StatAccessor<'_, '_> {
+    /// Retrieves the evaluated value of a stat for a given entity.
+    ///
+    /// If the entity does not have a `Stats` component or the path is invalid,
+    /// this will typically return `0.0`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` whose stat value is to be retrieved.
+    /// * `path`: A string representing the stat path (e.g., "Damage.total", "Health.base").
+    ///
+    /// # Returns
+    ///
+    /// An `f32` representing the evaluated stat value, or `0.0` if not found or an error occurs.
     pub fn get(&self, target_entity: Entity, path: &str) -> f32 {
         let Ok(stats) = self.query.get(target_entity) else {
             return 0.0;
@@ -30,6 +48,20 @@ impl StatAccessor<'_, '_> {
         stats.get(path)
     }
 
+    /// Sets the base value of a specific stat part for a given entity.
+    ///
+    /// This method is intended for directly setting a stat value, bypassing the
+    /// typical modifier system for that specific part. It's often used for initializing
+    /// base stats or for stats that are not meant to be modified via the additive/multiplicative
+    /// layers.
+    ///
+    /// If the entity does not have a `Stats` component, this operation will have no effect.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` whose stat is to be set.
+    /// * `path`: A string representing the stat path to set (e.g., "Health.base").
+    /// * `value`: The `f32` value to set for the stat.
     pub fn set(&mut self, target_entity: Entity, path: &str, value: f32) {
         let Ok(mut stats) = self.query.get_mut(target_entity) else {
             return;
@@ -38,6 +70,16 @@ impl StatAccessor<'_, '_> {
         stats.set(path, value);
     }
     
+    /// Retrieves a read-only reference to the `Stats` component of an entity.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` whose `Stats` component is to be retrieved.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a reference to the `Stats` component if successful,
+    /// or an empty error `()` if the entity does not have a `Stats` component.
     pub fn get_stats(&self, target_entity: Entity) -> Result<&Stats, ()> {
         let Ok(stats) = self.query.get(target_entity) else {
             return Err(());
@@ -46,11 +88,31 @@ impl StatAccessor<'_, '_> {
         Ok(stats)
     }
 
+    /// Adds a modifier to a stat on the target entity.
+    ///
+    /// The `modifier` can be a literal value (e.g., `f32`) or an `Expression`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` to which the modifier will be added.
+    /// * `path`: The stat path (e.g., "Damage.increased.Fire") to modify.
+    /// * `modifier`: The modifier to add, convertible into `ModifierType` (e.g., `50.0f32` or `Expression::new(...)`).
     pub fn add_modifier<V: Into<ModifierType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
         let vt = modifier.into();
         self.add_modifier_value(target_entity, path, vt);
     }
 
+    /// Adds a `ModifierType` (literal or expression) to a stat on the target entity.
+    ///
+    /// This is a more direct version of `add_modifier` that takes an explicit `ModifierType`.
+    /// It handles registering dependencies if the modifier is an expression involving sources,
+    /// caches necessary values, and triggers updates to the modified stat and its dependents.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` to which the modifier will be added.
+    /// * `path_str`: The string representation of the stat path to modify.
+    /// * `modifier`: The `ModifierType` (literal value or expression) to add.
     pub fn add_modifier_value(&mut self, target_entity: Entity, path_str: &str, modifier: ModifierType) {
         let path = StatPath::parse(path_str);
 
@@ -122,11 +184,31 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, path_str);
     }
 
+    /// Removes a modifier from a stat on the target entity.
+    ///
+    /// The `modifier` to be removed must match one that was previously added.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` from which the modifier will be removed.
+    /// * `path`: The stat path (e.g., "Damage.increased.Fire") from which to remove the modifier.
+    /// * `modifier`: The modifier to remove, convertible into `ModifierType`.
     pub fn remove_modifier<V: Into<ModifierType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
         let vt = modifier.into();
         self.remove_modifier_value(target_entity, path, &vt);
     }
 
+    /// Removes a specific `ModifierType` from a stat on the target entity.
+    ///
+    /// This is a more direct version of `remove_modifier`. It ensures that if the
+    /// removed modifier was an expression, its dependencies are cleaned up.
+    /// It then triggers updates to the modified stat and its dependents.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` from which the modifier will be removed.
+    /// * `path_str`: The string representation of the stat path.
+    /// * `modifier`: The `ModifierType` to remove.
     pub fn remove_modifier_value(&mut self, target_entity: Entity, path_str: &str, modifier: &ModifierType) {
         let path = StatPath::parse(path_str);
         if let Ok(mut stats) = self.query.get_mut(target_entity) {
@@ -144,6 +226,25 @@ impl StatAccessor<'_, '_> {
         self.update_stat(target_entity, &path.full_path);
     }
 
+    /// Registers a source entity for a target entity, allowing the target's stats
+    /// to reference the source's stats in expressions.
+    ///
+    /// For example, after registering `source_B` with alias `"B_Stats"` for `target_A`,
+    /// `target_A` can have a stat modifier like `"Strength@B_Stats * 2.0"`.
+    ///
+    /// This function handles:
+    /// - Storing the source alias mapping on the target entity.
+    /// - Identifying existing expressions on the target that now match the new source.
+    /// - Establishing dependency links from the source to the target for these expressions.
+    /// - Caching initial values from the source for these expressions on the target.
+    /// - Triggering updates for stats on the target that are affected by this new source.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` that will gain access to the source.
+    /// * `name`: The alias (e.g., "PlayerShield", "AllyBuffs") to use in expressions on the `target_entity`
+    ///           to refer to the `source_entity`.
+    /// * `source_entity`: The `Entity` whose stats will be made available to the `target_entity`.
     pub fn register_source(&mut self, target_entity: Entity, name: &str, source_entity: Entity) {
         if !self.query.contains(target_entity) {
             return;
@@ -155,16 +256,33 @@ impl StatAccessor<'_, '_> {
             return;
         }
 
-        let (dependency_updates_for_source_registration, stats_to_update_on_target_due_to_new_source) = 
+        let (dependency_updates_for_source_registration, stats_to_update_on_target_due_to_new_source, cache_updates_for_target) = 
             self.collect_source_updates(target_entity, name, source_entity);
         
-        if dependency_updates_for_source_registration.is_empty() {
-            
-        } else {
+        if !dependency_updates_for_source_registration.is_empty() {
             self.apply_dependency_updates(&dependency_updates_for_source_registration);
         }
 
+        // Apply cache updates to the target entity FIRST
+        if !cache_updates_for_target.is_empty() {
+            if let Ok(mut target_stats_mut) = self.query.get_mut(target_entity) {
+                for cache_op in cache_updates_for_target {
+                    // Ensure we are updating the correct entity's cache, though in this flow it should always be target_entity
+                    if cache_op.entity == target_entity {
+                        target_stats_mut.cache_stat(&cache_op.key, cache_op.value);
+                    }
+                }
+            }
+        }
+
         for stat_update_instruction in stats_to_update_on_target_due_to_new_source {
+            // Invalidate the specific query cache for Tagged stats (and potentially other types)
+            // before re-evaluating the stat.
+            if let Ok(mut target_stats_mut) = self.query.get_mut(stat_update_instruction.entity) {
+                 let path_to_clear = StatPath::parse(&stat_update_instruction.stat_path_on_dependent);
+                 target_stats_mut.clear_internal_cache_for_path(&path_to_clear);
+            }
+
             self.update_stat(stat_update_instruction.entity, &stat_update_instruction.stat_path_on_dependent); 
         }
     }
@@ -174,24 +292,21 @@ impl StatAccessor<'_, '_> {
         target_entity: Entity,
         name: &str,
         source_entity: Entity,
-    ) -> (Vec<DependencyUpdate>, Vec<StatUpdate>) {
+    ) -> (Vec<DependencyUpdate>, Vec<StatUpdate>, Vec<CacheUpdate>) {
         let mut updates_to_add = Vec::new();
         let mut stat_updates_needed = Vec::new();
+        let mut cache_updates_for_target: Vec<CacheUpdate> = Vec::new();
 
         let target_stats_opt = self.query.get(target_entity).ok().cloned();
 
-        if let Some(target_stats) = target_stats_opt {
-            for (base_stat_name_on_target_str, stat_definition_on_target) in target_stats.definitions.iter() {
+        if let Some(target_stats_ro) = target_stats_opt {
+            for (base_stat_name_on_target_str, stat_definition_on_target) in target_stats_ro.definitions.iter() {
                 for (modifier_full_path_str, expression_obj) in stat_definition_on_target.get_all_expressions(base_stat_name_on_target_str) {
                     for var_name_in_expr_str in expression_obj.compiled.iter_variable_identifiers() {
                         let parsed_var_path_obj = StatPath::parse(var_name_in_expr_str);
                         if let Some(source_alias_in_var_str) = parsed_var_path_obj.target {
                             if source_alias_in_var_str == name {
-                                let mut source_path_strings: Vec<String> = Vec::new();
-                                source_path_strings.push(parsed_var_path_obj.name.to_string());
-                                if let Some(p_part) = parsed_var_path_obj.part { source_path_strings.push(p_part.to_string()); }
-                                if let Some(t_tag) = parsed_var_path_obj.tag { source_path_strings.push(t_tag.to_string()); }
-                                let path_on_source_entity_str = source_path_strings.join(".");
+                                let path_on_source_entity_str = parsed_var_path_obj.without_target_as_string();
 
                                 updates_to_add.push(DependencyUpdate::new_add(
                                     source_entity,
@@ -200,6 +315,19 @@ impl StatAccessor<'_, '_> {
                                     &modifier_full_path_str,
                                     name,
                                 ));
+                                
+                                let value_from_source = if let Ok(source_entity_stats_ro) = self.query.get(source_entity) {
+                                    source_entity_stats_ro.evaluate_by_string(&path_on_source_entity_str)
+                                } else {
+                                    0.0 
+                                };
+
+                                cache_updates_for_target.push(CacheUpdate {
+                                    entity: target_entity,
+                                    key: var_name_in_expr_str.to_string(),
+                                    value: value_from_source,
+                                });
+                                
                                 stat_updates_needed.push(StatUpdate::new(target_entity, &modifier_full_path_str));
                             }
                         }
@@ -208,7 +336,7 @@ impl StatAccessor<'_, '_> {
             }
         }
         
-        (updates_to_add, stat_updates_needed)
+        (updates_to_add, stat_updates_needed, cache_updates_for_target)
     }
 
     fn apply_dependency_updates(&mut self, updates: &[DependencyUpdate]) {
@@ -228,6 +356,21 @@ impl StatAccessor<'_, '_> {
         }
     }
 
+    /// Evaluates the final value of a stat for a given entity, considering all modifiers,
+    /// expressions, sources, and configurations.
+    ///
+    /// This method leverages caching for performance. If a stat's value has been
+    /// computed recently and none of its inputs have changed, a cached value may be returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` whose stat is to be evaluated.
+    /// * `path`: The string representation of the stat path (e.g., "Damage.total", "Health.current").
+    ///
+    /// # Returns
+    ///
+    /// An `f32` representing the final computed value of the stat. Returns `0.0` if the
+    /// entity or stat cannot be found, or if an error occurs during evaluation.
     pub fn evaluate(&self, target_entity: Entity, path: &str) -> f32 {
         if let Ok(stats) = self.query.get(target_entity) {
             stats.evaluate_by_string(path)
@@ -236,13 +379,23 @@ impl StatAccessor<'_, '_> {
         }
     }
 
+    /// Triggers an update and re-evaluation of a specific stat on an entity and all its dependents.
+    ///
+    /// This is typically called internally after a modifier is added/removed or a source changes.
+    /// It ensures that the stat's value is recalculated and any downstream stats that
+    /// depend on it are also updated.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` whose stat needs updating.
+    /// * `stat_path`: The string representation of the stat path that has changed.
     pub fn update_stat(&mut self, target_entity: Entity, stat_path: &str) {
         let mut processed = HashSet::new();
         self.update_stat_recursive(target_entity, stat_path, &mut processed);
     }
 
     pub(crate) fn update_stat_recursive(
-        &mut self, 
+        &mut self,
         entity_updated: Entity, 
         path_updated: &str, 
         processed_for_this_call_chain: &mut HashSet<StatUpdate>
@@ -251,6 +404,13 @@ impl StatAccessor<'_, '_> {
             return; // Already processed this specific entity/path combination in this update chain
         }
         processed_for_this_call_chain.insert(StatUpdate { entity: entity_updated, stat_path_on_dependent: path_updated.to_string() });
+
+        // Clear internal cache for the stat we are about to re-evaluate, if applicable (e.g., for Tagged stats).
+        // This ensures that when stats_comp.evaluate() is called below, it doesn't use stale internal caches.
+        if let Ok(mut stats_comp_for_clear) = self.query.get_mut(entity_updated) {
+            let path_obj_for_clear = StatPath::parse(path_updated);
+            stats_comp_for_clear.clear_internal_cache_for_path(&path_obj_for_clear);
+        }
 
         let new_value = self.query.get(entity_updated).map_or(0.0, |stats_comp| {
             let path = StatPath::parse(path_updated);
@@ -280,7 +440,7 @@ impl StatAccessor<'_, '_> {
         source_entity_updated: Entity, 
         source_path_updated_on_source: &str, 
         new_source_value: f32 
-    ) -> (Vec<CacheUpdate>, Vec<StatUpdate>) {
+    ) -> (Vec<CacheUpdate>, Vec<StatUpdate>) { 
         let mut cache_updates = Vec::new();
         let mut stat_updates = Vec::new();
 
@@ -288,7 +448,7 @@ impl StatAccessor<'_, '_> {
             let dependents = source_stats_ro.get_stat_dependents(source_path_updated_on_source);
 
             for dependent_type in dependents {
-                match dependent_type {
+                    match dependent_type {
                     DependentType::EntityStat { entity: dependent_entity_id, path: dependent_stat_path_on_it, source_alias: source_alias_in_dependent } => {
                         let cache_key = format!("{}@{}", source_path_updated_on_source, source_alias_in_dependent);
                         cache_updates.push(CacheUpdate { entity: dependent_entity_id, key: cache_key, value: new_source_value });
@@ -325,51 +485,94 @@ impl StatAccessor<'_, '_> {
         }
     }
 
+    /// Applies all modifiers from a `ModifierSet` to the target entity.
+    ///
+    /// This is a convenience method to add multiple modifiers at once, typically
+    /// defined in an external source like an item, buff, or skill.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` to which the modifiers will be applied.
+    /// * `modifier_set`: A reference to the `ModifierSet` containing the modifiers to apply.
     pub fn apply_modifier_set(&mut self, target_entity: Entity, modifier_set: &ModifierSet) {
         modifier_set.apply(self, &target_entity);
     }
 
+    /// Removes all modifiers from a `ModifierSet` from the target entity.
+    ///
+    /// This is a convenience method to remove multiple modifiers at once, assuming they
+    /// were previously added via a similar `ModifierSet`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` from which the modifiers will be removed.
+    /// * `modifier_set`: A reference to the `ModifierSet` containing the modifiers to remove.
     pub fn remove_modifier_set(&mut self, target_entity: Entity, modifier_set: &ModifierSet) {
         modifier_set.remove(self, &target_entity);
     }
 
+    /// Removes an entity from the stat system's tracking, cleaning up its dependencies.
+    ///
+    /// This function is intended to be called when an entity with a `Stats` component
+    /// is being despawned or is otherwise ceasing to participate in the stat system.
+    /// It iterates through the entity's stats and:
+    /// 1. For each stat that acts as a source for other entities (dependents):
+    ///    a. It finds all dependent stats on those other entities.
+    ///    b. It effectively "nullifies" the contribution from the removed source entity
+    ///       by setting the cached value for the source part of the expression to 0.0
+    ///       on the dependent entity.
+    ///    c. It then triggers an update for that dependent stat on the other entity.
+    /// 2. It clears all source registrations *from* this entity (i.e., other entities this entity was sourcing from).
+    ///
+    /// This ensures that dependents are updated correctly and dangling references are handled.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_entity`: The `Entity` to remove from stat tracking.
     pub fn remove_stat_entity(&mut self, target_entity: Entity) {
         let Ok(target_stats_ro) = self.query.get(target_entity) else {
             return;
         };
 
-        let mut old_dependent_entities_tuples = Vec::new();
-        let target_dependents_map = target_stats_ro.get_dependents();
-        
-        for (stat_on_target_str, specific_dependents_map) in target_dependents_map.iter() {
+        // Collect information about which external entities depended on the target_entity.
+        // The key is stat_on_target_str (e.g., "Health.base" on target_entity).
+        // The value is a list of (dependent_entity_id, source_alias_used_by_dependent, path_on_dependent_that_used_this_source_stat)
+        // This part needs to be accurate from the target_entity's dependents_map
+        let mut external_dependents_info: HashMap<String, Vec<(Entity, String, String)>> = HashMap::new();
+        let target_s_dependents_map = target_stats_ro.get_dependents();
+
+        for (stat_on_this_target_str, specific_dependents_map) in target_s_dependents_map.iter() {
             for (dependent_type, _count) in specific_dependents_map.iter() {
-                if let DependentType::EntityStat { entity: dependent_entity_id, .. } = dependent_type { 
-                    old_dependent_entities_tuples.push((stat_on_target_str.clone(), *dependent_entity_id));
+                if let DependentType::EntityStat { entity: dependent_entity_id, path: path_on_dependent, source_alias } = dependent_type {
+                    external_dependents_info
+                        .entry(stat_on_this_target_str.clone())
+                        .or_default()
+                        .push((*dependent_entity_id, source_alias.clone(), path_on_dependent.clone()));
                 }
             }
         }
 
         let mut stat_cache_keys_to_clear_and_update = Vec::new();
 
-        for (stat_on_removed_entity_str, dependent_entity_id_val) in old_dependent_entities_tuples {
-            if let Ok(dependent_stats_ro) = self.query.get(dependent_entity_id_val) {
-                for (alias_used_in_dependent_expr_str, &actual_source_entity_id) in dependent_stats_ro.sources.iter() {
-                    if actual_source_entity_id == target_entity {
-                        let cache_key_to_remove_str = format!("{}@{}", stat_on_removed_entity_str, alias_used_in_dependent_expr_str);
-                        
-                        for (base_path_on_dependent_str, def_on_dependent) in dependent_stats_ro.definitions.iter() {
-                            for (modifier_path_str, expression_obj) in def_on_dependent.get_all_expressions(base_path_on_dependent_str) {
-                                for var_name_in_expr_str in expression_obj.compiled.iter_variable_identifiers() {
-                                    if var_name_in_expr_str == cache_key_to_remove_str {
-                                        stat_cache_keys_to_clear_and_update.push((
-                                            dependent_entity_id_val, 
-                                            cache_key_to_remove_str.clone(), 
-                                            modifier_path_str.clone()
-                                        ));
-                                        break; 
-                                    }
-                                }
-                            }
+        // For each stat on the removed entity that was used as a source by others...
+        for (stat_on_removed_entity_str, dependents_list) in external_dependents_info {
+            for (dependent_entity_id_val, alias_used_by_dependent, _path_on_dependent_originally_tracked) in dependents_list {
+                if let Ok(dependent_stats_ro) = self.query.get(dependent_entity_id_val) {
+                    // Construct the variable name as it would appear in the dependent's expressions
+                    let variable_from_removed_source = format!("{}@{}", stat_on_removed_entity_str, alias_used_by_dependent);
+
+                    // Use the dependent's own dependents_map to find which of its local stats used this variable.
+                    // dependent_stats_ro.get_stat_dependents(variable_from_removed_source) returns Vec<DependentType>
+                    // where DependentType::LocalStat(local_stat_path) indicates a local stat using the variable.
+                    let local_stats_on_dependent_using_the_variable = dependent_stats_ro.get_stat_dependents(&variable_from_removed_source);
+                    
+                    for dependent_type_entry in local_stats_on_dependent_using_the_variable {
+                        if let DependentType::LocalStat(local_stat_path_str) = dependent_type_entry {
+                            stat_cache_keys_to_clear_and_update.push((
+                                dependent_entity_id_val, 
+                                variable_from_removed_source.clone(), 
+                                local_stat_path_str // This is the stat on the dependent entity that needs updating
+                            ));
                         }
                     }
                 }
@@ -455,6 +658,11 @@ impl StatUpdate {
     }
 }
 
+/// A Bevy observer system that automatically calls `StatAccessor::remove_stat_entity`
+/// when an entity with a `Stats` component is removed/despawned.
+///
+/// This ensures that an entity's dependencies are properly cleaned up within the stat system
+/// when it ceases to exist.
 pub(crate) fn remove_stats(
     trigger: Trigger<OnRemove, Stats>,
     mut stat_accessor: StatAccessor,

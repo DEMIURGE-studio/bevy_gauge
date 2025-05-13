@@ -2,6 +2,15 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use super::prelude::*;
 
+/// A Bevy `Resource` used to configure the stat system.
+///
+/// `Config` allows users to define:
+/// - **Stat Types**: The kind of behavior a stat should have (e.g., "Flat", "Tagged", "Modifiable").
+/// - **Relationship Types**: How modifiers for specific stat parts should be combined (e.g., additive, multiplicative).
+/// - **Total Expressions**: How the final value of a stat is calculated from its constituent parts.
+///
+/// This configuration is typically set up once when the application starts and then accessed by the
+/// stat system during runtime.
 #[derive(Resource, Default)]
 pub struct Config {
     stat_types: HashMap<String, String>,
@@ -10,17 +19,48 @@ pub struct Config {
 }
 
 impl Config {
-    /// Register a stat type for a given stat path
+    /// Registers a specific type for a base stat.
+    ///
+    /// Stat types determine the underlying structure and behavior of a stat.
+    /// For example, a "Tagged" stat might handle tagged modifiers differently than a "Flat" stat.
+    /// If a stat type is not registered, it defaults to "Flat".
+    ///
+    /// # Arguments
+    ///
+    /// * `stat`: The name of the base stat (e.g., "Health", "Damage").
+    /// * `stat_type`: A string identifier for the type of stat (e.g., "Tagged", "Modifiable").
     pub fn register_stat_type(&mut self, stat: &str, stat_type: &str) {
         self.stat_types.insert(stat.to_string(), stat_type.to_string());
     }
 
-    /// Register a relationship type (Add/Mul) for a stat path
+    /// Registers how modifiers for a specific stat or stat part should be combined.
+    ///
+    /// For example, you might register that "Damage.increased" modifiers are `ModType::Add` (additive)
+    /// while "Damage.more" modifiers are `ModType::Mul` (multiplicative).
+    ///
+    /// If not explicitly registered, the system has default behaviors:
+    /// - Parts named "increased", "reduced", "added" default to `ModType::Add`.
+    /// - Parts named "more", "less" default to `ModType::Mul`.
+    /// - Other parts and base stats default to `ModType::Add`.
+    ///
+    /// # Arguments
+    ///
+    /// * `stat`: The full stat path, including the part if applicable (e.g., "Damage", "CritChance.base", "Speed.increased").
+    /// * `relationship`: The `ModType` (e.g., `ModType::Add`, `ModType::Mul`) specifying how modifiers are combined.
     pub fn register_relationship_type(&mut self, stat: &str, relationship: ModType) {
         self.relationship_types.insert(stat.to_string(), relationship);
     }
 
-    /// Register the total expression for a stat path
+    /// Registers the mathematical expression used to calculate the total value of a base stat.
+    ///
+    /// The expression string can reference the names of the stat's parts (e.g., "base", "increased", "more").
+    /// For example, for a "Damage" stat, a common expression might be `"base * (1 + increased) * more"`.
+    /// If no expression is registered for a stat, its total value defaults to `"0"`.
+    ///
+    /// # Arguments
+    ///
+    /// * `stat`: The name of the base stat (e.g., "Health", "Mana").
+    /// * `expression`: A string containing the mathematical formula to calculate the stat's total.
     pub fn register_total_expression(&mut self, stat: &str, expression: &str) {
         self.total_expressions.insert(stat.to_string(), expression.to_string());
     }

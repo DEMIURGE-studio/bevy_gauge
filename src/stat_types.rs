@@ -4,22 +4,25 @@ use super::prelude::*;
 use std::collections::HashSet;
 use dashmap::DashMap;
 
-/// Defines how modifiers are combined (additive or multiplicative).
-/// 
-/// This enum determines how multiple modifiers to the same stat are combined together.
+/// Defines how modifiers are combined, typically for a specific part of a stat.
+///
+/// When multiple modifiers apply to the same stat part (e.g., multiple sources of "increased damage"),
+/// `ModType` determines if their effects are additive or multiplicative.
 #[derive(PartialEq, Debug, Clone, Default)]
 pub enum ModType {
-    /// Modifiers are added together linearly.
-    /// Example: "10% increased damage" + "20% increased damage" = 30% increased damage
+    /// Modifiers are summed together. This is common for "increased" or "added" effects.
+    /// For example, +10% damage and +20% damage result in +30% damage.
     #[default]
     Add,
-    /// Modifiers are multiplied together.
-    /// Example: "10% more damage" * "20% more damage" = 32% more damage
+    /// Modifiers are multiplied together. This is common for "more" or "less" effects.
+    /// For example, a 10% "more" multiplier (1.1x) and a 20% "more" multiplier (1.2x)
+    /// result in a total multiplier of 1.1 * 1.2 = 1.32x (or 32% more).
     Mul,
 }
 
-/// The core enum representing different types of stats in the system.
-/// Each variant handles different complexity levels and modification patterns.
+/// The core internal enum representing different kinds of stat structures and behaviors.
+/// Each variant dictates how a stat stores its data, processes modifiers, and calculates its final value.
+/// This is primarily used internally by the stat system based on configurations provided in `Config`.
 #[derive(Debug, Clone)]
 pub(crate) enum StatType {
     /// Simple numeric value with no complex modification rules.

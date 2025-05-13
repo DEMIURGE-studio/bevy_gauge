@@ -4,17 +4,31 @@ use bevy::{prelude::*, utils::HashMap};
 use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value, IterateVariablesContext};
 use super::prelude::*;
 
-/// A wrapper around the expression evaluation context, hiding `evalexpr` details.
+/// A wrapper around an expression evaluation context, used for evaluating stat expressions.
+///
+/// This struct provides a simplified interface for setting and potentially getting
+/// variables (stat values) that are used during the evaluation of a stat expression string.
+/// It primarily serves to abstract the underlying `evalexpr::HashMapContext`.
 #[derive(Clone, Debug, Default)]
 pub struct StatContext(pub(crate) HashMapContext);
 
 impl StatContext {
-    /// Creates a new, empty context.
+    /// Creates a new, empty `StatContext`.
     pub fn new() -> Self {
         Self(HashMapContext::new())
     }
 
-    /// Sets a variable in the context.
+    /// Sets a variable (typically a stat path and its value) in the context.
+    ///
+    /// # Arguments
+    ///
+    /// * `key`: The name of the variable (e.g., "Health.base", "Damage@Source.total").
+    /// * `value`: The `f32` value of the variable.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the value was set successfully, or an `Err(String)` containing
+    /// an error message if setting the value failed.
     pub fn set_value(&mut self, key: String, value: f32) -> Result<(), String> {
         self.0.set_value(key, Value::Float(value as f64)).map_err(|e| e.to_string())
     }
@@ -22,27 +36,49 @@ impl StatContext {
     // Potentially add get_value, iter_variables etc. if needed by users directly
 }
 
+/// The Bevy `Component` that holds all stat-related data for an entity.
+///
+/// An entity with a `Stats` component can have various stats defined for it (e.g., Health, Damage),
+/// each with its own modifiers, expressions, and potential dependencies on other stats or entities.
+///
+/// Most interactions with an entity's stats are performed through the `StatAccessor` system parameter,
+/// which operates on this component.
 #[derive(Component, Clone, Debug, Default)]
 pub struct Stats {
     pub(crate) definitions: HashMap<String, StatType>,
     pub(crate) cached_stats: SyncContext,
     pub(crate) dependents_map: DependencyMap,
-    pub(crate) depends_on_map: DependencyMap,
     pub(crate) sources: HashMap<String, Entity>,
 }
 
 // TODO needs to track dependencies BOTH WAYS
 impl Stats {
+    /// Creates a new, empty `Stats` component, ready to have stats defined and modifiers added.
     pub fn new() -> Self {
         Self {
             definitions: HashMap::new(),
             cached_stats: SyncContext::new(),
             dependents_map: DependencyMap::new(),
-            depends_on_map: DependencyMap::new(),
             sources: HashMap::new(),
         }
     }
     
+    /// Retrieves the cached evaluated value of a stat for this entity.
+    ///
+    /// If the stat path has not been evaluated and cached yet during the current update cycle,
+    /// this method will trigger an evaluation before returning the value.
+    ///
+    /// Note: For most use cases, prefer using `StatAccessor::evaluate()` from a system, as it provides
+    /// a more comprehensive and managed way to access stat values, including handling dependencies
+    /// and updates across entities.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: A string representing the stat path (e.g., "Damage.total", "Health.base").
+    ///
+    /// # Returns
+    ///
+    /// An `f32` representing the evaluated stat value, or `0.0` if the path is invalid or an error occurs.
     pub fn get(&self, path: &str) -> f32 {
         if self.cached_stats.get(path).is_err() {
             self.cached_stats.set(path, self.evaluate(&StatPath::parse(path)));
@@ -151,6 +187,22 @@ impl Stats {
     }
 
     // Made public, now uses StatContext wrapper
+    /// Evaluates a given mathematical expression string using a provided context and this entity's cached stat values.
+    ///
+    /// The expression can reference variables that should be present in either the `base_context_opt` or
+    /// within this `Stats` component's own cached values (e.g., other stats of this entity).
+    /// Values from `self.cached_stats` are added to the context before evaluation.
+    ///
+    /// # Arguments
+    ///
+    /// * `expr_str`: The mathematical expression string to evaluate (e.g., "Strength * 2 + Agility").
+    /// * `base_context_opt`: An optional `StatContext` providing initial variables for the evaluation.
+    ///                     If `None`, a new empty context is used, augmented by this entity's cached stats.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `f32` result of the expression if successful, or a `StatError` if evaluation fails
+    /// (e.g., due to a malformed expression or missing variables).
     pub fn evaluate_expression(&self, expr_str: &str, base_context_opt: Option<&StatContext>) -> Result<f32, StatError> {
         let mut new_eval_context = base_context_opt.map(|sc| sc.0.clone()).unwrap_or_else(HashMapContext::new);
         
@@ -216,10 +268,24 @@ impl Clone for SyncContext {
     }
 }
 
+/// Represents the type of dependency a stat can have.
+///
+/// This is used internally to track how changes in one stat (the source)
+/// should propagate to other stats (the dependents).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DependentType {
+    /// The dependent is another stat on the same entity.
+    /// The `String` is the full path of the local stat that depends on the source.
     LocalStat(String),
-    EntityStat { entity: Entity, path: String, source_alias: String },
+    /// The dependent is a stat on a different entity, referencing this entity as a source.
+    EntityStat {
+        /// The `Entity` that depends on the source stat.
+        entity: Entity,
+        /// The full path of the stat on the dependent `entity` that uses the source.
+        path: String,
+        /// The alias used in the dependent `entity`'s expression to refer to this source.
+        source_alias: String
+    },
 }
 
 #[derive(Clone, Debug, Default)]

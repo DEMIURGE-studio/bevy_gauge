@@ -1,6 +1,14 @@
 use evalexpr::{DefaultNumericTypes, HashMapContext, Node, Value};
 use crate::prelude::*;
 
+/// Represents a mathematical expression that can be evaluated to calculate a stat value.
+///
+/// Expressions are defined as strings (e.g., `"base * (1 + increased) * more"`) and are compiled
+/// into an internal representation for efficient evaluation. They can reference other stats
+/// or fixed values.
+///
+/// `Expression`s are used for calculating total stat values (see `Config::register_total_expression`)
+/// and for creating modifiers that depend on other stats (see `StatAccessor::add_modifier`).
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub(crate) definition: String,
@@ -8,6 +16,17 @@ pub struct Expression {
 }
 
 impl Expression {
+    /// Creates a new `Expression` by parsing and compiling an expression string.
+    ///
+    /// # Arguments
+    ///
+    /// * `expression`: A string slice representing the mathematical expression
+    ///                 (e.g., `"Health.base + Vitality * 10"`).
+    ///
+    /// # Returns
+    ///
+    /// A `StatResult<Self>` which is `Ok(Expression)` if parsing and compilation are successful,
+    /// or `Err(StatError)` if the expression string is invalid.
     pub fn new(expression: &str) -> StatResult<Self> {
         let compiled = evalexpr::build_operator_tree(expression)
             .map_err(|err| StatError::ExpressionError {
@@ -36,9 +55,16 @@ impl PartialEq for Expression {
     }
 }
 
+/// Represents the type of a modifier that can be applied to a stat.
+///
+/// Modifiers can either be a simple literal numerical value or a more complex `Expression`
+/// that can reference other stat values.
 #[derive(Debug, Clone)]
 pub enum ModifierType {
+    /// A direct numerical value to be applied as a modifier.
     Literal(f32),
+    /// An `Expression` that will be evaluated to determine the modifier's value.
+    /// This allows for dynamic modifiers based on other stats (e.g., `"Strength * 0.5"`).
     Expression(Expression),
 }
 
