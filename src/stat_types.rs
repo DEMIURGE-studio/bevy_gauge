@@ -4,10 +4,10 @@ use super::prelude::*;
 use std::collections::HashSet;
 use dashmap::DashMap;
 
-/// Represents different ways that modifiers can be combined in the stat system.
+/// Defines how modifiers are combined (additive or multiplicative).
 /// 
 /// This enum determines how multiple modifiers to the same stat are combined together.
-#[derive(Debug, Clone, Default)]
+#[derive(PartialEq, Debug, Clone, Default)]
 pub(crate) enum ModType {
     /// Modifiers are added together linearly.
     /// Example: "10% increased damage" + "20% increased damage" = 30% increased damage

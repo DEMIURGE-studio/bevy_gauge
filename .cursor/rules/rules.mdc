@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+-ALWAYS ALWAYS test after making changes
+-Test using the 'cargo test foo::test_' command, where foo is the module we are testing. If we are testing the entire project just run 'cargo test'
