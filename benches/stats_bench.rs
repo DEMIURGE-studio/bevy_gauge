@@ -2,8 +2,6 @@ use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use bevy_gauge::prelude::*;
 
-const DAMAGE_TYPE: u32 = 0xFF;
-
 // Helper function to set up an app with a default Config, plugins, and a single entity
 fn setup_app_for_bench() -> (App, Entity) {
     let mut app = App::new();
@@ -34,17 +32,6 @@ fn setup_stat_modifier_system(app: &mut App, entity: Entity, stat_name: &str, va
     });
     let _ = app.world_mut().run_system(system_id);
     app.update(); // Ensure modifier is processed if subsequent reads depend on it immediately
-}
-
-// Helper to run a system that adds an expression modifier for setup.
-fn setup_expression_modifier_system(app: &mut App, entity: Entity, stat_name: &str, expression: &str) {
-    let stat_name_owned = stat_name.to_string();
-    let expression_owned = expression.to_string();
-    let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
-        stat_accessor.add_modifier(entity, &stat_name_owned, Expression::new(&expression_owned).unwrap());
-    });
-    let _ = app.world_mut().run_system(system_id);
-    app.update();
 }
 
 pub fn bench_stat_access(c: &mut Criterion) {
@@ -217,7 +204,6 @@ pub fn bench_stats_update_propagation(c: &mut Criterion) {
             
             let central = entities[0];
             let dependent_entities_ids = entities[1..].to_vec(); // Clone for setup system
-            let ec = entity_count; // copy
 
             // Setup: Central entity and dependents that rely on its "Aura.base"
             let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
