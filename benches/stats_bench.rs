@@ -364,14 +364,13 @@ pub fn bench_many_distinct_stats(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_stat_access,
-    // bench_stat_evaluation, // Removed as redundant
-    bench_dependent_stats, // Renamed for clarity
-    bench_entity_dependencies, // Renamed for clarity
-    bench_tag_based_stats, // Renamed for clarity
-    bench_mixed_dependencies, // Renamed for clarity
-    bench_stats_update_propagation, // Renamed for clarity
+    bench_dependent_stats,
+    bench_entity_dependencies,
+    bench_tag_based_stats,
+    bench_mixed_dependencies,
+    bench_stats_update_propagation,
     bench_complex_expression_evaluation,
-    bench_many_modifiers_on_stat, // Renamed for clarity
+    bench_many_modifiers_on_stat,
     bench_many_distinct_stats
 );
 criterion_main!(benches);
