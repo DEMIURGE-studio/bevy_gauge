@@ -121,7 +121,7 @@ impl StatAccessor<'_, '_> {
             target_stats.add_modifier_value(&path, modifier, &self.config);
         }
 
-        self.update_stat(target_entity, &path);
+        self.update_stat(target_entity, &path.full_path);
     }
 
     pub fn remove_modifier<V: Into<ModifierType>>(&mut self, target_entity: Entity, path: &str, modifier: V) {
@@ -178,7 +178,7 @@ impl StatAccessor<'_, '_> {
             target_stats.remove_modifier_value(&path, modifier);
         }
 
-        self.update_stat(target_entity, &path);
+        self.update_stat(target_entity, &path.full_path);
     }
 
     // This is filthy
@@ -199,7 +199,7 @@ impl StatAccessor<'_, '_> {
 
         // Step 3: Update all affected stats
         for stat in stats_to_update {
-            self.update_stat(stat.entity, &StatPath::parse(&stat.path));
+            self.update_stat(stat.entity, &stat.path);
         }
     }
 
@@ -284,84 +284,102 @@ impl StatAccessor<'_, '_> {
         }
     }
 
-    pub fn update_stat(&mut self, target_entity: Entity, path: &StatPath) {
+    pub fn update_stat(&mut self, target_entity: Entity, stat_path: &str) {
         let mut processed = HashSet::new();
-        self.update_stat_recursive(target_entity, path, &mut processed);
+        self.update_stat_recursive(target_entity, stat_path, &mut processed);
     }
 
-    fn update_stat_recursive(&mut self, target_entity: Entity, path: &StatPath, processed: &mut HashSet<(Entity, String)>) {
-        let process_key = (target_entity, path.to_string());
-        
-        if processed.contains(&process_key) {
+    fn update_stat_recursive(
+        &mut self,
+        target_entity: Entity,
+        stat_path: &str,
+        processed: &mut HashSet<(Entity, String)>
+    ) {
+        let process_key = (target_entity, stat_path.to_string());
+        if !processed.insert(process_key) {
+            // Already processed this combination
             return;
         }
-        
-        processed.insert(process_key);
-        
-        // Calculate new value and update cache
-        let current_value = if let Ok(stats) = self.query.get(target_entity) {
-            let value = stats.evaluate(path);
-            stats.set_cached(path.full_path, value);
+
+        // Step 1: Calculate new value and update cache
+        let current_value = {
+            let Ok(stats) = self.query.get(target_entity) else {
+                return;
+            };
+            let path = StatPath::parse(stat_path);
+            let value = stats.evaluate(&path);
+            stats.set_cached(stat_path, value);
             value
-        } else {
-            return; // Entity doesn't have stats, nothing to do
         };
-        
-        let mut local_dependents = Vec::new();
-        let mut entity_dependents = Vec::new();
-        
-        if let Ok(stats) = self.query.get(target_entity) {
-            // Get all dependents for this stat
-            for dependent in stats.get_stat_dependents(path.full_path) {
-                match dependent {
-                    DependentType::LocalStat(local_stat) => {
-                        local_dependents.push(StatPath::parse(&local_stat));
-                    },
-                    DependentType::EntityStat(dependent_entity) => {
-                        entity_dependents.push(dependent_entity);
+
+        // Step 2: Collect all updates needed
+        let updates = self.collect_dependent_updates(target_entity, stat_path);
+        if updates.is_empty() {
+            return;
+        }
+
+        // Step 3: Process all updates
+        self.process_dependent_updates(updates, processed);
+    }
+
+    fn collect_dependent_updates(
+        &self,
+        target_entity: Entity,
+        stat_path: &str,
+    ) -> Vec<StatUpdate> {
+        let Ok(stats) = self.query.get(target_entity) else {
+            return Vec::new();
+        };
+
+        let mut updates = Vec::new();
+
+        // Handle local stat dependencies
+        for dependent in stats.get_stat_dependents(stat_path) {
+            match dependent {
+                DependentType::LocalStat(path) => {
+                    updates.push(StatUpdate {
+                        entity: target_entity,
+                        path,
+                    });
+                },
+                DependentType::EntityStat(dependent_entity) => {
+                    // Find all prefixes that reference this entity in the dependent
+                    if let Ok(dependent_stats) = self.query.get(dependent_entity) {
+                        for (prefix, &source_entity) in dependent_stats.sources.iter() {
+                            if source_entity == target_entity {
+                                // Create the cache key that needs updating
+                                let cache_key = format!("{}@{}", prefix, stat_path);
+                                
+                                // Find all stats that depend on this cache entry
+                                for cache_dependent in dependent_stats.get_stat_dependents(&cache_key) {
+                                    if let DependentType::LocalStat(dependent_path) = cache_dependent {
+                                        updates.push(StatUpdate {
+                                            entity: dependent_entity,
+                                            path: dependent_path,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        
-        // Update all local dependents
-        for local_dependent in local_dependents {
-            self.update_stat_recursive(target_entity, &local_dependent, processed);
-        }
-        
-        // Update all entity dependents
-        for dependent_entity in entity_dependents {
-            if let Ok(dependent_stats) = self.query.get(dependent_entity) {
-                // Find all prefixes that reference this entity
-                let prefixes: Vec<String> = dependent_stats.sources
-                    .iter()
-                    .filter_map(|(prefix, &entity)| {
-                        if entity == target_entity {
-                            Some(prefix.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                
-                // Update cached values and get stats to update
-                let mut stats_to_update = Vec::new();
-                for prefix in prefixes {
-                    let cache_key = format!("{}@{}", prefix, path.full_path);
-                    dependent_stats.set_cached(&cache_key, current_value);
-                    
-                    for cache_dependent in dependent_stats.get_stat_dependents(&cache_key) {
-                        if let DependentType::LocalStat(dependent_stat) = cache_dependent {
-                            stats_to_update.push(StatPath::parse(&dependent_stat));
-                        }
-                    }
-                }
-                
-                // Update the dependent stats recursively
-                for stat_to_update in stats_to_update {
-                    self.update_stat_recursive(dependent_entity, &stat_to_update, processed);
-                }
-            }
+
+        updates
+    }
+
+    fn process_dependent_updates(
+        &mut self,
+        updates: Vec<StatUpdate>,
+        processed: &mut HashSet<(Entity, String)>
+    ) {
+        for update in updates {
+            self.update_stat_recursive(
+                update.entity,
+                &update.path,
+                processed
+            );
         }
     }
 
@@ -407,7 +425,7 @@ impl StatAccessor<'_, '_> {
         }
 
         for (dependent_entity, cache_key) in stat_dependencies {
-            self.update_stat(dependent_entity, &StatPath::parse(&cache_key));
+            self.update_stat(dependent_entity, &cache_key);
         }
     }
 }
