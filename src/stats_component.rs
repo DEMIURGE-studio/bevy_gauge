@@ -106,15 +106,14 @@ impl Stats {
     }
 
     pub(crate) fn set(&mut self, path: &str, base: f32) -> &mut Self {
-        // should use stat's built-in set
-        todo!()
+        self.definitions.get_mut(path).unwrap().set(&StatPath::parse(path), base);
+        self
     }
 
     pub(crate) fn set_cached(&self, key: &str, value: f32) {
         self.cached_stats.set(key, value)
     }
 
-    // TODO should remove the entry, no?
     pub(crate) fn remove_cached(&self, key: &str) {
         self.cached_stats.set(key, 0.0);
     }
@@ -184,11 +183,9 @@ impl Stats {
         if let Some(stat) = self.definitions.get_mut(base_stat_name) { // Pass &String directly
             stat.add_modifier(path, modifier, config);
         } else {
-            eprintln!("[Stats::add_modifier_value] StatType for '{}' not found. Creating new one for path: {}", base_stat_name, path.full_path);
             let mut new_stat = StatType::new(path, config);
             new_stat.add_modifier(path, modifier, config);
-            self.definitions.insert(base_stat_name.to_string(), new_stat); // Clone &String to String for insert key
-            eprintln!("[Stats::add_modifier_value] Inserted new StatType for '{}'. Current definitions count: {}", base_stat_name, self.definitions.len());
+            self.definitions.insert(base_stat_name.to_string(), new_stat);
         }
     }
 
