@@ -1,6 +1,5 @@
 use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashSet, HashMap}};
 use super::prelude::*;
-use crate::stat_types::StatUtilMethods;
 
 // TODO:  
 // 1. Some way to set a stat
@@ -265,7 +264,7 @@ impl StatAccessor<'_, '_> {
 
         // Apply cache updates to the target entity FIRST
         if !cache_updates_for_target.is_empty() {
-            if let Ok(mut target_stats_mut) = self.query.get_mut(target_entity) {
+            if let Ok(target_stats_mut) = self.query.get(target_entity) {
                 for cache_op in cache_updates_for_target {
                     // Ensure we are updating the correct entity's cache, though in this flow it should always be target_entity
                     if cache_op.entity == target_entity {
@@ -290,52 +289,58 @@ impl StatAccessor<'_, '_> {
     fn collect_source_updates(
         &mut self,
         target_entity: Entity,
-        name: &str,
+        source_alias_being_registered: &str,
         source_entity: Entity,
     ) -> (Vec<DependencyUpdate>, Vec<StatUpdate>, Vec<CacheUpdate>) {
         let mut updates_to_add = Vec::new();
         let mut stat_updates_needed = Vec::new();
         let mut cache_updates_for_target: Vec<CacheUpdate> = Vec::new();
 
-        let target_stats_opt = self.query.get(target_entity).ok().cloned();
+        // Get read-only access to target_stats. No clone needed.
+        if let Ok(target_stats_ro) = self.query.get(target_entity) {
+            // Directly look up the requirements for the source_alias being registered.
+            if let Some(requirements) = target_stats_ro.source_requirements.get(source_alias_being_registered) {
+                for requirement in requirements {
+                    let path_on_source_entity_str = &requirement.path_on_source;
+                    let path_on_target_with_expression_str = &requirement.path_on_target_with_expression;
+                    let full_variable_in_expression_str = &requirement.full_variable_in_expression;
 
-        if let Some(target_stats_ro) = target_stats_opt {
-            for (base_stat_name_on_target_str, stat_definition_on_target) in target_stats_ro.definitions.iter() {
-                for (modifier_full_path_str, expression_obj) in stat_definition_on_target.get_all_expressions(base_stat_name_on_target_str) {
-                    for var_name_in_expr_str in expression_obj.compiled.iter_variable_identifiers() {
-                        let parsed_var_path_obj = StatPath::parse(var_name_in_expr_str);
-                        if let Some(source_alias_in_var_str) = parsed_var_path_obj.target {
-                            if source_alias_in_var_str == name {
-                                let path_on_source_entity_str = parsed_var_path_obj.without_target_as_string();
+                    updates_to_add.push(DependencyUpdate::new_add(
+                        source_entity,
+                        path_on_source_entity_str,
+                        target_entity,
+                        path_on_target_with_expression_str,
+                        source_alias_being_registered,
+                    ));
 
-                                updates_to_add.push(DependencyUpdate::new_add(
-                                    source_entity,
-                                    &path_on_source_entity_str,
-                                    target_entity,
-                                    &modifier_full_path_str,
-                                    name,
-                                ));
-                                
-                                let value_from_source = if let Ok(source_entity_stats_ro) = self.query.get(source_entity) {
-                                    source_entity_stats_ro.evaluate_by_string(&path_on_source_entity_str)
-                                } else {
-                                    0.0 
-                                };
+                    let value_from_source = if let Ok(source_entity_stats_ro) = self.query.get(source_entity) {
+                        source_entity_stats_ro.evaluate_by_string(path_on_source_entity_str)
+                    } else {
+                        // Consider logging a warning if the source entity cannot be read
+                        warn!(
+                            "In collect_source_updates: Source entity {:?} for alias '{}' on target {:?} not found or missing Stats. Defaulting value to 0.0 for variable '{}'.",
+                            source_entity, source_alias_being_registered, target_entity, full_variable_in_expression_str
+                        );
+                        0.0
+                    };
 
-                                cache_updates_for_target.push(CacheUpdate {
-                                    entity: target_entity,
-                                    key: var_name_in_expr_str.to_string(),
-                                    value: value_from_source,
-                                });
-                                
-                                stat_updates_needed.push(StatUpdate::new(target_entity, &modifier_full_path_str));
-                            }
-                        }
-                    }
+                    cache_updates_for_target.push(CacheUpdate {
+                        entity: target_entity,
+                        key: full_variable_in_expression_str.clone(),
+                        value: value_from_source,
+                    });
+
+                    stat_updates_needed.push(StatUpdate::new(target_entity, path_on_target_with_expression_str));
                 }
             }
+        } else {
+            // Consider logging a warning if the target entity cannot be read
+            warn!(
+                "In collect_source_updates: Target entity {:?} not found or missing Stats when processing alias '{}' from source {:?}.",
+                target_entity, source_alias_being_registered, source_entity
+            );
         }
-        
+
         (updates_to_add, stat_updates_needed, cache_updates_for_target)
     }
 

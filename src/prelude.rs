@@ -2,6 +2,7 @@ pub use super::app_extension::*;
 pub use super::config::*;
 pub use super::dirty::*;
 pub use super::expressions::*;
+pub use super::initializer::*;
 pub use super::modifier_set::*;
 pub use super::stat_accessor::*;
 pub use super::stat_addressing::*;

@@ -67,6 +67,18 @@ impl StatPath {
         base_path // Return the reconstructed path
     }
 
+    pub fn without_target_as_string(&self) -> String {
+        let mut parts_vec = Vec::new();
+        parts_vec.push(self.name.clone());
+        if let Some(p) = &self.part {
+            parts_vec.push(p.clone());
+        }
+        if let Some(t) = self.tag {
+            parts_vec.push(t.to_string());
+        }
+        parts_vec.join(".")
+    }
+
     // Keep the display implementation consistent with full_path
     impl fmt::Display for StatPath {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,5 +1,5 @@
 use bevy::utils::HashMap;
-use evalexpr::{ContextWithMutableVariables, Value};
+use evalexpr::{ContextWithMutableVariables, Value, IterateVariablesContext, Context};
 use super::prelude::*;
 use std::collections::HashSet;
 use dashmap::DashMap;
@@ -284,11 +284,33 @@ impl Stat for Complex {
             stats.set_cached(path.full_path, part_total);
             return part_total;
         } else {
+            let mut expression_context = evalexpr::HashMapContext::new();
+
+            for (part_name, _modifiable_part_definition) in &self.modifier_steps {
+                let part_full_path_str = format!("{}.{}", path.name, part_name);
+                let part_value = stats.evaluate_by_string(&part_full_path_str);
+                expression_context.set_value(part_name.clone(), evalexpr::Value::Float(part_value as f64))
+                    .map_err(|e| StatError::Internal{details: format!("Failed to set part '{}' in Complex eval context: {}", part_name, e)})
+                    .unwrap();
+            }
+            
+            let main_cache_context = stats.get_context();
+            for (var_key, var_val) in main_cache_context.iter_variables() {
+                if expression_context.get_value(&var_key).is_none() {
+                    expression_context.set_value(var_key.clone().into(), var_val.clone())
+                        .map_err(|e| StatError::Internal{details: format!("Failed to merge var '{}' in Complex eval context: {}", var_key, e)})
+                        .unwrap();
+                }
+            }
+            
+            let total_expr_str = self.total.definition.as_str();
             let total = self.total.compiled
-                .eval_with_context(stats.get_context())
+                .eval_with_context(&expression_context)
+                .map_err(|e| StatError::ExpressionError { expression: total_expr_str.to_string(), details: e.to_string() })
                 .unwrap()
                 .as_number()
-                .unwrap() as f32;
+                .unwrap_or(0.0) as f32;
+
             stats.set_cached(&path.full_path, total);
             return total;
         }
@@ -453,48 +475,5 @@ impl Stat for Tagged {
             return total_val;
         }
         0.0
-    }
-}
-
-/*
-Revised get_expressions focusing on what's easily achievable and likely to fix current errors:
-It should return Vec<(String, Expression)> where String is the full path.
-*/
-pub(crate) trait StatUtilMethods {
-    fn get_all_expressions(&self, base_path_str: &str) -> Vec<(String, Expression)>;
-}
-
-impl StatUtilMethods for StatType {
-    fn get_all_expressions(&self, base_path_str: &str) -> Vec<(String, Expression)> {
-        let mut expressions = Vec::new();
-        match self {
-            StatType::Flat(_) => {}
-            StatType::Modifiable(m) => {
-                for expr in &m.mods {
-                    expressions.push((base_path_str.to_string(), expr.clone()));
-                }
-            }
-            StatType::Complex(c) => {
-                expressions.push((base_path_str.to_string(), c.total.clone()));
-                for (step_name, modifiable_step) in &c.modifier_steps {
-                    let sub_path = format!("{}.{}", base_path_str, step_name);
-                    for expr in &modifiable_step.mods {
-                        expressions.push((sub_path.clone(), expr.clone()));
-                    }
-                }
-            }
-            StatType::Tagged(t) => {
-                expressions.push((base_path_str.to_string(), t.total.clone()));
-                for (step_name, tagged_entry) in &t.modifier_steps {
-                    for (_tag, modifiable_step) in &tagged_entry.0 {
-                        let sub_path = format!("{}.{}.{}", base_path_str, step_name, _tag);
-                        for expr in &modifiable_step.mods {
-                            expressions.push((sub_path.clone(), expr.clone()));
-                        }
-                    }
-                }
-            }
-        }
-        expressions
     }
 }

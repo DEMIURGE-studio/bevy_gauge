@@ -103,6 +103,7 @@ pub mod app_extension;
 pub mod config;
 pub mod dirty;
 pub mod expressions;
+pub mod initializer;
 pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
@@ -135,12 +136,13 @@ pub mod tags;
 /// fn main() {
 ///     App::new()
 ///         .add_plugins(DefaultPlugins)
-///         .add_plugins(BevyGaugePlugin)
+///         .add_plugins(bevy_gauge::plugin)
 ///         // ... other app setup ...
 ///         .run();
 /// }
 /// ```
 pub fn plugin(app: &mut App) {
     app.add_observer(remove_stats)
+    .add_observer(apply_stats_initializer)
     .add_plugins(app_extension::plugin);
 }

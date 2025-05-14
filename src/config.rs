@@ -70,7 +70,7 @@ impl Config {
         self.stat_types
             .get(path.name)
             .map(|s| s.as_str())
-            .unwrap_or("Flat") // Default to Flat if not specified
+            .unwrap_or("Modifiable") // Default to Modifiable if not specified
     }
     
     /// Get the relationship type for a given path
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(config.get_stat_type(&path), "Tagged");
         
         let unknown_path = StatPath::parse("Unknown");
-        assert_eq!(config.get_stat_type(&unknown_path), "Flat");
+        assert_eq!(config.get_stat_type(&unknown_path), "Modifiable");
     }
 
     #[test]

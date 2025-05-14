@@ -4,6 +4,21 @@ use bevy::{prelude::*, utils::HashMap};
 use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value, IterateVariablesContext};
 use super::prelude::*;
 
+/// Holds information about a specific stat required from a source alias by an expression
+/// on the entity owning this `Stats` component.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SourceRequirement {
+    /// The path on the source entity that is needed (e.g., "Strength.total", "Mana.current").
+    /// This is the part of the variable *before* the '@'.
+    pub path_on_source: String,
+    /// The full path of the stat on *this* (target) entity that contains the expression
+    /// using this source requirement (e.g., "AttackPower.total", "Damage.final_bonus").
+    pub path_on_target_with_expression: String,
+    /// The complete variable name as used in the expression on the target entity
+    /// (e.g., "Strength@Parent", "Mana@SelfBuffSource").
+    pub full_variable_in_expression: String,
+}
+
 /// A wrapper around an expression evaluation context, used for evaluating stat expressions.
 ///
 /// This struct provides a simplified interface for setting and potentially getting
@@ -49,6 +64,9 @@ pub struct Stats {
     pub(crate) cached_stats: SyncContext,
     pub(crate) dependents_map: DependencyMap,
     pub(crate) sources: HashMap<String, Entity>,
+    /// Maps a source alias (e.g., "Parent", "Weapon") to a list of specific stats
+    /// this entity's expressions require from any entity registered with that alias.
+    pub(crate) source_requirements: HashMap<String, Vec<SourceRequirement>>,
 }
 
 // TODO needs to track dependencies BOTH WAYS
@@ -60,6 +78,7 @@ impl Stats {
             cached_stats: SyncContext::new(),
             dependents_map: DependencyMap::new(),
             sources: HashMap::new(),
+            source_requirements: HashMap::new(),
         }
     }
     
@@ -140,31 +159,63 @@ impl Stats {
     }
 
     pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
-        let base_stat = path.name;
+        let base_stat_name = path.name; // base_stat_name is &String
 
-        {
-            if let ModifierType::Expression(ref depends_on_expression) = modifier {
-                self.register_dependencies(path, &depends_on_expression);
+        if let ModifierType::Expression(ref expression_details) = modifier {
+            // register_dependencies expects path: &StatPath
+            self.register_dependencies(path, expression_details);
+
+            for var_name_in_expr_str in expression_details.compiled.iter_variable_identifiers() {
+                let parsed_var_path = StatPath::parse(var_name_in_expr_str);
+                if let Some(source_alias_ref) = &parsed_var_path.target { // source_alias_ref is &String
+                    let requirement = SourceRequirement {
+                        path_on_source: parsed_var_path.without_target_as_string(),
+                        path_on_target_with_expression: path.full_path.to_string(),
+                        full_variable_in_expression: var_name_in_expr_str.to_string(),
+                    };
+                    self.source_requirements
+                        .entry(source_alias_ref.to_string()) // Clone &String to String for entry key
+                        .or_default()
+                        .push(requirement);
+                }
             }
-            if let Some(stat) = self.definitions.get_mut(base_stat) {
-                stat.add_modifier(path, modifier, config);
-            } else {
-                let mut new_stat = StatType::new(path, config);
-                new_stat.add_modifier(path, modifier, config);
-                self.definitions.insert(base_stat.to_string(), new_stat);
-            }
+        }
+
+        if let Some(stat) = self.definitions.get_mut(base_stat_name) { // Pass &String directly
+            stat.add_modifier(path, modifier, config);
+        } else {
+            eprintln!("[Stats::add_modifier_value] StatType for '{}' not found. Creating new one for path: {}", base_stat_name, path.full_path);
+            let mut new_stat = StatType::new(path, config);
+            new_stat.add_modifier(path, modifier, config);
+            self.definitions.insert(base_stat_name.to_string(), new_stat); // Clone &String to String for insert key
+            eprintln!("[Stats::add_modifier_value] Inserted new StatType for '{}'. Current definitions count: {}", base_stat_name, self.definitions.len());
         }
     }
 
     pub(crate) fn remove_modifier_value(&mut self, path: &StatPath, modifier: &ModifierType) {
-        let base_stat = path.name.to_string();
+        let base_stat_name = path.name; // base_stat_name is &String
 
-        {
-            if let Some(stat) = self.definitions.get_mut(&base_stat) {
-                stat.remove_modifier(path, modifier);
-            }
-            if let ModifierType::Expression(expression) = modifier {
-                self.unregister_dependencies(&base_stat, &expression);
+        if let Some(stat) = self.definitions.get_mut(base_stat_name) { // Pass &String directly
+            stat.remove_modifier(path, modifier);
+        }
+
+        if let ModifierType::Expression(ref expression_details) = modifier {
+            // path.full_path is String, .as_ref() gives &str
+            self.unregister_dependencies(path.full_path.as_ref(), expression_details);
+
+            for var_name_in_expr_str in expression_details.compiled.iter_variable_identifiers() {
+                let parsed_var_path = StatPath::parse(var_name_in_expr_str);
+                if let Some(source_alias_ref) = parsed_var_path.target { // source_alias_ref is &String
+                    if let Some(requirements_for_alias) = self.source_requirements.get_mut(source_alias_ref) { // Pass &String directly
+                        requirements_for_alias.retain(|req| {
+                            !(req.path_on_target_with_expression == path.full_path &&
+                              req.full_variable_in_expression == var_name_in_expr_str)
+                        });
+                        if requirements_for_alias.is_empty() {
+                            self.source_requirements.remove(source_alias_ref); // Pass &String directly
+                        }
+                    }
+                }
             }
         }
     }
