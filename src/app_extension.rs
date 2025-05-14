@@ -57,46 +57,6 @@ impl StatsAppExtension for App {
     }
 }
 
-/// An `EntityCommand` used to mark a component `T` on an entity as "touched".
-///
-/// This is primarily an internal mechanism that can be used by systems to trigger
-/// change detection for a component `T` even if its data hasn't strictly changed,
-/// by forcing a `reborrow()` on it.
-#[derive(Debug)] // Added Debug for clarity, as it's a struct
-pub struct TouchCommand<T: Component>(PhantomData<T>);
-
-impl<T: Component> EntityCommand for TouchCommand<T> {
-    fn apply(self, id: Entity, world: &mut World) {
-        if let Some(mut touchable) = world.entity_mut(id).get_mut::<T>() {
-            touchable.reborrow();
-        }
-    }
-}
-
-/// An extension trait for `EntityCommands` to provide a `touch` method.
-///
-/// This allows easily queueing a `TouchCommand` for a specific component type on an entity.
-pub trait TouchCommandExt {
-    /// Queues a command to "touch" the component `T` on the current entity.
-    ///
-    /// This can be used to ensure change detection runs for `T` in subsequent systems,
-    /// even if the component's data itself wasn't directly mutated in a way Bevy detects.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `T`: The component type to touch.
-    fn touch<T: Component>(&mut self);
-}
-
-impl<'w>
-    TouchCommandExt
-    for EntityCommands<'w>
-{
-    fn touch<T: Component>(&mut self) {
-        self.queue(TouchCommand(PhantomData::<T>));
-    }
-}
-
 use bevy::{app::MainScheduleOrder, ecs::schedule::ScheduleLabel};
 
 /// Plugin function for the app extension module.

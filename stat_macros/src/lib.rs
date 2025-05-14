@@ -588,12 +588,12 @@ fn collect_writeback_lines(
         match pf {
             ParsedField::WriteTo { name, path } => {
                 lines.push(quote! {
-                    let _ = stat_accessor.set_base(target_entity, #path, #self_expr.#name);
+                    let _ = stat_accessor.set(target_entity, #path, #self_expr.#name);
                 });
             },
             ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    let _ = stat_accessor.set_base(target_entity, #path, #self_expr.#name);
+                    let _ = stat_accessor.set(target_entity, #path, #self_expr.#name);
                 });
             },
             ParsedField::ReadFrom { .. } => { /* skip */ },
