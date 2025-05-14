@@ -8,15 +8,16 @@ use super::prelude::*;
 /// on the entity owning this `Stats` component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SourceRequirement {
-    /// The path on the source entity that is needed (e.g., "Strength.total", "Mana.current").
+    /// Lets say we have the following modifier: "AttackPower" <= "Strength@Parent + 10".
+    /// The path on the source entity that is needed (e.g., "Strength")
     /// This is the part of the variable *before* the '@'.
     pub path_on_source: String,
     /// The full path of the stat on *this* (target) entity that contains the expression
-    /// using this source requirement (e.g., "AttackPower.total", "Damage.final_bonus").
-    pub path_on_target_with_expression: String,
+    /// using this source requirement (e.g., "AttackPower").
+    pub local_dependent: String,
     /// The complete variable name as used in the expression on the target entity
-    /// (e.g., "Strength@Parent", "Mana@SelfBuffSource").
-    pub full_variable_in_expression: String,
+    /// (e.g., "Strength@Parent").
+    pub path_in_expression: String,
 }
 
 /// A wrapper around an expression evaluation context, used for evaluating stat expressions.
@@ -37,7 +38,7 @@ impl StatContext {
     ///
     /// # Arguments
     ///
-    /// * `key`: The name of the variable (e.g., "Health.base", "Damage@Source.total").
+    /// * `key`: The name of the variable (e.g., "Health.base", "Damage@Source").
     /// * `value`: The `f32` value of the variable.
     ///
     /// # Returns
@@ -69,7 +70,6 @@ pub struct Stats {
     pub(crate) source_requirements: HashMap<String, Vec<SourceRequirement>>,
 }
 
-// TODO needs to track dependencies BOTH WAYS
 impl Stats {
     /// Creates a new, empty `Stats` component, ready to have stats defined and modifiers added.
     pub fn new() -> Self {
@@ -93,7 +93,7 @@ impl Stats {
     ///
     /// # Arguments
     ///
-    /// * `path`: A string representing the stat path (e.g., "Damage.total", "Health.base").
+    /// * `path`: A string representing the stat path (e.g., "Damage", "Health.base").
     ///
     /// # Returns
     ///
@@ -169,8 +169,8 @@ impl Stats {
                 if let Some(source_alias_ref) = &parsed_var_path.target { // source_alias_ref is &String
                     let requirement = SourceRequirement {
                         path_on_source: parsed_var_path.without_target_as_string(),
-                        path_on_target_with_expression: path.full_path.to_string(),
-                        full_variable_in_expression: var_name_in_expr_str.to_string(),
+                        local_dependent: path.full_path.to_string(),
+                        path_in_expression: var_name_in_expr_str.to_string(),
                     };
                     self.source_requirements
                         .entry(source_alias_ref.to_string()) // Clone &String to String for entry key
@@ -205,8 +205,8 @@ impl Stats {
                 if let Some(source_alias_ref) = parsed_var_path.target { // source_alias_ref is &String
                     if let Some(requirements_for_alias) = self.source_requirements.get_mut(source_alias_ref) { // Pass &String directly
                         requirements_for_alias.retain(|req| {
-                            !(req.path_on_target_with_expression == path.full_path &&
-                              req.full_variable_in_expression == var_name_in_expr_str)
+                            !(req.local_dependent == path.full_path &&
+                              req.path_in_expression == var_name_in_expr_str)
                         });
                         if requirements_for_alias.is_empty() {
                             self.source_requirements.remove(source_alias_ref); // Pass &String directly
@@ -267,7 +267,6 @@ impl Stats {
 
     pub(crate) fn clear_internal_cache_for_path(&mut self, path: &StatPath) {
         if let Some(stat_definition) = self.definitions.get_mut(path.name) {
-            // Call the generalized trait method
             stat_definition.clear_internal_cache(path);
         }
     }

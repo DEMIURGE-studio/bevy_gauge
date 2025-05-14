@@ -188,7 +188,7 @@ fn apply_strength_buff(
         stat_accessor.add_modifier(
             player_entity,
             "AttackPower.base",
-            Expression::new("Strength.total * 0.5").unwrap()
+            Expression::new("Strength * 0.5").unwrap()
         );
     }
 }
@@ -214,7 +214,7 @@ fn remove_strength_buff(
         stat_accessor.remove_modifier(
             player_entity,
             "AttackPower.base",
-            Expression::new("Strength.total * 0.5").unwrap()
+            Expression::new("Strength * 0.5").unwrap()
         );
     }
 }
@@ -233,7 +233,7 @@ fn display_player_health(
 ) {
     if let Ok(player_entity) = player_query.get_single() {
         let current_health = stat_accessor.evaluate(player_entity, "Health"); // Evaluating the top level stat gives you the total
-        let fire_damage = stat_accessor.evaluate(player_entity, "Damage.total.Fire"); // Assuming "Fire" tag
+        let fire_damage = stat_accessor.evaluate(player_entity, "Damage.Fire"); // Assuming "Fire" tag
         println!("Player Health: {}, Fire Damage: {}", current_health, fire_damage);
     }
 }
@@ -298,11 +298,11 @@ fn link_leader_to_minion(
 
 // Example: Minion's AttackPower gets a bonus from the Leader's Strength
 // This modifier would be on the Minion's Stats component.
-// The expression refers to `LeaderAlias@Strength.total`.
+// The expression refers to `LeaderAlias@Strength`.
 stat_accessor.add_modifier(
     minion_entity,
     "AttackPower.base",
-    Expression::new(""LeaderAlias@Strength.total" * 0.1").unwrap() // 10% of leader's strength
+    Expression::new(""LeaderAlias@Strength" * 0.1").unwrap() // 10% of leader's strength
 );
 ```
 
@@ -349,9 +349,9 @@ Within an expression for a stat, you can typically refer to:
 To use a stat from a registered source entity, you prefix the stat path with the `SourceAlias` followed by an `@` symbol, all enclosed in double quotes.
 
 *   Example: If a source was registered with alias `"Leader"`, an expression on the target entity could be:
-    `"Strength.total@Leader * 0.5"`
+    `"Strength@Leader * 0.5"`
 
-This would fetch the `Strength.total` value from the entity registered as `"Leader"`.
+This would fetch the `Strength` value from the entity registered as `"Leader"`.
 
 ## Stat Entity Destruction
 When an entity with a `Stats` component is despawned, Bevy handles the removal of the `Stats` component itself. `bevy_gauge` includes an observer system (`remove_stats`) that cleans up any dependencies or source registrations related to the despawned entity, preventing dangling references or incorrect calculations.
@@ -399,8 +399,8 @@ A modifier might grant "+10% damage with Fire Swords". This would apply if the q
 TODO Does not explain permissive vs strict. Does not explain tag categories (i.e., "fire" is "elemental")
 ### Usage in Stat Paths
 Tags are appended to stat paths.
-*   `"Damage.total"`: Evaluates total damage considering all relevant tags or untagged modifiers.
-*   `"Damage.total.1"`: Evaluates total damage specifically for tag `1` (e.g., Fire).
+*   `"Damage"`: Evaluates total damage considering all relevant tags or untagged modifiers.
+*   `"Damage.1"`: Evaluates total damage specifically for tag `1` (e.g., Fire).
 *   `"Damage.increased.3"`: Adds/queries an "increased" modifier for `Damage` that has both tag `1` (Fire) AND tag `2` (Cold) (since 1 | 2 = 3).
 *   `"Damage.base.Sword"`: If you have a string-to-tag mapping setup in your `Config` (not shown in current examples but a potential extension), you could use named tags. Otherwise, you'd use their numeric `u32` representation. The examples primarily use numeric tags.
 
@@ -408,7 +408,7 @@ When adding a modifier:
 `stat_accessor.add_modifier(entity, "Damage.increased.1", 0.20); // 20% increased damage with tag 1 (Fire)`
 
 When evaluating:
-`let fire_damage = stat_accessor.evaluate(entity, "Damage.total.1");`
+`let fire_damage = stat_accessor.evaluate(entity, "Damage.1");`
 
 The `Tagged` stat type internally manages how these tagged modifiers combine.
 
@@ -472,7 +472,7 @@ let modifiers = modifier_set! {
     "Mana.base" => 50.0,
     "AttackPower.base" => [
         10.0, // Add a flat 10
-        "Strength.total * 0.5", // And add 50% of Strength
+        "Strength * 0.5", // And add 50% of Strength
     ],
     "Damage.increased.Fire" => 0.15 // 15% increased Fire damage (tag is numeric)
 };
@@ -586,7 +586,7 @@ use bevy_gauge::prelude::*;
 stat_component!(
     #[derive(Default, Debug)] // You can add other derives here
     pub struct Life {
-        max: <- "Life",             // Read-only from "Life" stat (likely "Life.total")
+        max: <- "Life",             // Read-only from "Life" stat (likely "Life")
         current: <-> "CurrentLife", // Read-write to "CurrentLife" stat
     }
 );
@@ -615,9 +615,9 @@ impl StatDerived for Life {
         // Note: The macro usually uses .get() which returns a Result,
         // or .evaluate() if it's about the final value.
         // The example uses .get(), implying it might be fetching a specific part or base value.
-        // For a "total" value, you'd typically use stats.evaluate("StatName.total")
-        self.max != stats.evaluate(stats.entity, "Life") // Assuming "Life" resolves to "Life.total"
-            || self.current != stats.evaluate(stats.entity, "CurrentLife") // Assuming "CurrentLife" resolves to "CurrentLife.total"
+        // For a "total" value, you'd typically use stats.evaluate("StatName")
+        self.max != stats.evaluate(stats.entity, "Life") // Assuming "Life" resolves to "Life"
+            || self.current != stats.evaluate(stats.entity, "CurrentLife") // Assuming "CurrentLife" resolves to "CurrentLife"
     }
 
     fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {

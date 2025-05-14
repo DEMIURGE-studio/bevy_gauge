@@ -34,7 +34,7 @@ impl StatAccessor<'_, '_> {
     /// # Arguments
     ///
     /// * `target_entity`: The `Entity` whose stat value is to be retrieved.
-    /// * `path`: A string representing the stat path (e.g., "Damage.total", "Health.base").
+    /// * `path`: A string representing the stat path (e.g., "Damage", "Health.base").
     ///
     /// # Returns
     ///
@@ -255,7 +255,7 @@ impl StatAccessor<'_, '_> {
             return;
         }
 
-        let (dependency_updates_for_source_registration, stats_to_update_on_target_due_to_new_source, cache_updates_for_target) = 
+        let (dependency_updates_for_source_registration, target_stats_to_update, cache_updates_for_target) = 
             self.collect_source_updates(target_entity, name, source_entity);
         
         if !dependency_updates_for_source_registration.is_empty() {
@@ -274,22 +274,22 @@ impl StatAccessor<'_, '_> {
             }
         }
 
-        for stat_update_instruction in stats_to_update_on_target_due_to_new_source {
+        for stat_update in target_stats_to_update {
             // Invalidate the specific query cache for Tagged stats (and potentially other types)
             // before re-evaluating the stat.
-            if let Ok(mut target_stats_mut) = self.query.get_mut(stat_update_instruction.entity) {
-                 let path_to_clear = StatPath::parse(&stat_update_instruction.stat_path_on_dependent);
+            if let Ok(mut target_stats_mut) = self.query.get_mut(stat_update.entity) {
+                 let path_to_clear = StatPath::parse(&stat_update.stat_path_on_dependent);
                  target_stats_mut.clear_internal_cache_for_path(&path_to_clear);
             }
 
-            self.update_stat(stat_update_instruction.entity, &stat_update_instruction.stat_path_on_dependent); 
+            self.update_stat(stat_update.entity, &stat_update.stat_path_on_dependent); 
         }
     }
 
     fn collect_source_updates(
         &mut self,
         target_entity: Entity,
-        source_alias_being_registered: &str,
+        source_alias_in_target: &str,
         source_entity: Entity,
     ) -> (Vec<DependencyUpdate>, Vec<StatUpdate>, Vec<CacheUpdate>) {
         let mut updates_to_add = Vec::new();
@@ -299,27 +299,27 @@ impl StatAccessor<'_, '_> {
         // Get read-only access to target_stats. No clone needed.
         if let Ok(target_stats_ro) = self.query.get(target_entity) {
             // Directly look up the requirements for the source_alias being registered.
-            if let Some(requirements) = target_stats_ro.source_requirements.get(source_alias_being_registered) {
+            if let Some(requirements) = target_stats_ro.source_requirements.get(source_alias_in_target) {
                 for requirement in requirements {
-                    let path_on_source_entity_str = &requirement.path_on_source;
-                    let path_on_target_with_expression_str = &requirement.path_on_target_with_expression;
-                    let full_variable_in_expression_str = &requirement.full_variable_in_expression;
+                    let source_path = &requirement.path_on_source;
+                    let target_path = &requirement.local_dependent;
+                    let full_variable_in_expression_str = &requirement.path_in_expression;
 
                     updates_to_add.push(DependencyUpdate::new_add(
                         source_entity,
-                        path_on_source_entity_str,
+                        source_path,
                         target_entity,
-                        path_on_target_with_expression_str,
-                        source_alias_being_registered,
+                        target_path,
+                        source_alias_in_target,
                     ));
 
                     let value_from_source = if let Ok(source_entity_stats_ro) = self.query.get(source_entity) {
-                        source_entity_stats_ro.evaluate_by_string(path_on_source_entity_str)
+                        source_entity_stats_ro.evaluate_by_string(source_path)
                     } else {
                         // Consider logging a warning if the source entity cannot be read
                         warn!(
                             "In collect_source_updates: Source entity {:?} for alias '{}' on target {:?} not found or missing Stats. Defaulting value to 0.0 for variable '{}'.",
-                            source_entity, source_alias_being_registered, target_entity, full_variable_in_expression_str
+                            source_entity, source_alias_in_target, target_entity, full_variable_in_expression_str
                         );
                         0.0
                     };
@@ -330,14 +330,14 @@ impl StatAccessor<'_, '_> {
                         value: value_from_source,
                     });
 
-                    stat_updates_needed.push(StatUpdate::new(target_entity, path_on_target_with_expression_str));
+                    stat_updates_needed.push(StatUpdate::new(target_entity, target_path));
                 }
             }
         } else {
             // Consider logging a warning if the target entity cannot be read
             warn!(
                 "In collect_source_updates: Target entity {:?} not found or missing Stats when processing alias '{}' from source {:?}.",
-                target_entity, source_alias_being_registered, source_entity
+                target_entity, source_alias_in_target, source_entity
             );
         }
 
@@ -370,7 +370,7 @@ impl StatAccessor<'_, '_> {
     /// # Arguments
     ///
     /// * `target_entity`: The `Entity` whose stat is to be evaluated.
-    /// * `path`: The string representation of the stat path (e.g., "Damage.total", "Health.current").
+    /// * `path`: The string representation of the stat path (e.g., "Damage", "Health.current").
     ///
     /// # Returns
     ///
@@ -535,61 +535,87 @@ impl StatAccessor<'_, '_> {
     ///
     /// * `target_entity`: The `Entity` to remove from stat tracking.
     pub fn remove_stat_entity(&mut self, target_entity: Entity) {
-        let Ok(target_stats_ro) = self.query.get(target_entity) else {
+        // --- Step 1: Gather all information from target_entity (the one being removed) ---
+        let (
+            cloned_target_dependents_map,    // Cloned map of what depended ON target_entity (stat_on_target -> (dependent_type -> count))
+            cloned_target_sources,           // Cloned map of what target_entity sourced FROM (alias -> source_id)
+            cloned_target_source_requirements // Cloned map of what target_entity required from its sources (alias -> Vec<SourceRequirement>)
+        ) = if let Ok(target_stats_ro) = self.query.get(target_entity) {
+            (
+                target_stats_ro.get_dependents().clone(),
+                target_stats_ro.sources.clone(),
+                target_stats_ro.source_requirements.clone(),
+            )
+        } else {
+            // target_entity doesn't have Stats or query failed, nothing to do.
             return;
         };
 
-        // Collect information about which external entities depended on the target_entity.
-        // The key is stat_on_target_str (e.g., "Health.base" on target_entity).
-        // The value is a list of (dependent_entity_id, source_alias_used_by_dependent, path_on_dependent_that_used_this_source_stat)
-        // This part needs to be accurate from the target_entity's dependents_map
-        let mut external_dependents_info: HashMap<String, Vec<(Entity, String, String)>> = HashMap::new();
-        let target_s_dependents_map = target_stats_ro.get_dependents();
+        // --- Part 1: Process entities that depended ON target_entity (target_entity was their source) ---
 
-        for (stat_on_this_target_str, specific_dependents_map) in target_s_dependents_map.iter() {
-            for (dependent_type, _count) in specific_dependents_map.iter() {
-                if let DependentType::EntityStat { entity: dependent_entity_id, path: path_on_dependent, source_alias } = dependent_type {
-                    external_dependents_info
-                        .entry(stat_on_this_target_str.clone())
+        // Step 1.A: Collect details about how target_entity was used by its dependents.
+        // Key: dependent_entity_id
+        // Value: Vec of (alias_used_by_dependent, stat_on_target_that_was_sourced, path_on_dependent_to_update)
+        let mut dependent_processing_details: HashMap<Entity, Vec<(String, String, String)>> = HashMap::new();
+        for (stat_on_target, specific_deps_map) in &cloned_target_dependents_map {
+            for (dependent_type, _count) in specific_deps_map.iter() {
+                if let DependentType::EntityStat { entity: dep_e, path: path_on_dep, source_alias: alias } = dependent_type {
+                    // Ensure we are not processing target_entity itself if it somehow listed itself (should not happen for EntityStat)
+                    if *dep_e == target_entity { continue; }
+
+                    dependent_processing_details.entry(*dep_e)
                         .or_default()
-                        .push((*dependent_entity_id, source_alias.clone(), path_on_dependent.clone()));
+                        .push((alias.clone(), stat_on_target.clone(), path_on_dep.clone()));
                 }
             }
         }
 
-        let mut stat_cache_keys_to_clear_and_update = Vec::new();
+        // Step 1.B: Apply changes to these dependent entities
+        let mut stats_to_update_on_dependents: HashSet<(Entity, String)> = HashSet::new();
+        for (dependent_entity_id, details_vec) in dependent_processing_details {
+            if let Ok(mut dependent_stats_mut) = self.query.get_mut(dependent_entity_id) {
+                // Clean the sources map on the dependent: remove all entries where target_entity was the source.
+                dependent_stats_mut.sources.retain(|_alias, &mut source_id| source_id != target_entity);
 
-        // For each stat on the removed entity that was used as a source by others...
-        for (stat_on_removed_entity_str, dependents_list) in external_dependents_info {
-            for (dependent_entity_id_val, alias_used_by_dependent, _path_on_dependent_originally_tracked) in dependents_list {
-                if let Ok(dependent_stats_ro) = self.query.get(dependent_entity_id_val) {
-                    // Construct the variable name as it would appear in the dependent's expressions
-                    let variable_from_removed_source = format!("{}@{}", stat_on_removed_entity_str, alias_used_by_dependent);
+                for (alias_used_by_dependent, stat_on_target_orig, path_on_dependent_to_update) in details_vec {
+                    // Construct the cache key that the dependent would have used for this specific sourced value.
+                    let cache_key_on_dependent = format!("{}@{}", stat_on_target_orig, alias_used_by_dependent);
+                    // Remove/nullify the cached value.
+                    dependent_stats_mut.remove_cached(&cache_key_on_dependent);
+                    // Mark the dependent's stat for update.
+                    stats_to_update_on_dependents.insert((dependent_entity_id, path_on_dependent_to_update));
+                }
+            }
+        }
 
-                    // Use the dependent's own dependents_map to find which of its local stats used this variable.
-                    // dependent_stats_ro.get_stat_dependents(variable_from_removed_source) returns Vec<DependentType>
-                    // where DependentType::LocalStat(local_stat_path) indicates a local stat using the variable.
-                    let local_stats_on_dependent_using_the_variable = dependent_stats_ro.get_stat_dependents(&variable_from_removed_source);
-                    
-                    for dependent_type_entry in local_stats_on_dependent_using_the_variable {
-                        if let DependentType::LocalStat(local_stat_path_str) = dependent_type_entry {
-                            stat_cache_keys_to_clear_and_update.push((
-                                dependent_entity_id_val, 
-                                variable_from_removed_source.clone(), 
-                                local_stat_path_str // This is the stat on the dependent entity that needs updating
-                            ));
-                        }
+        // Step 1.C: Trigger updates for all affected stats on the dependents
+        for (entity_to_update, stat_path_to_update) in stats_to_update_on_dependents {
+            self.update_stat(entity_to_update, &stat_path_to_update);
+        }
+
+        // --- Part 2: Process entities FROM WHICH target_entity sourced stats (target_entity was their dependent) ---
+        for (alias_target_used_for_source, actual_source_entity_id) in cloned_target_sources {
+            // Skip if the source is target_entity itself (shouldn't be a typical setup)
+            if actual_source_entity_id == target_entity { continue; }
+
+            if let Some(requirements_vec) = cloned_target_source_requirements.get(&alias_target_used_for_source) {
+                if let Ok(mut actual_source_stats_mut) = self.query.get_mut(actual_source_entity_id) {
+                    for req in requirements_vec {
+                        // Construct the DependentType that represents target_entity's dependency on this actual_source_entity.
+                        let dependent_type_to_remove = DependentType::EntityStat {
+                            entity: target_entity, // The entity being removed (who was the dependent)
+                            path: req.local_dependent.clone(), // The stat on target_entity that depended on the source
+                            source_alias: alias_target_used_for_source.clone(), // The alias target_entity used for this source
+                        };
+                        // Remove target_entity from the dependents_map of the actual_source_entity.
+                        // req.path_on_source is the stat on actual_source_entity that target_entity depended on.
+                        actual_source_stats_mut.remove_dependent(&req.path_on_source, dependent_type_to_remove);
                     }
                 }
             }
         }
-        
-        for (dep_entity_to_update, key_to_clear_on_it_str, stat_path_on_dep_to_update_str) in stat_cache_keys_to_clear_and_update {
-            if let Ok(dependent_stats) = self.query.get_mut(dep_entity_to_update) {
-                dependent_stats.remove_cached(&key_to_clear_on_it_str);
-            }
-            self.update_stat(dep_entity_to_update, &stat_path_on_dep_to_update_str);
-        }
+        // The Stats component on target_entity itself will be removed by Bevy when the entity is despawned.
+        // No need to manually clear target_entity.sources, target_entity.source_requirements, etc.
     }
 }
 

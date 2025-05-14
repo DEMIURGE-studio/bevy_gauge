@@ -80,9 +80,9 @@
 //!     fn print_player_damage(stat_accessor: StatAccessor, query: Query<Entity, With<PlayerTag>>) {
 //!         if let Ok(player_entity) = query.get_single() {
 //!             // Evaluate total damage (no specific tag, so considers all relevant tags)
-//!             let total_damage = stat_accessor.evaluate(player_entity, "Damage.total");
+//!             let total_damage = stat_accessor.evaluate(player_entity, "Damage");
 //!             // Evaluate fire damage (tag 1)
-//!             let fire_damage = stat_accessor.evaluate(player_entity, "Damage.total.1");
+//!             let fire_damage = stat_accessor.evaluate(player_entity, "Damage.1");
 //!             println!("Player Total Damage: {}, Fire Damage: {}", total_damage, fire_damage);
 //!         }
 //!     }
