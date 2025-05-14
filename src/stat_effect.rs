@@ -31,7 +31,7 @@ pub trait StatEffect {
     ///
     /// * `stat_accessor`: A mutable reference to the `StatAccessor`.
     /// * `context`: A reference to the context for this effect.
-    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {}
+    fn remove(&self, _stat_accessor: &mut StatAccessor, _context: &Self::Context) {}
 }
 
 /// A marker trait for types that can serve as a context for `StatEffect` operations.

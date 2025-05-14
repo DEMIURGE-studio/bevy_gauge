@@ -67,13 +67,18 @@ macro_rules! simple_stat {
 #[macro_export]
 macro_rules! stats {
     ( $( $key:expr => $value:expr ),* $(,)? ) => {{
-        // Ensure that you bring the required traits into scope.
-        use bevy_gauge::prelude::*;
-        let mut stats = bevy_gauge::prelude::Stats::new();
+        // Ensure that you bring the required traits and types into scope.
+        // Using $crate ensures the path is correct regardless of where the macro is called.
+        use $crate::prelude::{Stats, StatsInitializer, ModifierSet};
+
+        let mut modifier_set = ModifierSet::default();
         $(
-            stats.add_modifier($key, $value);
+            // The ModifierSet::add method takes path: &str and value: V where V: Into<ModifierType>
+            // This matches the $key and $value from the macro arguments.
+            modifier_set.add($key, $value);
         )*
-        stats
+        // Output a tuple: (Stats component, StatsInitializer component)
+        StatsInitializer::new(modifier_set)
     }};
 }
 

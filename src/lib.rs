@@ -59,6 +59,7 @@
 //!     fn spawn_player(mut commands: Commands) {
 //!         commands.spawn((PlayerTag, Stats::new()));
 //!     }
+//!     #[derive(Component)]
 //!     # struct PlayerTag;
 //!     ```
 //!
@@ -66,6 +67,7 @@
 //!     ```no_run
 //!     # use bevy::prelude::*;
 //!     # use bevy_gauge::prelude::*;
+//!     #[derive(Component)]
 //!     # struct PlayerTag;
 //!     # fn spawn_player(mut commands: Commands) { commands.spawn((PlayerTag, Stats::new())); }
 //!     fn apply_damage_buff(mut stat_accessor: StatAccessor, query: Query<Entity, With<PlayerTag>>) {

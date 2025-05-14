@@ -267,16 +267,8 @@ impl Stats {
 
     pub(crate) fn clear_internal_cache_for_path(&mut self, path: &StatPath) {
         if let Some(stat_definition) = self.definitions.get_mut(path.name) {
-            match stat_definition {
-                StatType::Tagged(tagged_stat) => {
-                    // Assuming Tagged has a method to clear its specific cache.
-                    // We also need to ensure the specific part.tag combination is cleared if possible,
-                    // or just clear the whole query_cache for that Tagged stat for simplicity.
-                    tagged_stat.clear_query_cache(); // Needs to be implemented on Tagged
-                }
-                // Other StatType variants might have their own caches in the future.
-                _ => {}
-            }
+            // Call the generalized trait method
+            stat_definition.clear_internal_cache(path);
         }
     }
 }

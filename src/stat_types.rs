@@ -1,7 +1,6 @@
 use bevy::utils::HashMap;
 use evalexpr::{ContextWithMutableVariables, Value, IterateVariablesContext, Context};
 use super::prelude::*;
-use std::collections::HashSet;
 use dashmap::DashMap;
 
 /// Defines how modifiers are combined, typically for a specific part of a stat.
@@ -84,6 +83,15 @@ impl Stat for StatType {
             StatType::Modifiable(simple) => simple.evaluate(path, stats),
             StatType::Complex(modifiable) => modifiable.evaluate(path, stats),
             StatType::Tagged(complex_modifiable) => complex_modifiable.evaluate(path, stats),
+        }
+    }
+
+    fn clear_internal_cache(&mut self, path: &StatPath) {
+        match self {
+            StatType::Flat(_) => { /* No internal cache for Flat */ }
+            StatType::Modifiable(_) => { /* No internal cache for Modifiable */ }
+            StatType::Complex(_) => { /* No internal cache for Complex currently, or it's handled by parts */ }
+            StatType::Tagged(tagged) => tagged.clear_internal_cache(path),
         }
     }
 }
@@ -395,10 +403,6 @@ impl Tagged {
             !query_tag_from_key.has_any(affected_tag)
         });
     }
-
-    pub fn clear_query_cache(&self) {
-        self.query_cache.clear();
-    }
 }
 
 impl Stat for Tagged {
@@ -454,16 +458,9 @@ impl Stat for Tagged {
                 self.query_cache.insert(cache_key.clone(), value);
                 return value;
             }
-        } else if path.part.is_none() && path.tag.is_none() {
-            let mut context = stats.cached_stats.context().clone();
-            for (part_name_in_total_expr, _step_definition) in &self.modifier_steps {
-                let part_value = self.evaluate_part(part_name_in_total_expr, 0, stats);
-                context.set_value(part_name_in_total_expr.clone(), Value::Float(part_value as f64)).unwrap();
-            }
-            let total_val = self.total.evaluate(&context);
-            stats.set_cached(&path.full_path, total_val);
-            return total_val;
-        } else if path.part.is_none() && path.tag.is_some() {
+        } 
+        // There is no (part.part.is_some() && path.tag.is_none()) case, because a tag is required for a tagged stat.
+        else if path.part.is_none() && path.tag.is_some() {
             let tag_val = path.tag.unwrap();
             let mut context = stats.cached_stats.context().clone();
             for (part_name_in_total_expr, _step_definition) in &self.modifier_steps {
@@ -475,5 +472,9 @@ impl Stat for Tagged {
             return total_val;
         }
         0.0
+    }
+
+    fn clear_internal_cache(&mut self, _path: &StatPath) {
+        self.query_cache.clear();
     }
 }

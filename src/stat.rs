@@ -71,4 +71,9 @@ pub trait Stat {
     ///
     /// An `f32` representing the calculated value of the stat.
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32;
+
+    /// Clears any internal caches that the stat might hold, potentially for a specific path.
+    /// This is useful when underlying data changes and cached evaluations need to be invalidated.
+    /// The default implementation does nothing.
+    fn clear_internal_cache(&mut self, _path: &StatPath) { /* default no-op */ }
 }
