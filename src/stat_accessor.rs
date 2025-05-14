@@ -626,23 +626,6 @@ impl DependencyUpdate {
             source_alias_in_target: source_alias_in_target.to_string(),
         }
     }
-
-    /// Creates a new dependency update for removing a dependency
-    fn new_remove(
-        source_entity: Entity, 
-        source_path: &str, 
-        target_entity: Entity, 
-        target_path: &str, 
-        source_alias_in_target: &str
-    ) -> Self {
-        Self {
-            source_entity,
-            source_path: source_path.to_string(),
-            target_entity,
-            target_path: target_path.to_string(),
-            source_alias_in_target: source_alias_in_target.to_string(),
-        }
-    }
 }
 
 /// Represents a stat that needs to be recalculated due to dependency changes.
