@@ -74,7 +74,6 @@ fn add_modifiers_system(
 
 fn get_stats_system(
     player_query: Query<&Stats, With<Player>>,
-    mut ran_once: Local<bool>,
 ) {
     if *ran_once {
         return;
@@ -122,7 +121,5 @@ fn get_stats_system(
         println!("  Energy Shield Increase: {:.2}%", es_increase * 100.0);
         println!("    (From Int {}: ({}/10).floor()*2% = {:.2}%)", 
             intelligence, intelligence, (intelligence/10.0).floor()*2.0);
-
-        *ran_once = true;
     }
 } 
