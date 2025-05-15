@@ -20,7 +20,6 @@ Welcome to `bevy_gauge`, a flexible stat and modifier system for the Bevy game e
 5.  [Sources](#sources)
     *   [Concept](#concept)
     *   [Registering Sources](#registering-sources)
-    *   [Unregistering Sources](#unregistering-sources)
 6.  [Custom Source Registration](#custom-source-registration)
 7.  [How to Write Expressions](#how-to-write-expressions)
     *   [Syntax](#syntax)
@@ -308,23 +307,6 @@ stat_accessor.add_modifier(
     "AttackPower.base",
     Expression::new(""LeaderAlias@Strength" * 0.1").unwrap() // 10% of leader's strength
 );
-```
-
-### Unregistering Sources
-If the relationship ends, you should unregister the source.
-
-```rust
-use bevy::prelude::*;
-use bevy_gauge::prelude::*;
-
-fn unlink_leader_from_minion(
-    mut stat_accessor: StatAccessor,
-    minion_query: Query<Entity, With<MinionTag>>,
-) {
-    if let Ok(minion_entity) = minion_query.get_single() {
-        stat_accessor.unregister_source(minion_entity, "LeaderAlias");
-    }
-}
 ```
 
 ## Custom Source Registration
@@ -647,6 +629,7 @@ This trait is for `StatDerived` components that also need to write some of their
 
 ### The `stat_component!` Macro
 This macro simplifies the creation of components that implement `StatDerived` and optionally `WriteBack`.
+**Note:** The `stat_component!` macro described below is an illustrative example of how one might generate components compatible with the `StatDerived` and `WriteBack` traits. It is not an existing macro within `bevy_gauge` itself. The traits are available for manual implementation or for use with custom code generation solutions.
 
 **Example:**
 
@@ -663,11 +646,12 @@ stat_component!(
 );
 ```
 
-**What it generates (approximately):**
-TODO Change stat_component! to use "get" instead of "evaluate"
-TODO Change stat_component! to allow the user to define custom derives as per the above example
+**What it generates (conceptually):**
+
+The following illustrates the kind of Rust code one would write to implement the `StatDerived` and `WriteBack` traits for the `Life` struct. Helper systems would then use `StatAccessor` to fetch values and update instances of `Life`, or to call `write_back`.
+
 ```rust
-// This is what the stat_component! macro would generate for the Life struct above:
+// This is a conceptual example of implementing StatDerived and WriteBack for the Life struct:
 
 #[derive(::bevy::prelude::Component, ::std::default::Default, ::std::fmt::Debug)]
 pub struct Life {
@@ -676,48 +660,63 @@ pub struct Life {
 }
 
 impl StatDerived for Life {
-    fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-        let mut s = Self::default();
-        s.update_from_stats(stats);
-        s
+    // Typically, an instance would be created and then updated by a system.
+    fn from_stats(
+        // entity: Entity, // The entity this component is for
+        // stat_accessor: &StatAccessor, // Accessor to get initial values
+    ) -> Self {
+        // let max_val = stat_accessor.evaluate(entity, "Life").unwrap_or_default();
+        // let current_val = stat_accessor.evaluate(entity, "CurrentLife").unwrap_or_default();
+        // Self { max: max_val, current: current_val, ..Default::default() }
+        Self::default() // Simplified for this example
     }
 
-    fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
-        // Note: The macro usually uses .get() which returns a Result,
-        // or .evaluate() if it's about the final value.
-        // The example uses .get(), implying it might be fetching a specific part or base value.
-        // For a "total" value, you'd typically use stats.evaluate("StatName")
-        self.max != stats.evaluate(stats.entity, "Life") // Assuming "Life" resolves to "Life"
-            || self.current != stats.evaluate(stats.entity, "CurrentLife") // Assuming "CurrentLife" resolves to "CurrentLife"
+    fn should_update(
+        &self,
+        // entity: Entity,
+        // stat_accessor: &StatAccessor,
+    ) -> bool {
+        // Placeholder: actual implementation would compare self.max and self.current
+        // with values fetched via stat_accessor.evaluate(entity, "Life") and
+        // stat_accessor.evaluate(entity, "CurrentLife") respectively.
+        // For example: self.max != stat_accessor.evaluate(entity, "Life").unwrap_or_default()
+        true // Simplified
     }
 
-    fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
-        self.max = stats.evaluate(stats.entity, "Life");
-        self.current = stats.evaluate(stats.entity, "CurrentLife");
+    fn update_from_stats(
+        &mut self,
+        // entity: Entity,
+        // stat_accessor: &StatAccessor,
+    ) {
+        // self.max = stat_accessor.evaluate(entity, "Life").unwrap_or_default();
+        // self.current = stat_accessor.evaluate(entity, "CurrentLife").unwrap_or_default();
     }
 
-    // is_valid would check if the underlying stat paths are defined/configured
-    fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-        // This check is more about whether the stat *definitions* exist
-        // and can be evaluated, rather than just being non-zero.
-        // A more robust check might involve trying to evaluate and seeing if it errors,
-        // or checking against the Config.
-        stats.can_evaluate(stats.entity, "Life") && stats.can_evaluate(stats.entity, "CurrentLife")
+    fn is_valid(
+        // entity: Entity,
+        // stat_accessor: &StatAccessor, // Accessor to check if stats can be evaluated
+    ) -> bool {
+        // Placeholder: actual implementation would use stat_accessor
+        // to check if "Life" and "CurrentLife" can be evaluated for the entity.
+        // For example: stat_accessor.can_evaluate(entity, "Life") && stat_accessor.can_evaluate(entity, "CurrentLife")
+        true // Simplified
     }
 }
 
 impl WriteBack for Life {
     fn write_back(&self, target_entity: Entity, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
         // Write back self.current to the "CurrentLife" stat's base.
+        // The path "CurrentLife" here implies it's configured to be settable, likely a Flat stat
+        // or a Modifiable stat where 'set' targets its base value or similar direct input.
         let _ = stat_accessor.set(target_entity, "CurrentLife", self.current);
         // self.max is read-only (<-), so it's not written back.
     }
 }
 ```
 
-**Explanation of `<-` and `<->`:**
-*   `fieldName: <- "StatPath"`: The `fieldName` will be populated from `StatPath`. It's read-only; changes to this field in the component won't affect the underlying stat. With that in mind, `<-` fields should only be changed via stat changes.
-*   `fieldName: <-> "StatPath"`: The `fieldName` is populated from `StatPath`, AND if the `WriteBack` trait is implemented (which `stat_component!` does for `<->` fields), changes to this field in the component will be written back to the `StatPath` (typically its base value) when the `write_back_stats` system runs.
+**Explanation of `<-` and `<->` (in the context of the hypothetical macro):**
+*   `fieldName: <- "StatPath"`: The `fieldName` would be populated from `StatPath`. It's read-only; changes to this field in the component wouldn't affect the underlying stat.
+*   `fieldName: <-> "StatPath"`: The `fieldName` would be populated from `StatPath`. If `WriteBack` is implemented, changes to this field would be written back to `StatPath`.
 
 `bevy_gauge` includes systems (`update_derived_stats` and `write_back_stats`) that run at different stages in the Bevy schedule to keep these components synchronized with the `Stats` component. You'll need to ensure the `bevy_gauge::app_extension::plugin` is added to your app, which `bevy_gauge::plugin` does by default.
 ```
