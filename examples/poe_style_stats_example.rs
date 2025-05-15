@@ -81,8 +81,6 @@ fn get_stats_system(
     }
 
     if let Ok(player_stats) = player_query.get_single() {
-        println!("\n--- Player Stats Evaluation ---");
-
         // Access stats directly
         let strength = player_stats.get("Strength");
         let dexterity = player_stats.get("Dexterity");
