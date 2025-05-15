@@ -39,7 +39,7 @@ fn app_config() -> Config {
     config
 }
 
-fn setup_player(mut commands: Commands, mut stat_accessor: StatAccessor) {
+fn setup_player(mut commands: Commands) {
     commands
         .spawn((
             Player,
