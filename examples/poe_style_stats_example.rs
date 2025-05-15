@@ -75,10 +75,6 @@ fn add_modifiers_system(
 fn get_stats_system(
     player_query: Query<&Stats, With<Player>>,
 ) {
-    if *ran_once {
-        return;
-    }
-
     if let Ok(player_stats) = player_query.get_single() {
         // Access stats directly
         let strength = player_stats.get("Strength");
