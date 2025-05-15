@@ -150,9 +150,52 @@ Create Bevy components whose fields are automatically updated from stats.
 
 **Define your component and implement `StatDerived` (and optionally `WriteBack`):**
 ```rust
-TODO
+#[derive(Component, Default, Debug)]
+pub struct Life {
+    pub max: f32,
+    pub current: f32,
+}
+
+impl StatDerived for Life {
+    fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
+        let mut s = Self::default();
+        s.update_from_stats(stats);
+        s
+    }
+    fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
+        self.max != stats.get("Life").unwrap_or(0.0)
+            || self.current != stats.get("CurrentLife").unwrap_or(0.0)
+    }
+    fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
+        self.max = stats.get("Life").unwrap_or(0.0);
+        self.current = stats.get("CurrentLife").unwrap_or(0.0);
+    }
+    fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
+        stats.get("Life").is_ok() && stats.get("CurrentLife").is_ok()
+    }
+}
+
+impl WriteBack for Life {
+    fn write_back(
+        &self,
+        target_entity: Entity,
+        stat_accessor: &mut bevy_gauge::prelude::StatAccessor,
+    ) {
+        let _ = stat_accessor.set(target_entity, "CurrentLife", self.current);
+    }
+}
 ```
-The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `PlayerHealthDisplay` component if `should_update` returns true. For a more detailed explanation and on how the `update_from_stats` is actually called with proper accessor, please refer to the full User Guide.
+The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `Life` component if `should_update` returns true. For a more detailed explanation and on how the `update_from_stats` is actually called with proper accessor, please refer to the full User Guide.
+
+You can also use the `stat_component!` macro to more easily define your stat-derived components!
+```rust
+stat_component!(pub struct Life {
+    max: <- "Life", // Updated from stats
+    current: <-> "CurrentLife", // Updated from stats AND written back.
+});
+```
+
+TODO explain why this (2 sources of truth) can be done safely
 
 ## Dive Deeper
 For more advanced features like Sources, Tags, Stat Effects, and detailed explanations, please refer to the [User Guide](bevy_gauge.md).
