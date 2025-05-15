@@ -1,10 +1,10 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::quote;
 use syn::parse::{Parse, ParseStream, Result as SynResult};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Error, Expr, LitFloat, LitStr, Token};
+use syn::{parse_macro_input, Error, LitFloat, LitStr, Token};
 
 // Intermediate parsing structures
 
@@ -152,74 +152,3 @@ pub fn stats(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
-// Refined generate_modifier_set_add_calls to handle ExprArray elements better.
-// This is a more robust way to handle array elements by attempting to match their known forms.
-fn generate_modifier_set_add_calls_refined(
-    assignments: &Punctuated<StatAssignment, Token![,]>,
-) -> Vec<proc_macro2::TokenStream> {
-    let mut add_calls = Vec::new();
-    for assignment in assignments {
-        let path_str = &assignment.path;
-        match &assignment.value {
-            StatValue::Single(item) => {
-                let value_token = match item {
-                    ValueItem::Literal(lf) => lf.to_token_stream(),
-                    ValueItem::StrExpression(ls) => ls.to_token_stream(),
-                };
-                add_calls.push(quote! {
-                    modifier_set.add(#path_str, #value_token);
-                });
-            }
-            StatValue::Array(expr_array) => {
-                for elem_expr in &expr_array.elems {
-                    // The key is that `ModifierSet::add` is generic and handles `Into<ModifierType>`
-                    // So, as long as #elem_expr results in an f32 or &str (or String),
-                    // it should work correctly.
-                    add_calls.push(quote! {
-                        modifier_set.add(#path_str, #elem_expr);
-                    });
-                }
-            }
-        }
-    }
-    add_calls
-}
-
-// To use the refined version, replace the call in the macros:
-// let add_calls = generate_modifier_set_add_calls_refined(&parsed_input.assignments);
-// Note: The `generate_modifier_set_add_calls_refined` is now the one used implicitly by the original function name.
-// I'll remove the `_refined` suffix and integrate its logic into the main function.
-
-// Final version of generate_modifier_set_add_calls
-fn generate_modifier_set_add_calls_final(
-    assignments: &Punctuated<StatAssignment, Token![,]>,
-) -> Vec<proc_macro2::TokenStream> {
-    let mut add_calls = Vec::new();
-    for assignment in assignments {
-        let path_str = &assignment.path;
-        match &assignment.value {
-            StatValue::Single(item) => {
-                let value_token = match item {
-                    ValueItem::Literal(lf) => lf.to_token_stream(),
-                    ValueItem::StrExpression(ls) => ls.to_token_stream(),
-                };
-                add_calls.push(quote! {
-                    modifier_set.add(#path_str, #value_token);
-                });
-            }
-            StatValue::Array(expr_array) => {
-                for elem_expr in &expr_array.elems {
-                    add_calls.push(quote! {
-                        modifier_set.add(#path_str, #elem_expr);
-                    });
-                }
-            }
-        }
-    }
-    add_calls
-}
-
-// Make sure the macro implementations call generate_modifier_set_add_calls_final
-// (I will rename generate_modifier_set_add_calls_final to generate_modifier_set_add_calls
-// and remove the older versions to avoid confusion.) 
