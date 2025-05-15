@@ -40,7 +40,7 @@ fn app_config() -> Config {
 }
 
 fn setup_player(mut commands: Commands, mut stat_accessor: StatAccessor) {
-    let player_entity = commands
+    commands
         .spawn((
             Player,
             stats! {
@@ -56,8 +56,7 @@ fn setup_player(mut commands: Commands, mut stat_accessor: StatAccessor) {
                 "EnergyShield.increased" => "(Intelligence / 10.0) * 0.02",
             },
             Name::new("Player"),
-        ))
-        .id();
+        ));
 
     println!("Player setup complete with attribute conversion modifiers.");
     println!("Initial attributes: Str: 25, Dex: 18, Int: 33");
