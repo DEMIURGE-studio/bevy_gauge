@@ -137,6 +137,10 @@ fn spawn_player(mut commands: Commands) {
 struct PlayerTag;
 ```
 
+**Important Note on Initialization Timing**:
+When you spawn an entity with a `Stats` component (either directly or via `StatsInitializer`), and then intend to immediately modify or read its stats using `StatAccessor` *within the same system invocation*, be aware of Bevy's command queue. The `Stats` component only becomes visible to `StatAccessor`'s internal queries after Bevy's commands have been applied (flushed). 
+This typically happens automatically between system stages or by explicitly calling `apply_deferred` after your spawning commands. `StatsInitializer` works seamlessly because its `OnAdd` trigger fires after the component is fully added and visible. For manual `StatAccessor` use on newly spawned entities within the same system, ensure proper ordering or use `apply_deferred`.
+
 ### The `stats!` Macro
 The `stats!` macro provides a convenient way to create a `StatsInitializer` component.
 
@@ -358,59 +362,126 @@ When an entity with a `Stats` component is despawned, Bevy handles the removal o
 
 ## Stat Requirements
 
-TODO This is NOT what StatRequirements is for.
-### The `StatRequirements` Component
-The `bevy_gauge::prelude::StatRequirements` component can be added to an entity to declare that it needs certain stats to be present and valid for some of its systems or logic to function correctly. This is more of a convention for your systems to check rather than something `bevy_gauge` strictly enforces on its own calculations.
+The `bevy_gauge::prelude::StatRequirements` component is a utility for game logic, not something that directly interacts with or is enforced by the stat calculation system itself. It allows you to define a list of conditions in the form of stat expressions (i.e., `"Strength >= 20"`) that your game systems can check to determine if an entity meets certain criteria. 
+
+Think of it as a checklist an entity must pass for certain actions or states to be valid. Each requirement is usually a string that can be evaluated as a boolean expression.
+
+### Using `StatRequirements`
+You add the component to an entity, populating it with expressions that should evaluate to true for the requirements to be met.
 
 ```rust
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
-fn spawn_warrior(mut commands: Commands) {
+fn spawn_mage(mut commands: Commands) {
     commands.spawn((
         Stats::new(),
-        stats! { /* ... initial stats ... */ },
-        // This warrior requires "Stamina" and "Rage" stats to be usable.
-        requires!["Stamina", "Rage"]
+        stats! {
+            "Intelligence.base" => 15.0,
+            "HasLearnedSpell_Fireball" => 1.0, // Using 1.0 for true
+            "Mana.current" => 50.0
+        },
+        // This mage requires Intelligence of at least 20 and the Fireball spell.
+        // It also needs at least 30 mana to cast a hypothetical powerful spell.
+        requires![
+            "Intelligence >= 20.0",
+            "HasLearnedSpell_Fireball == 1.0",
+            "Mana.current >= 30.0"
+        ]
     ));
 }
 ```
 
 ### The `requires!` Macro
-The `requires!` macro is a convenient way to create a `StatRequirements` component.
+The `requires!` macro is a convenient way to create a `StatRequirements` component with a list of requirement strings.
 
 ```rust
-requires!["Health", "Mana", "AttackPower.base"]
+requires!["Strength >= 15", "Agility >= 10", "Level > 5"]
 ```
-Your game systems can then query for entities `With<StatRequirements>` and check `StatAccessor::is_stat_valid` or `StatAccessor::evaluate` for these required stats before performing actions.
-
 ## Tags
 
 ### Concept
-Tags allow for fine-grained control over how modifiers apply and how stats are queried. They are useed with `Tagged` stat types. Tags are represented internally as `u32` bitmasks, allowing for combinations of tags.
+Tags allow for fine-grained control over how modifiers apply and how stats are queried, particularly with `Tagged` stat types. Tags are represented internally as `u32` bitmasks, allowing for combinations of tags by using bitwise operations (e.g., `FIRE | SWORD`). This system is powerful enough to create interactions similar to those found in games like Path of Exile, where modifiers can be general (e.g., "increased fire damage") or very specific (e.g., "increased fire damage with axes").
 
-For example, you might have tags for:
-*   Damage types (Fire = 1, Cold = 2, Physical = 4)
-*   Weapon types (Sword = 8, Axe = 16)
-*   Skills or effects
+### Defining Tags
+While you can define tags manually as `u32` constants (e.g., `const FIRE: u32 = 1; const AXE: u32 = 2;`), `bevy_gauge` provides a sophisticated macro, `define_tags!`, for this purpose, showcased in `src/tags.rs`. This macro allows you to define tags in hierarchical categories, automatically assigning unique bit values and generating constants for both individual tags and categories.
 
-A modifier might grant "+10% damage with Fire Swords". This would apply if the query or context has both the Fire tag and the Sword tag.
+A conceptual example based on the structure in `src/tags.rs`:
+```rust
+// In your project's tag definition file (e.g., my_game_tags.rs)
+stat_macros::define_tags! { // Assuming define_tags! is accessible
+    damage_type {      // Defines DAMAGE_TYPE category
+        elemental {    // Defines ELEMENTAL sub-category (part of DAMAGE_TYPE)
+            fire,      // Defines FIRE tag (part of ELEMENTAL)
+            cold,      // Defines COLD tag
+            lightning  // Defines LIGHTNING tag
+        },
+        physical,      // Defines PHYSICAL tag (part of DAMAGE_TYPE)
+        chaos,         // Defines CHAOS tag
+    },
+    weapon_type {      // Defines WEAPON_TYPE category
+        melee {        // Defines MELEE sub-category (part of WEAPON_TYPE)
+            sword,     // Defines SWORD tag
+            axe        // Defines AXE tag
+        },
+        ranged {       // Defines RANGED sub-category
+            bow,       // Defines BOW tag
+            wand       // Defines WAND tag
+        },
+    },
+}
+// This would generate u32 constants like FIRE, AXE, ELEMENTAL, WEAPON_TYPE, etc.
+```
+Using `define_tags!` is highly recommended for managing complex tag relationships. `src/tags.rs` also includes constants like `TAG_CATEGORIES` which lists the top-level categories generated by the macro.
 
-TODO Does not explain permissive vs strict. Does not explain tag categories (i.e., "fire" is "elemental")
-### Usage in Stat Paths
-Tags are appended to stat paths.
-*   `"Damage"`: Evaluates total damage considering all relevant tags or untagged modifiers.
-*   `"Damage.1"`: Evaluates total damage specifically for tag `1` (e.g., Fire).
-*   `"Damage.increased.3"`: Adds/queries an "increased" modifier for `Damage` that has both tag `1` (Fire) AND tag `2` (Cold) (since 1 | 2 = 3).
-*   `"Damage.base.Sword"`: If you have a string-to-tag mapping setup in your `Config` (not shown in current examples but a potential extension), you could use named tags. Otherwise, you'd use their numeric `u32` representation. The examples primarily use numeric tags.
+### Using Tags in Stat Paths
+When defining stat paths for `Tagged` stats, you use the numeric `u32` values of your defined tags or their bitwise OR'd combinations.
 
-When adding a modifier:
-`stat_accessor.add_modifier(entity, "Damage.increased.1", 0.20); // 20% increased damage with tag 1 (Fire)`
+*   **Path Structure**: `StatName.PartName.TagValue`
+    *   Example: `"Damage.increased.FIRE"` (if `FIRE` is a `u32` constant).
+    *   Example: `"Damage.more.FIRE|AXE"` (using bitwise OR for combined tags).
 
-When evaluating:
-`let fire_damage = stat_accessor.evaluate(entity, "Damage.1");`
+Currently, `StatPath::parse` expects numeric tag values. If you use string-based tags in your game logic (e.g., from data files), you'll need to convert them to their `u32` mask equivalents before constructing the stat path, potentially using helper functions or a map populated from your `define_tags!` output. The `src/tags.rs` file contains examples like `permissive_tag_from_str` and `build_permissive_mask` that can assist with such conversions.
 
-The `Tagged` stat type internally manages how these tagged modifiers combine.
+### Tag Matching Logic
+The core rule for determining if a tagged modifier applies during stat evaluation is:
+**A modifier applies if all of the modifier's own tags are present in the tags used for the query.**
+
+Let `modifier_tag` be the tag(s) the modifier was applied with, and `query_tag` be the tag(s) used when evaluating the stat. The condition is:
+`(query_tag & modifier_tag) == modifier_tag`
+
+**Implications & Examples:**
+
+*   **General Modifiers, Specific Queries (Permissive Application)**: A broadly tagged modifier can apply to a more specific situation.
+    *   Modifier: "+10% Fire Damage" (applied with tag `FIRE`).
+    *   Query Context: Evaluating damage for an attack that is "Fire" and "Axe" (querying with `FIRE | AXE`).
+    *   Logic: `((FIRE | AXE) & FIRE) == FIRE` which is `FIRE == FIRE` (True).
+    *   Result: The "+10% Fire Damage" modifier applies.
+
+*   **Specific Modifiers, General Queries (Strict Application)**: A very specific modifier will *not* apply to a general query.
+    *   Modifier: "+15% Fire Damage with Axes" (applied with `FIRE | AXE`).
+    *   Query Context: Evaluating generic "Fire Damage" (querying with `FIRE`).
+    *   Logic: `(FIRE & (FIRE | AXE)) == (FIRE | AXE)` which is `FIRE == (FIRE | AXE)` (False, unless `AXE` is 0).
+    *   Result: The "+15% Fire Damage with Axes" modifier does *not* apply.
+
+*   **Specific Modifiers, Matching or More Specific Queries**:
+    *   Modifier: "+15% Fire Damage with Axes" (applied with `FIRE | AXE`).
+    *   Query Context: Evaluating "Fire Damage with Axes" (querying with `FIRE | AXE`).
+    *   Result: Applies.
+    *   Query Context: Evaluating "Fire Damage with Magic Axes" (querying with `FIRE | AXE | MAGIC_TAG`).
+    *   Result: Applies.
+
+### Permissive Tags and Categories
+The `src/tags.rs` file also introduces concepts like `TAG_CATEGORIES` and helper functions (e.g., `build_permissive_tag`). These are designed to facilitate more complex "Path of Exile" style interactions where modifiers might apply based on broader categories. For instance, a modifier for "+X% Elemental Damage" (tagged with `ELEMENTAL`) should apply if the query involves `FIRE` (which is part of the `ELEMENTAL` category).
+
+The function `build_permissive_tag(tag_from_query)` aims to construct an effective `query_tag` that considers these categories. When such a permissive query tag is used in the fundamental matching logic `(permissive_query_tag & modifier_tag) == modifier_tag`, it allows for these category-based applications. Understanding the implementation of `build_permissive_tag` in `src/tags.rs` is key to leveraging this advanced functionality.
+
+For example, if `FIRE` is part of the `ELEMENTAL` category:
+*   A modifier for "+Y% Elemental Damage" is applied with `ELEMENTAL`.
+*   You perform an attack that is `FIRE | SWORD`.
+*   You might generate a `permissive_query_tag` using `build_permissive_tag(FIRE | SWORD_TAG)`. This function would ensure that the resulting `permissive_query_tag` correctly includes bits that allow the `ELEMENTAL` modifier to match.
+
+This system allows for a rich hierarchy of how modifiers apply, from very general (any elemental damage) to very specific (fire damage with an axe).
 
 ## Stat Types: Flat vs Modifiable vs Complex vs Tagged
 
@@ -457,7 +528,7 @@ use bevy_gauge::prelude::*;
 
 let mut modifiers = ModifierSet::default();
 modifiers.add("Health.base", 100.0);
-modifiers.add("Strength.base", Expression::new("10.0 + "Level" * 2.0").unwrap());
+modifiers.add("Strength.base", Expression::new("10.0 + Level * 2.0").unwrap());
 modifiers.add("Damage.increased.Fire", 0.25); // 25% increased Fire damage
 ```
 

@@ -99,10 +99,14 @@ impl Stats {
     ///
     /// An `f32` representing the evaluated stat value, or `0.0` if the path is invalid or an error occurs.
     pub fn get(&self, path: &str) -> f32 {
-        if self.cached_stats.get(path).is_err() {
-            self.cached_stats.set(path, self.evaluate(&StatPath::parse(path)));
+        match self.cached_stats.get(path) {
+            Ok(value) => value,
+            Err(_) => {
+                let value = self.evaluate(&StatPath::parse(path));
+                self.set_cached(path, value);
+                value
+            }
         }
-        self.cached_stats.get(path).unwrap_or(0.0)
     }
 
     pub(crate) fn set(&mut self, path: &str, base: f32) -> &mut Self {
@@ -126,8 +130,8 @@ impl Stats {
         self.dependents_map.add_dependent(stat, dependent);
     }
 
-    pub(crate) fn remove_dependent(&mut self, stat: &str, dependent: DependentType) {
-        self.dependents_map.remove_dependent(stat, dependent);
+    pub(crate) fn remove_dependent(&mut self, source_stat_name: &str, dependent_type: DependentType) {
+        self.dependents_map.remove_dependent(source_stat_name, dependent_type);
     }
 
     pub(crate) fn get_stat_dependents(&self, stat: &str) -> Vec<DependentType> {
@@ -151,8 +155,6 @@ impl Stats {
         };
 
         let value = stat_definition.evaluate(path, self);
-        // Note: self.set_cached updates Stats::cached_stats, not the StatType's internal cache like TaggedStat::query_cache
-        // This is for direct lookups via Stats::get later.
         self.set_cached(&path.full_path, value); 
         value
     }
@@ -169,7 +171,7 @@ impl Stats {
                 if let Some(source_alias_ref) = &parsed_var_path.target { // source_alias_ref is &String
                     let requirement = SourceRequirement {
                         path_on_source: parsed_var_path.without_target_as_string(),
-                        local_dependent: path.full_path.to_string(),
+                        local_dependent: path.name.to_string(),
                         path_in_expression: var_name_in_expr_str.to_string(),
                     };
                     self.source_requirements

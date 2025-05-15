@@ -137,7 +137,7 @@ impl StatAccessor<'_, '_> {
                                     source_entity_id,
                                     &path_on_source_str,
                                     target_entity,
-                                    path.full_path, // path_str is the stat on target being modified
+                                    path.full_path,
                                     &source_alias
                                 ));
                             } else {
@@ -156,7 +156,6 @@ impl StatAccessor<'_, '_> {
 
             // Phase 2: Write to target's Stats component (add modifier, cache source values) and register dependencies
             if let Ok(mut target_entity_stats_mut) = self.query.get_mut(target_entity) {
-                // Add the actual modifier to the target stat (e.g. TaggedStat.mods)
                 target_entity_stats_mut.add_modifier_value(&path, modifier.clone(), &self.config);
 
                 for (key, val) in values_from_sources_to_cache {
@@ -274,7 +273,16 @@ impl StatAccessor<'_, '_> {
             }
         }
 
-        for stat_update in target_stats_to_update {
+        // Ensure values for directly affected stats are correctly evaluated and in component cache using StatAccessor's full view
+        for update_info in &target_stats_to_update { // Iterate by reference first
+            let correct_value = self.evaluate(update_info.entity, &update_info.stat_path_on_dependent);
+            if let Ok(stats_comp) = self.query.get_mut(update_info.entity) {
+                stats_comp.set_cached(&update_info.stat_path_on_dependent, correct_value);
+            }
+        }
+
+        // Then, trigger recursive updates for these (and their further dependents)
+        for stat_update in target_stats_to_update { // Consumes the Vec target_stats_to_update
             // Invalidate the specific query cache for Tagged stats (and potentially other types)
             // before re-evaluating the stat.
             if let Ok(mut target_stats_mut) = self.query.get_mut(stat_update.entity) {
@@ -417,12 +425,15 @@ impl StatAccessor<'_, '_> {
             stats_comp_for_clear.clear_internal_cache_for_path(&path_obj_for_clear);
         }
 
-        let new_value = self.query.get(entity_updated).map_or(0.0, |stats_comp| {
-            let path = StatPath::parse(path_updated);
-            let value = stats_comp.evaluate(&path);
-            stats_comp.set_cached(path_updated, value);
-            value
-        });
+        // Evaluate using StatAccessor's own evaluate method
+        let new_value = self.evaluate(entity_updated, path_updated);
+
+        // Cache this new_value into the component's Stats
+        if let Ok(stats_comp) = self.query.get_mut(entity_updated) {
+            stats_comp.set_cached(path_updated, new_value);
+        }
+        // If query failed, new_value remains what self.evaluate returned (e.g. 0.0 if entity gone)
+        // but we couldn't cache it. This is probably fine as the entity might be despawning.
 
         let (cache_updates_needed, stat_updates_needed) = 
             self.collect_dependent_updates(entity_updated, path_updated, new_value);
@@ -437,7 +448,18 @@ impl StatAccessor<'_, '_> {
             }
         }
 
-        self.process_dependent_updates(stat_updates_needed, processed_for_this_call_chain);
+        // Explicitly evaluate and cache main dependent stats *after* their source components are cached.
+        for update in &stat_updates_needed {
+            let fully_evaluated_value = self.evaluate(update.entity, &update.stat_path_on_dependent);
+            if let Ok(stats_comp) = self.query.get_mut(update.entity) {
+                stats_comp.set_cached(&update.stat_path_on_dependent, fully_evaluated_value);
+            }
+        }
+
+        for update in &stat_updates_needed {
+            // This will further propagate to other dependents of these stats.
+            self.update_stat(update.entity, &update.stat_path_on_dependent);
+        }
     }
 
     fn collect_dependent_updates(
@@ -466,28 +488,6 @@ impl StatAccessor<'_, '_> {
             }
         }
         (cache_updates, stat_updates)
-    }
-
-    fn process_dependent_updates(&mut self, updates: Vec<StatUpdate>, processed: &mut HashSet<StatUpdate>) {
-        for update in updates {
-            if processed.contains(&update) {
-                continue;
-            }
-            // Note: We do not insert `update` into `processed` here.
-            // `update_stat_recursive` will handle adding its own entity/path to `processed` at its start.
-
-            // Attempt to clear internal cache of the dependent stat first
-            if let Ok(mut stats_comp) = self.query.get_mut(update.entity) {
-                let stat_path_obj = StatPath::parse(&update.stat_path_on_dependent);
-                stats_comp.clear_internal_cache_for_path(&stat_path_obj);
-            } else {
-                
-            }
-
-            // Now, recursively call update_stat for this dependent.
-            // update_stat_recursive will handle the evaluation, caching, and further propagation.
-            self.update_stat_recursive(update.entity, &update.stat_path_on_dependent, processed);
-        }
     }
 
     /// Applies all modifiers from a `ModifierSet` to the target entity.
@@ -607,8 +607,6 @@ impl StatAccessor<'_, '_> {
                             path: req.local_dependent.clone(), // The stat on target_entity that depended on the source
                             source_alias: alias_target_used_for_source.clone(), // The alias target_entity used for this source
                         };
-                        // Remove target_entity from the dependents_map of the actual_source_entity.
-                        // req.path_on_source is the stat on actual_source_entity that target_entity depended on.
                         actual_source_stats_mut.remove_dependent(&req.path_on_source, dependent_type_to_remove);
                     }
                 }
@@ -683,4 +681,187 @@ pub(crate) fn remove_stats(
 ) {
     let removed_entity = trigger.entity();
     stat_accessor.remove_stat_entity(removed_entity);
+}
+
+mod remove_stat_entity_tests {
+    use bevy::prelude::*;
+    use super::super::prelude::*;
+
+    #[derive(Debug, Clone, Eq, PartialEq, Hash, SystemSet)]
+    enum TestPhase {
+        Setup,
+        RegisterSources,
+        PreVerify,
+        Remove,
+        PostVerify,
+    }
+
+    #[derive(Resource, Default, Debug)]
+    struct TestEntities {
+        a: Option<Entity>,
+        b: Option<Entity>,
+        c: Option<Entity>,
+    }
+
+    const STAT_A_POWER: &str = "Power";
+    const STAT_A_BUFFED_POWER: &str = "BuffedPower";
+    const STAT_B_STRENGTH: &str = "Strength";
+    const STAT_C_BUFF: &str = "Buff";
+
+    const ALIAS_A_AS_SOURCE_FOR_B: &str = "SourceA";
+    const ALIAS_C_AS_SOURCE_FOR_A: &str = "SourceC";
+
+    fn setup_test_entities_for_removal(
+        mut commands: Commands,
+        mut test_entities: ResMut<TestEntities>,
+    ) {
+        let mut mods_a = ModifierSet::default();
+        mods_a.add(&format!("{}.base", STAT_A_POWER), 10.0f32);
+        let expr_a_buffed_power = Expression::new(&format!("{}@{} + {}", STAT_C_BUFF, ALIAS_C_AS_SOURCE_FOR_A, STAT_A_POWER))
+            .expect("Failed to create A_BuffedPower expression");
+        mods_a.add(&format!("{}.expr", STAT_A_BUFFED_POWER), expr_a_buffed_power);
+        let entity_a = commands.spawn((
+            Stats::new(), 
+            StatsInitializer::new(mods_a),
+            Name::new("EntityA")
+        )).id();
+
+        let mut mods_b = ModifierSet::default();
+        let expr_b_strength = Expression::new(&format!("{}@{} * 2.0", STAT_A_POWER, ALIAS_A_AS_SOURCE_FOR_B))
+            .expect("Failed to create B_Strength expression");
+        mods_b.add(&format!("{}.expr", STAT_B_STRENGTH), expr_b_strength);
+        let entity_b = commands.spawn((
+            Stats::new(),
+            StatsInitializer::new(mods_b),
+            Name::new("EntityB")
+        )).id();
+
+        let mut mods_c = ModifierSet::default();
+        mods_c.add(&format!("{}.base", STAT_C_BUFF), 5.0f32);
+        let entity_c = commands.spawn((
+            Stats::new(),
+            StatsInitializer::new(mods_c),
+            Name::new("EntityC")
+        )).id();
+
+        test_entities.a = Some(entity_a);
+        test_entities.b = Some(entity_b);
+        test_entities.c = Some(entity_c);
+    }
+
+    fn register_initial_sources(
+        mut stat_accessor: StatAccessor,
+        test_entities: Res<TestEntities>,
+    ) {
+        let entity_a = test_entities.a.expect("Entity A missing in register_initial_sources");
+        let entity_b = test_entities.b.expect("Entity B missing in register_initial_sources");
+        let entity_c = test_entities.c.expect("Entity C missing in register_initial_sources");
+
+        stat_accessor.register_source(entity_b, ALIAS_A_AS_SOURCE_FOR_B, entity_a);
+        stat_accessor.register_source(entity_a, ALIAS_C_AS_SOURCE_FOR_A, entity_c);
+    }
+
+    fn pre_removal_verification(
+        test_entities: Res<TestEntities>,
+        query: Query<&Stats>,
+    ) {
+        let entity_a = test_entities.a.unwrap();
+        let entity_b = test_entities.b.unwrap();
+        let entity_c = test_entities.c.unwrap();
+
+        let [stats_a, stats_b, stats_c] = query.get_many([entity_a, entity_b, entity_c]).unwrap();
+
+        assert_eq!(stats_b.get(STAT_B_STRENGTH), 20.0, "Initial B.Strength");
+        assert_eq!(stats_a.get(STAT_A_BUFFED_POWER), 15.0, "Initial A.BuffedPower");
+
+        assert!(stats_b.sources.contains_key(ALIAS_A_AS_SOURCE_FOR_B), "B.sources should contain SourceA");
+        assert_eq!(stats_b.sources.get(ALIAS_A_AS_SOURCE_FOR_B), Some(&entity_a), "B.sources[SourceA] should be entity_A");
+        
+        let cached_key_b = format!("{}@{}", STAT_A_POWER, ALIAS_A_AS_SOURCE_FOR_B);
+        assert_eq!(stats_b.get(&cached_key_b), 10.0, "B's cache for A.Power@SourceA");
+
+        let c_dependents_on_buff = stats_c.get_stat_dependents(STAT_C_BUFF);
+        
+        let expected_dependent_on_c = DependentType::EntityStat {
+            entity: entity_a,
+            path: STAT_A_BUFFED_POWER.to_string(),
+            source_alias: ALIAS_C_AS_SOURCE_FOR_A.to_string(),
+        };
+        assert!(
+            c_dependents_on_buff.contains(&expected_dependent_on_c),
+            "C.dependents_map for C_Buff should contain EntityA's BuffedPower. Found: {:?}", c_dependents_on_buff
+        );
+    }
+
+    fn do_remove_entity_a(
+        test_entities: Res<TestEntities>,
+        mut stat_accessor: StatAccessor,
+    ) {
+        let entity_a = test_entities.a.unwrap();
+        stat_accessor.remove_stat_entity(entity_a);
+    }
+
+    fn post_removal_verification(
+        test_entities: Res<TestEntities>,
+        stat_accessor: StatAccessor,
+    ) {
+        let entity_b = test_entities.b.unwrap();
+        let entity_c = test_entities.c.unwrap();
+
+        let stats_b = stat_accessor.get_stats(entity_b).expect("Entity B should still have Stats");
+
+        assert!(!stats_b.sources.values().any(|&id| id == test_entities.a.unwrap()), "B.sources should not contain entity_A anymore");
+        if let Some(source_entity_for_alias) = stats_b.sources.get(ALIAS_A_AS_SOURCE_FOR_B) {
+            assert_ne!(*source_entity_for_alias, test_entities.a.unwrap(), "B.sources[SourceA] should no longer be entity_A");
+        }
+
+        let cached_key_b = format!("{}@{}", STAT_A_POWER, ALIAS_A_AS_SOURCE_FOR_B);
+        assert_eq!(stats_b.get(&cached_key_b), 0.0, "B's cache for A.Power@SourceA should be 0.0 after A removed");
+        
+        assert_eq!(stat_accessor.evaluate(entity_b, STAT_B_STRENGTH), 0.0, "B.Strength after A removed");
+
+        let stats_c = stat_accessor.get_stats(entity_c).expect("Entity C should still have Stats");
+        let c_dependents_on_buff = stats_c.get_stat_dependents(STAT_C_BUFF);
+        
+        let removed_dependent_on_c = DependentType::EntityStat {
+            entity: test_entities.a.unwrap(),
+            path: STAT_A_BUFFED_POWER.to_string(),
+            source_alias: ALIAS_C_AS_SOURCE_FOR_A.to_string(),
+        };
+        assert!(
+            !c_dependents_on_buff.contains(&removed_dependent_on_c),
+            "C.dependents_map for C_Buff should no longer list EntityA. Found: {:?}", c_dependents_on_buff
+        );
+    }
+
+    #[test]
+    fn test_remove_stat_entity_full_cleanup() {
+        let mut app = App::new();
+
+        let mut config = Config::default();
+        config.register_stat_type(STAT_A_POWER, "Modifiable");
+        config.register_stat_type(STAT_A_BUFFED_POWER, "Modifiable");
+        config.register_stat_type(STAT_B_STRENGTH, "Modifiable");
+        config.register_stat_type(STAT_C_BUFF, "Modifiable");
+        app.insert_resource(config);
+
+        app.add_plugins(super::super::plugin);
+        app.init_resource::<TestEntities>();
+
+        app.add_systems(Update, 
+            (
+                setup_test_entities_for_removal.in_set(TestPhase::Setup),
+                apply_deferred.after(TestPhase::Setup).before(TestPhase::RegisterSources),
+                register_initial_sources.in_set(TestPhase::RegisterSources),
+                apply_deferred.after(TestPhase::RegisterSources).before(TestPhase::PreVerify),
+                pre_removal_verification.in_set(TestPhase::PreVerify),
+                apply_deferred.after(TestPhase::PreVerify).before(TestPhase::Remove),
+                do_remove_entity_a.in_set(TestPhase::Remove),
+                apply_deferred.after(TestPhase::Remove).before(TestPhase::PostVerify),
+                post_removal_verification.in_set(TestPhase::PostVerify),
+            ).chain()
+        );
+        
+        app.update();
+    }
 }
