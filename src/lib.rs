@@ -121,6 +121,7 @@ pub mod stat_types;
 pub mod stats_component;
 pub mod systems;
 pub mod tags;
+pub mod konfig;
 
 /// The main Bevy plugin for `bevy_gauge`.
 ///
