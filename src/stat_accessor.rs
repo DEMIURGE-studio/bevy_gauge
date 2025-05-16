@@ -684,7 +684,6 @@ pub(crate) fn remove_stats(
 
 mod remove_stat_entity_tests {
     use bevy::prelude::*;
-    use crate::konfig::KONFIG;
 
     use super::super::prelude::*;
 
@@ -839,11 +838,10 @@ mod remove_stat_entity_tests {
     fn test_remove_stat_entity_full_cleanup() {
         let mut app = App::new();
 
-        let mut config = KONFIG.write().unwrap();
-        config.register_stat_type(STAT_A_POWER, "Modifiable");
-        config.register_stat_type(STAT_A_BUFFED_POWER, "Modifiable");
-        config.register_stat_type(STAT_B_STRENGTH, "Modifiable");
-        config.register_stat_type(STAT_C_BUFF, "Modifiable");
+        Konfig::register_stat_type(STAT_A_POWER, "Modifiable");
+        Konfig::register_stat_type(STAT_A_BUFFED_POWER, "Modifiable");
+        Konfig::register_stat_type(STAT_B_STRENGTH, "Modifiable");
+        Konfig::register_stat_type(STAT_C_BUFF, "Modifiable");
 
         app.add_plugins(super::super::plugin);
         app.init_resource::<TestEntities>();

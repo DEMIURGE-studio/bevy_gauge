@@ -33,20 +33,19 @@
 //!     use bevy::prelude::*;
 //!     use bevy_gauge::prelude::*;
 //!
-//!     fn setup_stats(mut config: ResMut<Config>) {
-//!         config.register_stat_type("Health", "Modifiable"); // Max health
-//!         config.register_total_expression("Health", "base"); // Total is just its base
+//!     fn setup_config() {
+//!         Konfig::register_stat_type("Health", "Modifiable"); // Max health
+//!         Konfig::register_total_expression("Health", "base"); // Total is just its base
 //!
-//!         config.register_stat_type("Damage", "Tagged");
-//!         config.register_total_expression("Damage", "base * (1.0 + increased) * more");
+//!         Konfig::register_stat_type("Damage", "Tagged");
+//!         Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more");
 //!     }
 //!
 //!     fn main() {
+//!         setup_config();   
 //!         App::new()
 //!             .add_plugins(DefaultPlugins)
 //!             .add_plugins(bevy_gauge::plugin)
-//!             .init_resource::<Config>() // Initialize the Config resource
-//!             .add_systems(Startup, setup_stats) // Configure stats at startup
 //!             // ...
 //!             .run();
 //!     }

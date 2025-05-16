@@ -8,6 +8,18 @@ fn setup_app() -> App {
     app
 }
 
+fn setup_health_config() {
+    Konfig::reset_for_test(); // Ensure clean state
+    Konfig::register_stat_type("Health", "Complex");
+    Konfig::register_total_expression("Health", "base + bonus - reduction");
+}
+
+fn setup_damage_config() {
+    Konfig::reset_for_test(); // Ensure clean state
+    Konfig::register_stat_type("Damage", "Complex");
+    Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more");
+}
+
 #[test]
 fn test_basic_stats_initialization() {
     let mut app = setup_app();
@@ -43,10 +55,9 @@ fn test_initialization_with_expressions() {
     let mut app = setup_app();
 
     // Configure a stat that uses an expression
-    let mut config = KONFIG.write().unwrap();
-    config.register_stat_type("Power", "Complex"); // Assuming Flat allows expressions on .base or we define a part
-    config.register_total_expression("Power", "base + bonus");
-    config.register_stat_type("Stamina", "Flat");
+    Konfig::register_stat_type("Power", "Complex"); // Assuming Flat allows expressions on .base or we define a part
+    Konfig::register_total_expression("Power", "base + bonus");
+    Konfig::register_stat_type("Stamina", "Flat");
 
     let mut initial_mods = ModifierSet::default();
     initial_mods.add("Stamina.base", 20.0);
@@ -93,11 +104,10 @@ fn test_initializer_on_entity_without_stats_component_initially() {
 fn test_initialization_with_source_dependency() {
     let mut app = setup_app();
 
-    let mut config = KONFIG.write().unwrap();
-    config.register_stat_type("Strength", "Flat"); // Source stat
-    config.register_stat_type("AttackPower", "Complex"); // Target stat uses Complex
+    Konfig::register_stat_type("Strength", "Flat"); // Source stat
+    Konfig::register_stat_type("AttackPower", "Complex"); // Target stat uses Complex
     // Total expression refers to local parts of AttackPower
-    config.register_total_expression("AttackPower", "base * bonus");
+    Konfig::register_total_expression("AttackPower", "base * bonus");
 
     // Source Entity
     let mut source_mods = ModifierSet::default();
@@ -131,4 +141,14 @@ fn test_initialization_with_source_dependency() {
 
     assert!(app.world().get::<StatsInitializer>(source_entity).is_none(), "Source StatsInitializer should be removed.");
     assert!(app.world().get::<StatsInitializer>(target_entity).is_none(), "Target StatsInitializer should be removed.");
+}
+
+#[test]
+fn test_stats_initializer_applies_modifiers_correctly() {
+    // ... existing code ...
+}
+
+#[test]
+fn test_stats_initializer_complex_stat_application() {
+    // ... existing code ...
 } 

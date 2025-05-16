@@ -6,7 +6,6 @@ use bevy_gauge::prelude::*;
 fn setup_app_for_bench() -> (App, Entity) {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    app.insert_resource(Config::default());
     app.add_plugins(bevy_gauge::plugin);
     let entity = app.world_mut().spawn(Stats::new()).id();
     (app, entity)
@@ -16,7 +15,6 @@ fn setup_app_for_bench() -> (App, Entity) {
 fn setup_app_with_entities_for_bench(count: usize) -> (App, Vec<Entity>) {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    app.insert_resource(Config::default());
     app.add_plugins(bevy_gauge::plugin);
     let entities = (0..count)
         .map(|_| app.world_mut().spawn(Stats::new()).id())
@@ -124,10 +122,8 @@ pub fn bench_tag_based_stats(c: &mut Criterion) {
             let (mut app, entity) = setup_app_for_bench();
             
             // Setup Config for Tagged "Damage" stat
-            let mut config = Config::default();
-            config.register_stat_type("Damage", "Tagged");
-            config.register_total_expression("Damage", "base * (1.0 + increased) + added");
-            app.world_mut().insert_resource(config); // Overwrite default
+            Konfig::register_stat_type("Damage", "Tagged");
+            Konfig::register_total_expression("Damage", "base * (1.0 + increased) + added");
 
             let el = entity; // Copy for closure
             let tc = tag_count; // Copy for closure
@@ -303,8 +299,7 @@ pub fn bench_many_modifiers_on_stat(c: &mut Criterion) {
                 }
             });
             // Ensure "Power" is Modifiable
-            let mut config = app.world_mut().resource_mut::<Config>();
-            config.register_stat_type("Power", "Modifiable");
+            Konfig::register_stat_type("Power", "Modifiable");
             app.update();
             
             b.iter(|| {

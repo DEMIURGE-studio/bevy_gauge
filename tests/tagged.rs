@@ -4,16 +4,16 @@ use bevy_gauge::prelude::*;
 
 // Helper function to create a basic config for testing
 fn create_test_config()  {
-    let mut config = KONFIG.write().unwrap();
+    Konfig::reset_for_test(); // Ensure clean state
     // Configure for a damage stat with base/increased/more parts
-    config.register_stat_type("Damage", "Tagged");
-    config.register_total_expression("Damage", "base * (1 + increased) * more");
+    Konfig::register_stat_type("Damage", "Tagged");
+    Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more"); // Ensure 1.0 for float context
 }
 
 // New config for Modifiable "Power" stat
 fn create_modifiable_power_config() {
-    let mut config = KONFIG.write().unwrap();
-    config.register_stat_type("Power", "Modifiable");
+    Konfig::reset_for_test(); // Ensure clean state
+    Konfig::register_stat_type("Power", "Modifiable");
 }
 
 #[test]

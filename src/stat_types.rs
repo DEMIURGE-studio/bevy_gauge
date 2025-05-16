@@ -1,6 +1,5 @@
 use bevy::utils::HashMap;
 use evalexpr::{ContextWithMutableVariables, Value, IterateVariablesContext, Context};
-use crate::konfig::KONFIG;
 
 use super::prelude::*;
 use dashmap::DashMap;
@@ -42,14 +41,13 @@ pub(crate) enum StatType {
 
 impl Stat for StatType {
     fn new(path: &StatPath) -> Self {
-        let config = KONFIG.read().unwrap();
-        let stat_type = config.get_stat_type(path);
-        match stat_type {
+        let stat_type_name = Konfig::get_stat_type(path.name);
+        match stat_type_name.as_str() {
             "Flat" => StatType::Flat(Flat::new(path)),
             "Modifiable" => StatType::Modifiable(Modifiable::new(path)),
             "Complex" => StatType::Complex(Complex::new(path)),
             "Tagged" => StatType::Tagged(Tagged::new(path)),
-            _ => panic!("Invalid stat type!"),
+            _ => panic!("Invalid stat type: {}", stat_type_name),
         }
     }
 
@@ -169,8 +167,7 @@ pub(crate) struct Modifiable {
 
 impl Stat for Modifiable {
     fn new(path: &StatPath) -> Self {
-        let config = KONFIG.read().unwrap();
-        let relationship = config.get_relationship_type(path);
+        let relationship = Konfig::get_relationship_type(path.name);
         let base = if relationship == ModType::Mul { 1.0 } else { 0.0 };
         Self { relationship, base, mods: Vec::new() }
     }
@@ -254,9 +251,8 @@ pub(crate) struct Complex {
 
 impl Stat for Complex {
     fn new(path: &StatPath) -> Self {
-        let config = KONFIG.read().unwrap();
-        let total_expression = config.get_total_expression(path);
-        let compiled_expression = Expression::new(total_expression).unwrap();
+        let total_expression_str = Konfig::get_total_expression(path.name);
+        let compiled_expression = Expression::new(&total_expression_str).unwrap_or_else(|e| panic!("Failed to compile total_expression for {}: {} - Error: {}", path.name, total_expression_str, e));
 
         let mut modifier_steps = HashMap::new();
         for part in compiled_expression.compiled.iter_identifiers() {
@@ -412,9 +408,8 @@ impl Tagged {
 
 impl Stat for Tagged {
     fn new(path: &StatPath) -> Self {
-        let config = KONFIG.read().unwrap();
-        let total_expression = config.get_total_expression(path);
-        let compiled_expression = Expression::new(total_expression).unwrap();
+        let total_expression_str = Konfig::get_total_expression(path.name);
+        let compiled_expression = Expression::new(&total_expression_str).unwrap_or_else(|e| panic!("Failed to compile total_expression for {}: {} - Error: {}", path.name, total_expression_str, e));
 
         let mut modifier_steps = HashMap::new();
         for part in compiled_expression.compiled.iter_identifiers() {

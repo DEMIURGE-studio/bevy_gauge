@@ -4,10 +4,10 @@ use bevy_gauge::prelude::*;
 // --- Setup --- //
 
 fn main() {
+    app_config();
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin)
-        .insert_resource(app_config())
         .add_systems(Startup, (spawn_entities, apply_deferred).chain())
         .add_systems(
             Update,
@@ -20,17 +20,13 @@ fn main() {
         .run();
 }
 
-fn app_config() -> Config {
-    let mut config = Config::default();
-
+fn app_config() {
     // Parent's Strength (Modifiable)
     // No total_expression needed, defaults to its base value after modifiers.
-    config.register_stat_type("Strength", "Modifiable");
+    Konfig::register_stat_type("Strength", "Modifiable");
 
     // Child's Bonus
-    config.register_stat_type("ChildBonus", "Modifiable");
-
-    config
+    Konfig::register_stat_type("ChildBonus", "Modifiable");
 }
 
 fn spawn_entities(mut commands: Commands) {

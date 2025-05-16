@@ -9,34 +9,30 @@ struct Player;
 // --- Setup --- //
 
 fn main() {
+    app_config();
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin)
-        .insert_resource(app_config())
         .add_systems(Startup, setup_player)
         .add_systems(Update, get_stats_system)
         .run();
 }
 
-fn app_config() -> Config {
-    let mut config = Config::default();
-
+fn app_config() {
     // Core Attributes (Modifiable)
     // No need to register total_expression, defaults to its base value after modifiers.
-    config.register_stat_type("Strength", "Modifiable");
-    config.register_stat_type("Dexterity", "Modifiable");
-    config.register_stat_type("Intelligence", "Modifiable");
+    Konfig::register_stat_type("Strength", "Modifiable");
+    Konfig::register_stat_type("Dexterity", "Modifiable");
+    Konfig::register_stat_type("Intelligence", "Modifiable");
 
     // Derived Stats (Modifiable)
     // These will have their base values modified by expressions derived from core attributes.
-    config.register_stat_type("Life", "Complex");
-    config.register_stat_type("Damage", "Tagged");
-    config.register_stat_type("Accuracy", "Complex");
-    config.register_stat_type("Evasion", "Complex");
-    config.register_stat_type("Mana", "Complex");
-    config.register_stat_type("EnergyShield", "Complex");
-
-    config
+    Konfig::register_stat_type("Life", "Complex");
+    Konfig::register_stat_type("Damage", "Tagged");
+    Konfig::register_stat_type("Accuracy", "Complex");
+    Konfig::register_stat_type("Evasion", "Complex");
+    Konfig::register_stat_type("Mana", "Complex");
+    Konfig::register_stat_type("EnergyShield", "Complex");
 }
 
 fn setup_player(mut commands: Commands) {
