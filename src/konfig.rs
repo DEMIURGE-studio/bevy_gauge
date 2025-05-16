@@ -2,6 +2,8 @@ use once_cell::sync::Lazy;
 use std::sync::{RwLock, Mutex};
 use std::collections::HashMap;
 use super::prelude::*;
+use regex::Regex;
+use serial_test::serial;
 
 // The actual Konfig data, protected by an RwLock for concurrent reads.
 pub static KONFIG_DATA: Lazy<RwLock<Konfig>> = Lazy::new(|| {
@@ -14,79 +16,145 @@ pub static KONFIG_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| {
 });
 
 pub struct Konfig {
-    stat_types: HashMap<String, String>,
-    relationship_types: HashMap<String, ModType>,
-    total_expressions: HashMap<String, String>,
+    // Stat Types
+    stat_types_map: HashMap<String, String>,
+    stat_types_regex_rules: Vec<(Regex, String)>,
+    stat_types_default: String,
+
+    // Relationship Types
+    relationship_types_map: HashMap<String, ModType>,
+    relationship_types_regex_rules: Vec<(Regex, ModType)>,
+    relationship_types_default: ModType,
+
+    // Total Expressions
+    total_expressions_map: HashMap<String, String>,
+    total_expressions_regex_rules: Vec<(Regex, String)>,
+    total_expressions_default: String,
 }
 
 impl Konfig {
-    // Renamed to new_internal to avoid conflict with a potential public new if ever needed.
     fn new_internal() -> Self {
         Self {
-            stat_types: HashMap::new(),
-            relationship_types: HashMap::new(),
-            total_expressions: HashMap::new(),
+            // Stat Types
+            stat_types_map: HashMap::new(),
+            stat_types_regex_rules: Vec::new(),
+            stat_types_default: "Modifiable".to_string(),
+
+            // Relationship Types
+            relationship_types_map: HashMap::new(),
+            relationship_types_regex_rules: Vec::new(),
+            relationship_types_default: ModType::Add,
+
+            // Total Expressions
+            total_expressions_map: HashMap::new(),
+            total_expressions_regex_rules: Vec::new(),
+            total_expressions_default: "0".to_string(),
         }
     }
 
-    // Internal methods for direct mutation, only called when write lock is held.
-    fn internal_register_stat_type(&mut self, stat: &str, stat_type: &str) {
-        self.stat_types.insert(stat.to_string(), stat_type.to_string());
+    // --- Stat Type Methods ---
+    pub fn get_stat_type(path_key: &str) -> String {
+        let reader = KONFIG_DATA.read().unwrap();
+        if let Some(value) = reader.stat_types_map.get(path_key) {
+            return value.clone();
+        }
+        for (regex, value) in &reader.stat_types_regex_rules {
+            if regex.is_match(path_key) {
+                return value.clone();
+            }
+        }
+        reader.stat_types_default.clone()
     }
 
-    fn internal_register_relationship_type(&mut self, stat: &str, relationship: ModType) {
-        self.relationship_types.insert(stat.to_string(), relationship);
-    }
-    
-    fn internal_register_total_expression(&mut self, stat: &str, expression: &str) {
-        self.total_expressions.insert(stat.to_string(), expression.to_string());
-    }
-
-    // Public read accessors - these use the KONFIG_DATA RwLock directly.
-    // Note: These are now associated functions, not methods on &self.
-    pub fn get_stat_type(path: &str) -> String {
-        KONFIG_DATA.read().unwrap()
-            .stat_types
-            .get(path)
-            .map(|s| s.clone())
-            .unwrap_or_else(|| "Modifiable".to_string()) 
-    }
-
-    pub fn get_relationship_type(path: &str) -> ModType {
-        KONFIG_DATA.read().unwrap()
-            .relationship_types
-            .get(path)
-            .unwrap_or(&ModType::Add) // Default to Add if not specified
-            .clone()
-    }
-    
-    pub fn get_total_expression(path: &str) -> String {
-        KONFIG_DATA.read().unwrap()
-            .total_expressions
-            .get(path)
-            .map(|s| s.clone())
-            .unwrap_or_else(|| "0".to_string()) // Default to "0" if not specified
-    }
-
-    // Public write accessors - these use the KONFIG_WRITE_LOCK first, then KONFIG_DATA's write lock.
     pub fn register_stat_type(stat: &str, stat_type: &str) {
-        let _write_serialization_guard = KONFIG_WRITE_LOCK.lock().unwrap();
-        let mut konfig_writer = KONFIG_DATA.write().unwrap();
-        konfig_writer.internal_register_stat_type(stat, stat_type);
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.stat_types_map.insert(stat.to_string(), stat_type.to_string());
     }
 
-    pub fn register_relationship_type(stat: &str, relationship: ModType) {
-        let _write_serialization_guard = KONFIG_WRITE_LOCK.lock().unwrap();
-        let mut konfig_writer = KONFIG_DATA.write().unwrap();
-        konfig_writer.internal_register_relationship_type(stat, relationship);
+    pub fn register_stat_type_regex(pattern: &str, value: &str) -> Result<(), regex::Error> {
+        let regex = Regex::new(pattern)?;
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.stat_types_regex_rules.push((regex, value.to_string()));
+        Ok(())
     }
-    
+
+    pub fn set_stat_type_default(default_value: &str) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.stat_types_default = default_value.to_string();
+    }
+
+    // --- Relationship Type Methods ---
+    pub fn get_relationship_type(path_key: &str) -> ModType {
+        let reader = KONFIG_DATA.read().unwrap();
+        if let Some(value) = reader.relationship_types_map.get(path_key) {
+            return value.clone();
+        }
+        for (regex, value) in &reader.relationship_types_regex_rules {
+            if regex.is_match(path_key) {
+                return value.clone();
+            }
+        }
+        reader.relationship_types_default.clone()
+    }
+
+    pub fn register_relationship_type(stat_path_part: &str, relationship: ModType) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.relationship_types_map.insert(stat_path_part.to_string(), relationship);
+    }
+
+    pub fn register_relationship_type_regex(pattern: &str, value: ModType) -> Result<(), regex::Error> {
+        let regex = Regex::new(pattern)?;
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.relationship_types_regex_rules.push((regex, value));
+        Ok(())
+    }
+
+    pub fn set_relationship_type_default(default_value: ModType) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.relationship_types_default = default_value;
+    }
+
+    // --- Total Expression Methods ---
+    pub fn get_total_expression(path_key: &str) -> String {
+        let reader = KONFIG_DATA.read().unwrap();
+        if let Some(value) = reader.total_expressions_map.get(path_key) {
+            return value.clone();
+        }
+        for (regex, value) in &reader.total_expressions_regex_rules {
+            if regex.is_match(path_key) {
+                return value.clone();
+            }
+        }
+        reader.total_expressions_default.clone()
+    }
+
     pub fn register_total_expression(stat: &str, expression: &str) {
-        let _write_serialization_guard = KONFIG_WRITE_LOCK.lock().unwrap();
-        let mut konfig_writer = KONFIG_DATA.write().unwrap();
-        konfig_writer.internal_register_total_expression(stat, expression);
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.total_expressions_map.insert(stat.to_string(), expression.to_string());
+    }
+
+    pub fn register_total_expression_regex(pattern: &str, value: &str) -> Result<(), regex::Error> {
+        let regex = Regex::new(pattern)?;
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.total_expressions_regex_rules.push((regex, value.to_string()));
+        Ok(())
+    }
+
+    pub fn set_total_expression_default(default_value: &str) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.total_expressions_default = default_value.to_string();
     }
     
+    // --- Test Utility ---
     pub fn reset_for_test() {
         let _write_serialization_guard = KONFIG_WRITE_LOCK.lock().unwrap();
         let mut konfig_writer = KONFIG_DATA.write().unwrap();
@@ -94,23 +162,37 @@ impl Konfig {
     }
 }
 
-// Removed the old static KONFIG and the direct impl Default for Konfig as it's handled internally now.
-
 #[cfg(test)]
 mod tests {
-    use super::*; // Imports Konfig (struct and its static methods), ModType, StatPath
+    use super::*;
 
     #[test]
+    #[serial]
     fn test_konfig_access_and_registration() {
         Konfig::reset_for_test();
 
-        Konfig::register_stat_type("Health", "Vitality");
+        Konfig::register_stat_type("Health", "Complex");
         Konfig::register_relationship_type("Strength", ModType::Mul);
-        Konfig::register_total_expression("Mana", "BaseMana + Intellect * 5");
+        Konfig::register_total_expression("Mana", "base * (1 + increased)");
 
-        assert_eq!(Konfig::get_stat_type("Health"), "Vitality");
+        assert_eq!(Konfig::get_stat_type("Health"), "Complex");
         assert_eq!(Konfig::get_relationship_type("Strength"), ModType::Mul);
-        assert_eq!(Konfig::get_total_expression("Mana"), "BaseMana + Intellect * 5");
-        assert_eq!(Konfig::get_stat_type("Damage"), "Modifiable");
+        assert_eq!(Konfig::get_total_expression("Mana"), "base * (1 + increased)");
+        assert_eq!(Konfig::get_stat_type("Dexterity"), "Modifiable"); // Checks default
+    }
+
+    #[test]
+    #[serial]
+    fn test_stat_type_regex_and_default() {
+        Konfig::reset_for_test();
+        Konfig::set_stat_type_default("CustomDefault");
+        Konfig::register_stat_type_regex(r"\.\d+$", "Complex").unwrap();
+        Konfig::register_stat_type_regex(r"(?i)(current)", "Flat").unwrap();
+        Konfig::register_stat_type_regex(r"(?i)(base|added|increased)", "Complex").unwrap();
+        Konfig::register_stat_type("CurrentBananas", "Complex");
+
+        assert_eq!(Konfig::get_stat_type("CurrentLife"), "Flat"); // Regex match
+        assert_eq!(Konfig::get_stat_type("CurrentBananas"), "Complex"); // Exact match
+        assert_eq!(Konfig::get_stat_type("SomeOtherStat"), "CustomDefault"); // Default match
     }
 } 
