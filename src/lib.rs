@@ -93,10 +93,6 @@
 #![feature(sync_unsafe_cell)]
 #![feature(associated_type_defaults)]
 
-// TODO track dependencies both ways
-
-// TODO Rewrite Tagged stats to support query caching
-
 use prelude::*;
 use bevy::prelude::*;
 
