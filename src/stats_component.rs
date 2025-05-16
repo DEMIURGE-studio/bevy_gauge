@@ -159,7 +159,7 @@ impl Stats {
         value
     }
 
-    pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
+    pub(crate) fn add_modifier_value(&mut self, path: &StatPath, modifier: ModifierType) {
         let base_stat_name = path.name; // base_stat_name is &String
 
         if let ModifierType::Expression(ref expression_details) = modifier {
@@ -183,10 +183,10 @@ impl Stats {
         }
 
         if let Some(stat) = self.definitions.get_mut(base_stat_name) { // Pass &String directly
-            stat.add_modifier(path, modifier, config);
+            stat.add_modifier(path, modifier);
         } else {
-            let mut new_stat = StatType::new(path, config);
-            new_stat.add_modifier(path, modifier, config);
+            let mut new_stat = StatType::new(path);
+            new_stat.add_modifier(path, modifier);
             self.definitions.insert(base_stat_name.to_string(), new_stat);
         }
     }

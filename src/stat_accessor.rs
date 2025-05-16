@@ -14,7 +14,6 @@ use super::prelude::*;
 /// registering dependencies between entities (sources), and managing the lifecycle of stats.
 pub struct StatAccessor<'w, 's> {
     query: Query<'w, 's, &'static mut Stats>,
-    config: Res<'w, Config>,
 }
 
 /// Represents a cache key update needed in a dependent entity.
@@ -156,7 +155,7 @@ impl StatAccessor<'_, '_> {
 
             // Phase 2: Write to target's Stats component (add modifier, cache source values) and register dependencies
             if let Ok(mut target_entity_stats_mut) = self.query.get_mut(target_entity) {
-                target_entity_stats_mut.add_modifier_value(&path, modifier.clone(), &self.config);
+                target_entity_stats_mut.add_modifier_value(&path, modifier.clone());
 
                 for (key, val) in values_from_sources_to_cache {
                     target_entity_stats_mut.cache_stat(&key, val);
@@ -172,7 +171,7 @@ impl StatAccessor<'_, '_> {
 
         } else { // Modifier is Literal, no source dependencies to handle here regarding caching or reverse map.
             if let Ok(mut stats_comp) = self.query.get_mut(target_entity) {
-                stats_comp.add_modifier_value(&path, modifier.clone(), &self.config);
+                stats_comp.add_modifier_value(&path, modifier.clone());
             } else {
                 return;
             }
@@ -685,6 +684,8 @@ pub(crate) fn remove_stats(
 
 mod remove_stat_entity_tests {
     use bevy::prelude::*;
+    use crate::konfig::KONFIG;
+
     use super::super::prelude::*;
 
     #[derive(Debug, Clone, Eq, PartialEq, Hash, SystemSet)]
@@ -838,12 +839,11 @@ mod remove_stat_entity_tests {
     fn test_remove_stat_entity_full_cleanup() {
         let mut app = App::new();
 
-        let mut config = Config::default();
+        let mut config = KONFIG.write().unwrap();
         config.register_stat_type(STAT_A_POWER, "Modifiable");
         config.register_stat_type(STAT_A_BUFFED_POWER, "Modifiable");
         config.register_stat_type(STAT_B_STRENGTH, "Modifiable");
         config.register_stat_type(STAT_C_BUFF, "Modifiable");
-        app.insert_resource(config);
 
         app.add_plugins(super::super::plugin);
         app.init_resource::<TestEntities>();

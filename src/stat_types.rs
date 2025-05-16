@@ -1,5 +1,7 @@
 use bevy::utils::HashMap;
 use evalexpr::{ContextWithMutableVariables, Value, IterateVariablesContext, Context};
+use crate::konfig::KONFIG;
+
 use super::prelude::*;
 use dashmap::DashMap;
 
@@ -39,13 +41,14 @@ pub(crate) enum StatType {
 }
 
 impl Stat for StatType {
-    fn new(path: &StatPath, config: &Config) -> Self {
+    fn new(path: &StatPath) -> Self {
+        let config = KONFIG.read().unwrap();
         let stat_type = config.get_stat_type(path);
         match stat_type {
-            "Flat" => StatType::Flat(Flat::new(path, config)),
-            "Modifiable" => StatType::Modifiable(Modifiable::new(path, config)),
-            "Complex" => StatType::Complex(Complex::new(path, config)),
-            "Tagged" => StatType::Tagged(Tagged::new(path, config)),
+            "Flat" => StatType::Flat(Flat::new(path)),
+            "Modifiable" => StatType::Modifiable(Modifiable::new(path)),
+            "Complex" => StatType::Complex(Complex::new(path)),
+            "Tagged" => StatType::Tagged(Tagged::new(path)),
             _ => panic!("Invalid stat type!"),
         }
     }
@@ -59,12 +62,12 @@ impl Stat for StatType {
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
+    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
         match self {
-            StatType::Flat(flat) => flat.add_modifier(path, modifier, config),
-            StatType::Modifiable(simple) => simple.add_modifier(path, modifier, config),
-            StatType::Complex(modifiable) => modifiable.add_modifier(path, modifier, config),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.add_modifier(path, modifier, config),
+            StatType::Flat(flat) => flat.add_modifier(path, modifier),
+            StatType::Modifiable(simple) => simple.add_modifier(path, modifier),
+            StatType::Complex(modifiable) => modifiable.add_modifier(path, modifier),
+            StatType::Tagged(complex_modifiable) => complex_modifiable.add_modifier(path, modifier),
         }
     }
 
@@ -113,9 +116,9 @@ impl Stat for StatType {
 pub(crate) struct Flat(f32);
 
 impl Stat for Flat {
-    fn new(_path: &StatPath, _config: &Config) -> Self { Self(0.0) }
+    fn new(_path: &StatPath) -> Self { Self(0.0) }
 
-    fn add_modifier(&mut self, _path: &StatPath, modifier: ModifierType, _config: &Config) {
+    fn add_modifier(&mut self, _path: &StatPath, modifier: ModifierType) {
         if let ModifierType::Literal(value) = modifier {
             self.0 += value;
         }
@@ -165,13 +168,14 @@ pub(crate) struct Modifiable {
 }
 
 impl Stat for Modifiable {
-    fn new(path: &StatPath, config: &Config) -> Self {
+    fn new(path: &StatPath) -> Self {
+        let config = KONFIG.read().unwrap();
         let relationship = config.get_relationship_type(path);
         let base = if relationship == ModType::Mul { 1.0 } else { 0.0 };
         Self { relationship, base, mods: Vec::new() }
     }
 
-    fn add_modifier(&mut self, _path: &StatPath, modifier: ModifierType, _config: &Config) {
+    fn add_modifier(&mut self, _path: &StatPath, modifier: ModifierType) {
         match modifier {
             ModifierType::Literal(vals) => { 
                 match self.relationship {
@@ -249,14 +253,15 @@ pub(crate) struct Complex {
 }
 
 impl Stat for Complex {
-    fn new(path: &StatPath, config: &Config) -> Self {
+    fn new(path: &StatPath) -> Self {
+        let config = KONFIG.read().unwrap();
         let total_expression = config.get_total_expression(path);
         let compiled_expression = Expression::new(total_expression).unwrap();
 
         let mut modifier_steps = HashMap::new();
         for part in compiled_expression.compiled.iter_identifiers() {
             let part_path = &StatPath::parse(part);
-            let step = Modifiable::new(part_path, config);
+            let step = Modifiable::new(part_path);
             modifier_steps.insert(part.to_string(), step);
         }
 
@@ -273,10 +278,10 @@ impl Stat for Complex {
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
+    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
         let Some(part_key) = path.part else { return };
         let part = self.modifier_steps.get_mut(part_key).unwrap();
-        part.add_modifier(path, modifier, config);
+        part.add_modifier(path, modifier);
     }
 
     fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
@@ -406,7 +411,8 @@ impl Tagged {
 }
 
 impl Stat for Tagged {
-    fn new(path: &StatPath, config: &Config) -> Self {
+    fn new(path: &StatPath) -> Self {
+        let config = KONFIG.read().unwrap();
         let total_expression = config.get_total_expression(path);
         let compiled_expression = Expression::new(total_expression).unwrap();
 
@@ -423,14 +429,14 @@ impl Stat for Tagged {
         }
     }
 
-    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config) {
+    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
         let Some(tag) = path.tag else { return };
         let Some(part) = path.part else { return };
 
         let step_map = self.modifier_steps.entry(part.to_string())
             .or_insert(TaggedEntry(HashMap::new()));
-        let step = step_map.0.entry(tag).or_insert(Modifiable::new(path, config));
-        step.add_modifier(path, modifier, config);
+        let step = step_map.0.entry(tag).or_insert(Modifiable::new(path));
+        step.add_modifier(path, modifier);
 
         self.invalidate_dependent_cache_entries(tag);
     }

@@ -15,7 +15,7 @@ pub trait Stat {
     ///
     /// * `path`: The `StatPath` identifying the stat being created.
     /// * `config`: A reference to the global `Config` resource.
-    fn new(path: &StatPath, config: &Config) -> Self;
+    fn new(path: &StatPath) -> Self;
 
     /// Called after a stat is first created and added to an entity's `Stats` component.
     /// Allows for any type-specific initialization logic that might require access to the `Stats` component itself.
@@ -36,7 +36,7 @@ pub trait Stat {
     /// * `path`: The `StatPath` indicating which specific part of the stat (if applicable) the modifier targets.
     /// * `modifier`: The `ModifierType` (literal or expression) to add.
     /// * `config`: A reference to the global `Config` resource, which might be needed to determine modifier behavior.
-    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType, config: &Config);
+    fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType);
 
     /// Removes a previously added modifier from this stat.
     ///

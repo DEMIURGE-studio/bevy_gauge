@@ -3,33 +3,23 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy_gauge::prelude::*;
 
 // Helper function to create a basic config for testing
-fn create_test_config() -> Config {
-    let mut config = Config::default();
+fn create_test_config()  {
+    let mut config = KONFIG.write().unwrap();
     // Configure for a damage stat with base/increased/more parts
     config.register_stat_type("Damage", "Tagged");
     config.register_total_expression("Damage", "base * (1 + increased) * more");
-    // For Modifiable test
-    // config.register_stat_type("Power", "Modifiable"); // This will be in its own config
-    // config.register_relationship_type("Power", ModType::Add); // Default for Modifiable is Add if not specified
-    config
 }
 
 // New config for Modifiable "Power" stat
-fn create_modifiable_power_config() -> Config {
-    let mut config = Config::default();
+fn create_modifiable_power_config() {
+    let mut config = KONFIG.write().unwrap();
     config.register_stat_type("Power", "Modifiable");
-    // Modifiable::new will use ModType::Add by default if not found for "Power" or "Power.base" etc.
-    // Or, we can explicitly set relationship for "Power" if needed.
-    // For this test, the default ModType::Add for the Modifiable stat "Power" is fine.
-    // When we add_modifier with a literal, it adds to Modifiable.base.
-    // When we add_modifier with an Expression, it's added to Modifiable.mods and summed.
-    config
 }
 
 #[test]
 fn test_basic_modifier_operations() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins); // Add minimal plugins for core Bevy systems
 
     let entity = app.world_mut().spawn(Stats::new()).id();
@@ -78,7 +68,7 @@ fn test_basic_modifier_operations() {
 #[test]
 fn test_query_caching() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
 
     let entity = app.world_mut().spawn(Stats::new()).id();
@@ -107,7 +97,7 @@ fn test_query_caching() {
 #[test]
 fn test_cache_invalidation() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
 
     let entity = app.world_mut().spawn(Stats::new()).id();
@@ -154,7 +144,7 @@ fn test_cache_invalidation() {
 #[test]
 fn test_source_dependency_updates() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
     
     let source = app.world_mut().spawn(Stats::new()).id();
@@ -223,7 +213,7 @@ fn test_source_dependency_updates() {
 #[test]
 fn test_complex_dependency_chain() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
     
     let grandparent = app.world_mut().spawn(Stats::new()).id();
@@ -294,7 +284,7 @@ fn test_complex_dependency_chain() {
 #[test]
 fn test_complex_dependency_chain_modifiable() {
     let mut app = App::new();
-    app.insert_resource(create_modifiable_power_config());
+    create_modifiable_power_config();
     app.add_plugins(MinimalPlugins);
     
     let grandparent = app.world_mut().spawn(Stats::new()).id();
@@ -372,7 +362,7 @@ fn test_complex_dependency_chain_modifiable() {
 #[test]
 fn test_add_modifier_then_register_source_tagged() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
 
     let target_entity = app.world_mut().spawn(Stats::new()).id();
@@ -439,7 +429,7 @@ fn test_add_modifier_then_register_source_tagged() {
 #[test]
 fn test_add_modifier_then_register_source_modifiable() {
     let mut app = App::new();
-    app.insert_resource(create_modifiable_power_config());
+    create_modifiable_power_config();
     app.add_plugins(MinimalPlugins);
 
     let target_entity = app.world_mut().spawn(Stats::new()).id();
@@ -508,7 +498,7 @@ fn test_add_modifier_then_register_source_modifiable() {
 #[test]
 fn test_source_despawn_updates_dependent_tagged() {
     let mut app = App::new();
-    app.insert_resource(create_test_config());
+    create_test_config();
     app.add_plugins(MinimalPlugins);
     app.add_plugins(bevy_gauge::plugin); // Ensure the main plugin is added for observer
 
@@ -563,7 +553,7 @@ fn test_source_despawn_updates_dependent_tagged() {
 #[test]
 fn test_source_despawn_updates_dependent_modifiable() {
     let mut app = App::new();
-    app.insert_resource(create_modifiable_power_config());
+    create_modifiable_power_config();
     app.add_plugins(MinimalPlugins);
     app.add_plugins(bevy_gauge::plugin); // Ensure the main plugin is added for observer
 

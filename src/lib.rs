@@ -102,10 +102,10 @@ use prelude::*;
 use bevy::prelude::*;
 
 pub mod app_extension;
-pub mod config;
 pub mod dirty;
 pub mod expressions;
 pub mod initializer;
+pub mod konfig;
 pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
@@ -121,7 +121,6 @@ pub mod stat_types;
 pub mod stats_component;
 pub mod systems;
 pub mod tags;
-pub mod konfig;
 
 /// The main Bevy plugin for `bevy_gauge`.
 ///

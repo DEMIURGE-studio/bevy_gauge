@@ -4,7 +4,6 @@ use bevy_gauge::prelude::*;
 fn setup_app() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    app.insert_resource(Config::default()); // Add a default config
     app.add_plugins(bevy_gauge::plugin);
     app
 }
@@ -44,7 +43,7 @@ fn test_initialization_with_expressions() {
     let mut app = setup_app();
 
     // Configure a stat that uses an expression
-    let mut config = app.world_mut().resource_mut::<Config>();
+    let mut config = KONFIG.write().unwrap();
     config.register_stat_type("Power", "Complex"); // Assuming Flat allows expressions on .base or we define a part
     config.register_total_expression("Power", "base + bonus");
     config.register_stat_type("Stamina", "Flat");
@@ -94,7 +93,7 @@ fn test_initializer_on_entity_without_stats_component_initially() {
 fn test_initialization_with_source_dependency() {
     let mut app = setup_app();
 
-    let mut config = app.world_mut().resource_mut::<Config>();
+    let mut config = KONFIG.write().unwrap();
     config.register_stat_type("Strength", "Flat"); // Source stat
     config.register_stat_type("AttackPower", "Complex"); // Target stat uses Complex
     // Total expression refers to local parts of AttackPower
