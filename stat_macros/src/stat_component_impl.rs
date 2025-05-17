@@ -501,17 +501,17 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
         match pf {
             ParsedField::ReadFrom { path, .. } => {
                 lines.push(quote! {
-                    stats.get(#path).is_ok()
+                    stats.get(#path) != 0.0
                 });
             },
             ParsedField::WriteTo { path, .. } => {
                 lines.push(quote! {
-                    stats.get(#path).is_ok()
+                    stats.get(#path) != 0.0
                 });
             },
             ParsedField::Both { path, .. } => {
                 lines.push(quote! {
-                    stats.get(#path).is_ok()
+                    stats.get(#path) != 0.0
                 });
             },
             ParsedField::Nested { fields, .. } => {
