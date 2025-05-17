@@ -33,38 +33,35 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin) // Essential plugin
-        .insert_resource(setup_game_config()) // Your game's stat configuration
-        .add_systems(Startup, spawn_player)
+        .add_systems(Startup, (setup_game_config, spawn_player).chain()) // Call config setup at Startup
         .add_systems(Update, (apply_buff_system, display_health_system))
         .run();
 }
 
 // Define your game's stat configuration
-fn setup_game_config() -> Config {
-    let mut config = Config::default();
+fn setup_game_config() { // No longer returns Config
+    // let mut config = Config::default(); // No longer needed
 
     // --- Flat Stats --- 
     // Use Flat stats for values that are typically set directly.
     // They don't need a total_expression registered as their value is their direct numeric content.
-    config.register_stat_type("CurrentHealth", "Flat");
+    Konfig::register_stat_type("CurrentHealth", "Flat");
     // Example: CurrentHealth is set after taking damage or healing.
 
     // --- Modifiable Stats --- 
     // Use Modifiable stats for values that have a base amount and can be altered 
     // by a list of modifiers. They also typically don't need a total_expression,
     // as their final value is their internal base after all its modifiers are applied.
-    config.register_stat_type("MaxHealth", "Modifiable");
-    config.register_stat_type("Strength", "Modifiable");
-    config.register_stat_type("AttackPower", "Modifiable");
+    Konfig::register_stat_type("MaxHealth", "Modifiable");
+    Konfig::register_stat_type("Strength", "Modifiable");
+    Konfig::register_stat_type("AttackPower", "Modifiable");
 
     // --- Complex Stats --- 
     // Use Complex stats when a stat's total value is calculated from several distinct "parts".
     // These REQUIRE a total_expression to define how parts combine.
-    config.register_stat_type("AttackDamage", "Complex");
-    config.register_total_expression("AttackDamage", "base * (1 + increased) * more");
+    Konfig::register_stat_type("AttackDamage", "Complex");
+    Konfig::register_total_expression("AttackDamage", "base * (1 + increased) * more");
     // Modifiers would target parts like "AttackDamage.base", "AttackDamage.increased", etc.
-
-    config
 }
 
 #[derive(Component)]
@@ -141,7 +138,7 @@ fn display_health_system(
     }
 }
 ```
-**Note on "Adding/Removing Stats":** When a modifier is added for a stat path (e.g., `"NewStat"` or `"NewStat.part"`) that the entity doesn't yet have, `bevy_gauge` will create that stat on the fly for the entity. The new stat will use default configurations (e.g., `Modifiable` type, default total expression `"0"`) unless specific configurations for `"NewStat"` have been registered in the `Config` resource.
+**Note on "Adding/Removing Stats":** When a modifier is added for a stat path (e.g., `"NewStat"` or `"NewStat.part"`) that the entity doesn't yet have, `bevy_gauge` will create that stat on the fly for the entity. The new stat will use default configurations (e.g., `Modifiable` type, default total expression `"0"`) unless specific configurations for `"NewStat"` have been registered using `Konfig` static methods.
 
 TODO Change to allow users to define their own custom defaults for different stat types
 
@@ -211,4 +208,3 @@ at your option.
 
 ## TODO 
 Implement string interning.
-Implement string tag parsing (i.e., SWORD|FIRE instead of 10)

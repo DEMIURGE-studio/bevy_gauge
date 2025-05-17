@@ -61,8 +61,8 @@ impl<'a> StatPath<'a> {
     /// assert_eq!(p1.tag, Some(10));
     /// assert_eq!(p1.target, Some("Player"));
     ///
-    /// let p2 = StatPath::parse("Health.25");
-    /// assert_eq!(p2.name, "Health");
+    /// let p2 = StatPath::parse("Damage.25");
+    /// assert_eq!(p2.name, "Damage");
     /// assert_eq!(p2.part, None);
     /// assert_eq!(p2.tag, Some(25));
     /// assert_eq!(p2.target, None);

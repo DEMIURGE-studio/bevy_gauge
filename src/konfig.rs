@@ -30,6 +30,10 @@ pub struct Konfig {
     total_expressions_map: HashMap<String, String>,
     total_expressions_regex_rules: Vec<(Regex, String)>,
     total_expressions_default: String,
+
+    // TagSet Resolvers
+    tag_set_resolvers: HashMap<String, Box<dyn TagSet + Send + Sync>>,
+    default_tag_set_resolver: Option<Box<dyn TagSet + Send + Sync>>,
 }
 
 impl Konfig {
@@ -49,6 +53,10 @@ impl Konfig {
             total_expressions_map: HashMap::new(),
             total_expressions_regex_rules: Vec::new(),
             total_expressions_default: "0".to_string(),
+
+            // TagSet Resolvers
+            tag_set_resolvers: HashMap::new(),
+            default_tag_set_resolver: None,
         }
     }
 
@@ -154,6 +162,27 @@ impl Konfig {
         writer.total_expressions_default = default_value.to_string();
     }
     
+    // --- TagSet Resolver Methods ---
+    pub fn register_tag_set(stat_base_name: &str, resolver: Box<dyn TagSet + Send + Sync>) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.tag_set_resolvers.insert(stat_base_name.to_string(), resolver);
+    }
+
+    pub fn set_default_tag_set(resolver: Box<dyn TagSet + Send + Sync>) {
+        let _guard = KONFIG_WRITE_LOCK.lock().unwrap();
+        let mut writer = KONFIG_DATA.write().unwrap();
+        writer.default_tag_set_resolver = Some(resolver);
+    }
+    
+    // Internal helper to get a TagSet resolver. This will be used by StatPath::parse.
+    // This method itself doesn't need to be public API of Konfig.
+    pub(crate) fn internal_get_tag_resolver_for_stat_name(&self, stat_name: &str) -> Option<&(dyn TagSet + Send + Sync)> {
+        self.tag_set_resolvers.get(stat_name)
+            .map(|boxed_resolver| boxed_resolver.as_ref()) // Deref Box to &dyn TagSet
+            .or_else(|| self.default_tag_set_resolver.as_deref())
+    }
+    
     // --- Test Utility ---
     pub fn reset_for_test() {
         let _write_serialization_guard = KONFIG_WRITE_LOCK.lock().unwrap();
@@ -165,6 +194,16 @@ impl Konfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Mock TagSet for testing Konfig's TagSet registration
+    struct MockTagSet;
+    impl TagSet for MockTagSet {
+        fn match_tag(&self, _tag_str: &str) -> u32 { 0 }
+        fn tag_category_for_bit(&self, _tag_bit: u32) -> u32 { 0 }
+        fn tag_category_for_group(&self, _group_tag: u32) -> u32 { 0 }
+        fn all_defined_groups(&self) -> &'static [u32] { &[] }
+        // build_permissive_tag, permissive_tag_from_str, build_permissive_mask can use defaults or be mocked
+    }
 
     #[test]
     #[serial]
@@ -194,5 +233,23 @@ mod tests {
         assert_eq!(Konfig::get_stat_type("CurrentLife"), "Flat"); // Regex match
         assert_eq!(Konfig::get_stat_type("CurrentBananas"), "Complex"); // Exact match
         assert_eq!(Konfig::get_stat_type("SomeOtherStat"), "CustomDefault"); // Default match
+    }
+
+    #[test]
+    #[serial]
+    fn test_tag_set_registration_and_retrieval() {
+        Konfig::reset_for_test();
+        
+        let specific_resolver = Box::new(MockTagSet);
+        // We can't directly compare Box<dyn Trait>, so we test by seeing if SOME resolver is returned.
+        // A more thorough test would involve this resolver being used by StatPath::parse later.
+        Konfig::register_tag_set("Damage", specific_resolver);
+
+        let default_resolver = Box::new(MockTagSet);
+        Konfig::set_default_tag_set(default_resolver);
+
+        let reader = KONFIG_DATA.read().unwrap(); // Access internal data for test verification
+        assert!(reader.internal_get_tag_resolver_for_stat_name("Damage").is_some(), "Damage specific resolver should exist");
+        assert!(reader.internal_get_tag_resolver_for_stat_name("UnknownStat").is_some(), "Default resolver should be used for UnknownStat");
     }
 } 

@@ -33,6 +33,7 @@ fn app_config() {
     Konfig::register_stat_type("Evasion", "Complex");
     Konfig::register_stat_type("Mana", "Complex");
     Konfig::register_stat_type("EnergyShield", "Complex");
+    Konfig::set_total_expression_default("added * (1.0 + increased) * more");
 }
 
 fn setup_player(mut commands: Commands) {
