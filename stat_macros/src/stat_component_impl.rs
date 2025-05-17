@@ -438,12 +438,12 @@ fn collect_update_lines(
         match pf {
             ParsedField::ReadFrom { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#path).unwrap_or(0.0);
+                    #self_expr.#name = stats.get(#path);
                 });
             },
             ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#path).unwrap_or(0.0);
+                    #self_expr.#name = stats.get(#path);
                 });
             },
             ParsedField::WriteTo { .. } => {
@@ -469,12 +469,12 @@ fn collect_should_update_lines(
         match pf {
             ParsedField::ReadFrom { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name != stats.get(#path).unwrap_or(0.0)
+                    #self_expr.#name != stats.get(#path)
                 });
             },
             ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    #self_expr.#name != stats.get(#path).unwrap_or(0.0)
+                    #self_expr.#name != stats.get(#path)
                 });
             },
             ParsedField::WriteTo { .. } => { /* skip */ },

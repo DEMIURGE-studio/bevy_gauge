@@ -10,22 +10,17 @@ macro_rules! simple_generic_stat {
 
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">"))
-                    .unwrap_or(0.0)
-                    != self.0
+                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">")) != self.0
             }
 
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 self.0 = stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">"))
-                    .unwrap_or(0.0);
+                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">"));
             }
 
             fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
                 stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">"))
-                    .unwrap_or(0.0)
-                    != 0.0
+                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">")) != 0.0
             }
         }
     };
@@ -43,22 +38,17 @@ macro_rules! simple_stat {
 
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0)
-                    != self.0
+                    .get(stringify!($struct_name)) != self.0
             }
 
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 self.0 = stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0);
+                    .get(stringify!($struct_name));
             }
 
             fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
                 stats
-                    .get(stringify!($struct_name))
-                    .unwrap_or(0.0)
-                    != 0.0
+                    .get(stringify!($struct_name)) != 0.0
             }
         }
     };

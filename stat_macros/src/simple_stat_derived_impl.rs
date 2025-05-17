@@ -11,7 +11,7 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
     let expanded = quote! {
         impl bevy_gauge::prelude::StatDerived for #name {
             fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let value = stats.get(#name_str).unwrap_or(0.0);
+                let value = stats.get(#name_str);
                 return Self(value);
             }
             
@@ -20,7 +20,7 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
             }
         
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
-                let value = stats.get(#name_str).unwrap_or(0.0);
+                let value = stats.get(#name_str);
                 self.0 = value;
             }
 
