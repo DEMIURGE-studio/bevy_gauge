@@ -25,7 +25,7 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
             }
 
             fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats.get(#name_str).is_ok()
+                stats.get(#name_str) != 0.0
             }
         }
     };

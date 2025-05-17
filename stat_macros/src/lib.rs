@@ -26,8 +26,8 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 }
 
 #[proc_macro]
-pub fn modifier_set(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    proc_stats_impl::modifier_set(input)
+pub fn mod_set(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    proc_stats_impl::mod_set(input)
 }
 
 #[proc_macro]

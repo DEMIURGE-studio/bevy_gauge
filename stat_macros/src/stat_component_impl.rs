@@ -277,7 +277,7 @@ fn expand_single_struct_def(
 ) -> syn::Result<proc_macro2::TokenStream> {
     // Add required derives
     let forced_attrs = quote! {
-        #[derive(::bevy::prelude::Component, ::std::default::Default, ::std::fmt::Debug)]
+        #[derive(::bevy::prelude::Component, ::std::default::Default)]
     };
 
     // Generate field definitions

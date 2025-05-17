@@ -122,7 +122,7 @@ fn generate_modifier_set_add_calls(assignments: &Punctuated<StatAssignment, Toke
     add_calls
 }
 
-pub fn modifier_set(input: TokenStream) -> TokenStream {
+pub fn mod_set(input: TokenStream) -> TokenStream {
     let parsed_input = parse_macro_input!(input as MacroInput);
     let add_calls = generate_modifier_set_add_calls(&parsed_input.assignments);
 

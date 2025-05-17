@@ -18,7 +18,7 @@ pub use super::tags::*;
 pub use stat_macros::Named;
 pub use stat_macros::SimpleStatDerived;
 pub use stat_macros::stat_component;
-pub use stat_macros::modifier_set;
+pub use stat_macros::mod_set;
 pub use stat_macros::stats;
 pub use crate::simple_generic_stat;
 pub use crate::simple_stat;

@@ -110,7 +110,10 @@ impl Stats {
     }
 
     pub(crate) fn set(&mut self, path: &str, base: f32) -> &mut Self {
-        self.definitions.get_mut(path).unwrap().set(&StatPath::parse(path), base);
+        self.definitions
+            .entry(path.to_string())
+            .or_insert(StatType::Flat(Flat::new(&StatPath::parse(path))))
+            .set(&StatPath::parse(path), base);
         self
     }
 
