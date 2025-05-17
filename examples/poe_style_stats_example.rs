@@ -60,11 +60,11 @@ fn setup_player(mut commands: Commands) {
 }
 
 fn add_modifiers_system(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<Player>>,
 ) {
     if let Ok(player_entity) = player_query.get_single() {
-        stat_accessor.add_modifier(player_entity, "Strength", Expression::new("25.0").unwrap());
+        stats_mutator.add_modifier(player_entity, "Strength", Expression::new("25.0").unwrap());
     }
 }
 

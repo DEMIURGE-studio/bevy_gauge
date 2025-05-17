@@ -48,13 +48,13 @@ impl StatsInitializer {
 /// After application, the `StatsInitializer` component is removed.
 pub(crate) fn apply_stats_initializer(
     trigger: Trigger<OnAdd, StatsInitializer>,
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     query_initializer: Query<&StatsInitializer>,
     mut commands: Commands,
 ) {
     let entity = trigger.entity();
     if let Ok(initializer) = query_initializer.get(entity) {
-        initializer.modifiers.apply(&mut stat_accessor, &entity);
+        initializer.modifiers.apply(&mut stats_mutator, &entity);
         
         commands.entity(entity).remove::<StatsInitializer>();
     }

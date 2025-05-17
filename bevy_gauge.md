@@ -7,7 +7,7 @@ Welcome to `bevy_gauge`, a flexible stat and modifier system for the Bevy game e
 1.  [Introduction](#introduction)
 2.  [Core Concepts](#core-concepts)
     *   [Stats Component](#stats-component)
-    *   [StatAccessor SystemParam](#stataccessor-systemparam)
+    *   [StatsMutator SystemParam](#StatsMutator-systemparam)
     *   [Configuration](#configuration)
 3.  [Stat Entity Initialization](#stat-entity-initialization)
     *   [Using `StatsInitializer`](#using-statsinitializer)
@@ -62,17 +62,17 @@ Welcome to `bevy_gauge`, a flexible stat and modifier system for the Bevy game e
 ### Stats Component
 The primary component is `bevy_gauge::prelude::Stats`. Entities with this component can have statistics managed by the system.
 
-### StatAccessor SystemParam
-The `bevy_gauge::prelude::StatAccessor` is a Bevy `SystemParam` that provides the API for interacting with stats (reading, writing, adding/removing modifiers, etc.).
+### StatsMutator SystemParam
+The `bevy_gauge::prelude::StatsMutator` is a Bevy `SystemParam` that provides the API for interacting with stats (reading, writing, adding/removing modifiers, etc.).
 
-`Stats` components should not be modified except through the API provided by the `StatAccessor`.
+`Stats` components should not be modified except through the API provided by the `StatsMutator`.
 
 ```rust
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
-fn my_system(mut stat_accessor: StatAccessor, /* ... */) {
-    // Use stat_accessor to interact with stats
+fn my_system(mut stats_mutator: StatsMutator, /* ... */) {
+    // Use stats_mutator to interact with stats
 }
 ```
 
@@ -137,8 +137,8 @@ struct PlayerTag;
 ```
 
 **Important Note on Initialization Timing**:
-When you spawn an entity with a `Stats` component (either directly or via `StatsInitializer`), and then intend to immediately modify or read its stats using `StatAccessor` *within the same system invocation*, be aware of Bevy's command queue. The `Stats` component only becomes visible to `StatAccessor`'s internal queries after Bevy's commands have been applied (flushed). 
-This typically happens automatically between system stages or by explicitly calling `apply_deferred` after your spawning commands. `StatsInitializer` works seamlessly because its `OnAdd` trigger fires after the component is fully added and visible. For manual `StatAccessor` use on newly spawned entities within the same system, ensure proper ordering or use `apply_deferred`.
+When you spawn an entity with a `Stats` component (either directly or via `StatsInitializer`), and then intend to immediately modify or read its stats using `StatsMutator` *within the same system invocation*, be aware of Bevy's command queue. The `Stats` component only becomes visible to `StatsMutator`'s internal queries after Bevy's commands have been applied (flushed). 
+This typically happens automatically between system stages or by explicitly calling `apply_deferred` after your spawning commands. `StatsInitializer` works seamlessly because its `OnAdd` trigger fires after the component is fully added and visible. For manual `StatsMutator` use on newly spawned entities within the same system, ensure proper ordering or use `apply_deferred`.
 
 ### The `stats!` Macro
 The `stats!` macro provides a convenient way to create a `StatsInitializer` component.
@@ -165,7 +165,7 @@ This macro populates a `ModifierSet` within the `StatsInitializer`.
 
 ## Stat Manipulation
 
-The `StatAccessor` system parameter is your primary tool for interacting with stats after initialization.
+The `StatsMutator` system parameter is your primary tool for interacting with stats after initialization.
 
 ### Adding Modifiers
 You can add modifiers to an entity's stats dynamically. Modifiers can be simple numerical values or expressions.
@@ -175,20 +175,20 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 fn apply_strength_buff(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
     if let Ok(player_entity) = player_query.get_single() {
         // Add +10 to the "base" part of the "Strength" stat
-        stat_accessor.add_modifier(player_entity, "Strength.base", 10.0);
+        stats_mutator.add_modifier(player_entity, "Strength.base", 10.0);
 
         // Add a 20% increased damage modifier to the "Damage" stat, tagged with '1' (e.g., Fire)
         // This assumes "Damage" is a Tagged or Complex stat with an "increased" part.
-        stat_accessor.add_modifier(player_entity, "Damage.increased.1", 0.20);
+        stats_mutator.add_modifier(player_entity, "Damage.increased.1", 0.20);
 
         // Add a modifier whose value is determined by an expression
         // (e.g., AttackPower gets +50% of Strength)
-        stat_accessor.add_modifier(
+        stats_mutator.add_modifier(
             player_entity,
             "AttackPower.base",
             Expression::new("Strength * 0.5").unwrap()
@@ -206,15 +206,15 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 fn remove_strength_buff(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
     if let Ok(player_entity) = player_query.get_single() {
         // Remove the +10 "Strength.base" modifier
-        stat_accessor.remove_modifier(player_entity, "Strength.base", 10.0);
+        stats_mutator.remove_modifier(player_entity, "Strength.base", 10.0);
 
         // Remove the expression-based modifier for AttackPower
-        stat_accessor.remove_modifier(
+        stats_mutator.remove_modifier(
             player_entity,
             "AttackPower.base",
             Expression::new("Strength * 0.5").unwrap()
@@ -231,12 +231,12 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 fn display_player_health(
-    stat_accessor: StatAccessor,
+    stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
     if let Ok(player_entity) = player_query.get_single() {
-        let current_health = stat_accessor.evaluate(player_entity, "Health"); // Evaluating the top level stat gives you the total
-        let fire_damage = stat_accessor.evaluate(player_entity, "Damage.Fire"); // Assuming "Fire" tag
+        let current_health = stats_mutator.evaluate(player_entity, "Health"); // Evaluating the top level stat gives you the total
+        let fire_damage = stats_mutator.evaluate(player_entity, "Damage.Fire"); // Assuming "Fire" tag
         println!("Player Health: {}, Fire Damage: {}", current_health, fire_damage);
     }
 }
@@ -251,17 +251,17 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 fn take_damage(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
     damage_amount: f32,
 ) {
     if let Ok(player_entity) = player_query.get_single() {
-        let current_health = stat_accessor.evaluate(player_entity, "Health.current");
+        let current_health = stats_mutator.evaluate(player_entity, "Health.current");
         let new_health = current_health - damage_amount;
         // Directly set the "base" of "Health.current"
         // Note: "Health.current" would typically be a "Flat" or "Modifiable" stat
         // configured to use its "base" as its total.
-        stat_accessor.set(player_entity, "Health.current", new_health.max(0.0));
+        stats_mutator.set(player_entity, "Health.current", new_health.max(0.0));
     }
 }
 ```
@@ -274,7 +274,7 @@ Sources allow one entity's stats to influence another entity's stats. For exampl
 When an entity (the "target") needs to calculate a stat that depends on another entity (the "source"), it can reference the source's stats in its expressions.
 
 ### Registering Sources
-You need to tell the target entity about its sources using `StatAccessor::register_source`.
+You need to tell the target entity about its sources using `StatsMutator::register_source`.
 
 ```rust
 use bevy::prelude::*;
@@ -287,13 +287,13 @@ struct Minion {
 }
 
 fn link_leader_to_minion(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     leader_query: Query<Entity, With<LeaderTag>>,
     minion_query: Query<(Entity, &Minion), Changed<Minion>>,
 ) {
     for (minion_entity, minion) in minion_query.iter() {
         let leader_entity = minion.0;
-        stat_accessor.register_source(minion_entity, "LeaderAlias", leader_entity);
+        stats_mutator.register_source(minion_entity, "LeaderAlias", leader_entity);
     }
 }
 
@@ -302,7 +302,7 @@ fn link_leader_to_minion(
 // Example: Minion's AttackPower gets a bonus from the Leader's Strength
 // This modifier would be on the Minion's Stats component.
 // The expression refers to `LeaderAlias@Strength`.
-stat_accessor.add_modifier(
+stats_mutator.add_modifier(
     minion_entity,
     "AttackPower.base",
     Expression::new(""LeaderAlias@Strength" * 0.1").unwrap() // 10% of leader's strength
@@ -310,7 +310,7 @@ stat_accessor.add_modifier(
 ```
 
 ## Custom Source Registration
-While `bevy_gauge` handles source registration and stat lookups across entities automatically once registered, if you have highly dynamic or complex ways of determining *which* entity is a source or *how* a source connection is established beyond simple proximity or explicit linking, you would implement that logic in your own Bevy systems. These systems would then use `StatAccessor::register_source` and `StatAccessor::unregister_source` to inform `bevy_gauge` about these relationships. `bevy_gauge` will automatically update relevant stats when a source is registered or unregistered.
+While `bevy_gauge` handles source registration and stat lookups across entities automatically once registered, if you have highly dynamic or complex ways of determining *which* entity is a source or *how* a source connection is established beyond simple proximity or explicit linking, you would implement that logic in your own Bevy systems. These systems would then use `StatsMutator::register_source` and `StatsMutator::unregister_source` to inform `bevy_gauge` about these relationships. `bevy_gauge` will automatically update relevant stats when a source is registered or unregistered.
 
 ## How to Write Expressions
 
@@ -555,15 +555,15 @@ pub struct MightBuff {
 impl StatEffect for MightBuff {
     type Context = Entity; // This effect applies to a single entity
 
-    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+    fn apply(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
         let target_entity = *context;
-        stat_accessor.add_modifier(target_entity, "Strength.base", self.strength_bonus);
+        stats_mutator.add_modifier(target_entity, "Strength.base", self.strength_bonus);
         // You could also add modifiers to other stats, e.g., "AttackPower"
     }
 
-    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+    fn remove(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
         let target_entity = *context;
-        stat_accessor.remove_modifier(target_entity, "Strength.base", self.strength_bonus);
+        stats_mutator.remove_modifier(target_entity, "Strength.base", self.strength_bonus);
     }
 }
 ```
@@ -579,7 +579,7 @@ use bevy_gauge::prelude::*;
 // Assume MightBuff from previous example
 fn cast_might_buff_system(
     mut commands: Commands,
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
     // In a real game, you'd likely have an event or input trigger this
 ) {
@@ -587,7 +587,7 @@ fn cast_might_buff_system(
         let buff = MightBuff { strength_bonus: 5.0, duration: 10.0 };
 
         // Apply the effect
-        buff.apply(&mut stat_accessor, &player_entity);
+        buff.apply(&mut stats_mutator, &player_entity);
 
         // In a real system, you'd store the active buff and its expiry time
         // on the player entity to remove it later.
@@ -599,13 +599,13 @@ fn cast_might_buff_system(
 // System to remove expired buffs (simplified)
 fn buff_expiry_system(
     mut commands: Commands,
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     // Query for entities with active buffs and their expiry times
     // active_buffs_query: Query<(Entity, &ActiveBuff)>,
 ) {
     // ... logic to find expired buffs ...
     // if buff.is_expired() {
-    //     buff.effect.remove(&mut stat_accessor, &entity);
+    //     buff.effect.remove(&mut stats_mutator, &entity);
     //     commands.entity(entity).remove::<ActiveBuff>();
     // }
 }
@@ -625,7 +625,7 @@ This trait is for components whose fields should be populated from an entity's `
 
 ### The `WriteBack` Trait
 This trait is for `StatDerived` components that also need to write some of their field values *back* to the entity's `Stats`.
-*   `write_back`: Takes the component's current state and uses `StatAccessor` to update the underlying stats (typically using `set`).
+*   `write_back`: Takes the component's current state and uses `StatsMutator` to update the underlying stats (typically using `set`).
 
 ### The `stat_component!` Macro
 This macro simplifies the creation of components that implement `StatDerived` and optionally `WriteBack`.
@@ -648,7 +648,7 @@ stat_component!(
 
 **What it generates (conceptually):**
 
-The following illustrates the kind of Rust code one would write to implement the `StatDerived` and `WriteBack` traits for the `Life` struct. Helper systems would then use `StatAccessor` to fetch values and update instances of `Life`, or to call `write_back`.
+The following illustrates the kind of Rust code one would write to implement the `StatDerived` and `WriteBack` traits for the `Life` struct. Helper systems would then use `StatsMutator` to fetch values and update instances of `Life`, or to call `write_back`.
 
 ```rust
 // This is a conceptual example of implementing StatDerived and WriteBack for the Life struct:
@@ -663,10 +663,10 @@ impl StatDerived for Life {
     // Typically, an instance would be created and then updated by a system.
     fn from_stats(
         // entity: Entity, // The entity this component is for
-        // stat_accessor: &StatAccessor, // Accessor to get initial values
+        // stats_mutator: &StatsMutator, // stats_mutator to get initial values
     ) -> Self {
-        // let max_val = stat_accessor.evaluate(entity, "Life").unwrap_or_default();
-        // let current_val = stat_accessor.evaluate(entity, "CurrentLife").unwrap_or_default();
+        // let max_val = stats_mutator.evaluate(entity, "Life").unwrap_or_default();
+        // let current_val = stats_mutator.evaluate(entity, "CurrentLife").unwrap_or_default();
         // Self { max: max_val, current: current_val, ..Default::default() }
         Self::default() // Simplified for this example
     }
@@ -674,41 +674,41 @@ impl StatDerived for Life {
     fn should_update(
         &self,
         // entity: Entity,
-        // stat_accessor: &StatAccessor,
+        // stats_mutator: &StatsMutator,
     ) -> bool {
         // Placeholder: actual implementation would compare self.max and self.current
-        // with values fetched via stat_accessor.evaluate(entity, "Life") and
-        // stat_accessor.evaluate(entity, "CurrentLife") respectively.
-        // For example: self.max != stat_accessor.evaluate(entity, "Life").unwrap_or_default()
+        // with values fetched via stats_mutator.evaluate(entity, "Life") and
+        // stats_mutator.evaluate(entity, "CurrentLife") respectively.
+        // For example: self.max != stats_mutator.evaluate(entity, "Life").unwrap_or_default()
         true // Simplified
     }
 
     fn update_from_stats(
         &mut self,
         // entity: Entity,
-        // stat_accessor: &StatAccessor,
+        // stats_mutator: &StatsMutator,
     ) {
-        // self.max = stat_accessor.evaluate(entity, "Life").unwrap_or_default();
-        // self.current = stat_accessor.evaluate(entity, "CurrentLife").unwrap_or_default();
+        // self.max = stats_mutator.evaluate(entity, "Life").unwrap_or_default();
+        // self.current = stats_mutator.evaluate(entity, "CurrentLife").unwrap_or_default();
     }
 
     fn is_valid(
         // entity: Entity,
-        // stat_accessor: &StatAccessor, // Accessor to check if stats can be evaluated
+        // stats_mutator: &StatsMutator, // stats_mutator to check if stats can be evaluated
     ) -> bool {
-        // Placeholder: actual implementation would use stat_accessor
+        // Placeholder: actual implementation would use stats_mutator
         // to check if "Life" and "CurrentLife" can be evaluated for the entity.
-        // For example: stat_accessor.can_evaluate(entity, "Life") && stat_accessor.can_evaluate(entity, "CurrentLife")
+        // For example: stats_mutator.can_evaluate(entity, "Life") && stats_mutator.can_evaluate(entity, "CurrentLife")
         true // Simplified
     }
 }
 
 impl WriteBack for Life {
-    fn write_back(&self, target_entity: Entity, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
+    fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
         // Write back self.current to the "CurrentLife" stat's base.
         // The path "CurrentLife" here implies it's configured to be settable, likely a Flat stat
         // or a Modifiable stat where 'set' targets its base value or similar direct input.
-        let _ = stat_accessor.set(target_entity, "CurrentLife", self.current);
+        let _ = stats_mutator.set(target_entity, "CurrentLife", self.current);
         // self.max is read-only (<-), so it's not written back.
     }
 }

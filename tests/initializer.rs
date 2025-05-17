@@ -38,12 +38,12 @@ fn test_basic_stats_initialization() {
     // TODO generally access is done via a Stats query, and Stats::get()
     // Check if stats are applied
     let health_val = app.world_mut().run_system_once(
-        move |accessor: StatAccessor| accessor.get(entity, "Health.base")
+        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Health.base")
     ).unwrap();
     assert_eq!(health_val, 100.0, "Health.base should be initialized to 100.0");
 
     let mana_val = app.world_mut().run_system_once(
-        move |accessor: StatAccessor| accessor.get(entity, "Mana.base")
+        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Mana.base")
     ).unwrap();
     assert_eq!(mana_val, 50.0, "Mana.base should be initialized to 50.0");
 
@@ -73,7 +73,7 @@ fn test_initialization_with_expressions() {
     app.update();
 
     let power_val = app.world_mut().run_system_once(
-        move |accessor: StatAccessor| accessor.get(entity, "Power")
+        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Power")
     ).unwrap();
     // Expected: Power.base (10) + Power.bonus (Stamina.base (20) * 2.0 = 40) = 50
     assert_eq!(power_val, 50.0, "Power should be 10 (base) + 40 (bonus from Stamina) = 50.0");
@@ -94,7 +94,7 @@ fn test_initializer_on_entity_without_stats_component_initially() {
     app.update();
 
     let agility_val = app.world_mut().run_system_once(
-        move |accessor: StatAccessor| accessor.get(entity, "Agility.base")
+        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Agility.base")
     ).unwrap();
     assert_eq!(agility_val, 30.0, "Agility.base should be initialized to 30.0 even if Stats is added slightly after Initializer");
 
@@ -127,7 +127,7 @@ fn test_initialization_with_source_dependency() {
     let target_entity = app.world_mut().spawn((Stats::new(), StatsInitializer::new(target_mods))).id();
 
     // Manually register source for target.
-    app.world_mut().run_system_once(move |mut sa: StatAccessor| {
+    app.world_mut().run_system_once(move |mut sa: StatsMutator| {
         sa.register_source(target_entity, "Source", source_entity);
     }).unwrap();
 
@@ -135,7 +135,7 @@ fn test_initialization_with_source_dependency() {
     app.update(); // Ensure all updates and evaluations propagate
 
     let ap_val = app.world_mut().run_system_once(
-        move |accessor: StatAccessor| accessor.get(target_entity, "AttackPower")
+        move |stats_mutator: StatsMutator| stats_mutator.get(target_entity, "AttackPower")
     ).unwrap();
     // Expected: AttackPower.base (2.0) * AttackPower.bonus_from_strength (Strength@Source (5.0)) = 10.0
     assert_eq!(ap_val, 10.0, "AttackPower should be 2.0 * 5.0 = 10.0");

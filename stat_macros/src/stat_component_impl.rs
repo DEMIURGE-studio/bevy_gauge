@@ -357,7 +357,7 @@ fn expand_trait_impls_for_variant(
         }
 
         impl WriteBack for #struct_name_with_variant {
-            fn write_back(&self, target_entity: Entity, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
+            fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #wb_body
             }
         }
@@ -540,12 +540,12 @@ fn collect_writeback_lines(
         match pf {
             ParsedField::WriteTo { name, path } => {
                 lines.push(quote! {
-                    let _ = stat_accessor.set(target_entity, #path, #self_expr.#name);
+                    let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
                 });
             },
             ParsedField::Both { name, path } => {
                 lines.push(quote! {
-                    let _ = stat_accessor.set(target_entity, #path, #self_expr.#name);
+                    let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
                 });
             },
             ParsedField::ReadFrom { .. } => { /* skip */ },
@@ -590,7 +590,7 @@ fn expand_trait_impls_for_no_variant(
         }
 
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
-            fn write_back(&self, target_entity: Entity, stat_accessor: &mut bevy_gauge::prelude::StatAccessor) {
+            fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #writeback_body
             }
         }

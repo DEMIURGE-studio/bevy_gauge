@@ -62,33 +62,33 @@
 //!     # struct PlayerTag;
 //!     ```
 //!
-//! 4.  **Interact with stats using `StatAccessor` in systems:**
+//! 4.  **Interact with stats using `StatsMutator` in systems:**
 //!     ```no_run
 //!     # use bevy::prelude::*;
 //!     # use bevy_gauge::prelude::*;
 //!     #[derive(Component)]
 //!     # struct PlayerTag;
 //!     # fn spawn_player(mut commands: Commands) { commands.spawn((PlayerTag, Stats::new())); }
-//!     fn apply_damage_buff(mut stat_accessor: StatAccessor, query: Query<Entity, With<PlayerTag>>) {
+//!     fn apply_damage_buff(mut stats_mutator: StatsMutator, query: Query<Entity, With<PlayerTag>>) {
 //!         if let Ok(player_entity) = query.get_single() {
 //!             // Add a 20% increased damage modifier with tag 1 (e.g., "Fire")
-//!             stat_accessor.add_modifier(player_entity, "Damage.increased.1", 0.20);
+//!             stats_mutator.add_modifier(player_entity, "Damage.increased.1", 0.20);
 //!         }
 //!     }
 //!
-//!     fn print_player_damage(stat_accessor: StatAccessor, query: Query<Entity, With<PlayerTag>>) {
+//!     fn print_player_damage(stats_mutator: StatsMutator, query: Query<Entity, With<PlayerTag>>) {
 //!         if let Ok(player_entity) = query.get_single() {
 //!             // Evaluate total damage (no specific tag, so considers all relevant tags)
-//!             let total_damage = stat_accessor.evaluate(player_entity, "Damage");
+//!             let total_damage = stats_mutator.evaluate(player_entity, "Damage");
 //!             // Evaluate fire damage (tag 1)
-//!             let fire_damage = stat_accessor.evaluate(player_entity, "Damage.1");
+//!             let fire_damage = stats_mutator.evaluate(player_entity, "Damage.1");
 //!             println!("Player Total Damage: {}, Fire Damage: {}", total_damage, fire_damage);
 //!         }
 //!     }
 //!     ```
 //!
 //! Check the `prelude` module for the most commonly used items.
-//! The `StatAccessor` is the main entry point for interacting with entity stats from systems.
+//! The `StatsMutator` is the main entry point for interacting with entity stats from systems.
 //! The `Config` resource is used for initial setup.
 #![feature(sync_unsafe_cell)]
 #![feature(associated_type_defaults)]
@@ -105,7 +105,7 @@ pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
 pub mod sources;
-pub mod stat_accessor;
+pub mod stats_mutator;
 pub mod stat_addressing;
 pub mod stat_derived;
 pub mod stat_effect;

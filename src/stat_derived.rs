@@ -1,6 +1,6 @@
 use bevy::ecs::entity::Entity;
 
-use crate::prelude::{StatAccessor, Stats};
+use crate::prelude::{StatsMutator, Stats};
 
 pub trait StatDerived {
     fn from_stats(stats: &Stats) -> Self;
@@ -13,5 +13,5 @@ pub trait StatDerived {
 }
 
 pub trait WriteBack {
-    fn write_back(&self, target_entity: Entity, stat_accessor: &mut StatAccessor);
+    fn write_back(&self, target_entity: Entity, stats_mutator: &mut StatsMutator);
 }

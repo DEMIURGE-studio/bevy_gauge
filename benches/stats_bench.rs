@@ -25,8 +25,8 @@ fn setup_app_with_entities_for_bench(count: usize) -> (App, Vec<Entity>) {
 // Helper to run a system that adds a modifier for setup.
 fn setup_stat_modifier_system(app: &mut App, entity: Entity, stat_name: &str, value: f32) {
     let stat_name_owned = stat_name.to_string();
-    let system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
-        stat_accessor.add_modifier(entity, &stat_name_owned, value);
+    let system_id = app.world_mut().register_system(move |mut stats_mutator: StatsMutator| {
+        stats_mutator.add_modifier(entity, &stat_name_owned, value);
     });
     let _ = app.world_mut().run_system(system_id);
     app.update(); // Ensure modifier is processed if subsequent reads depend on it immediately
@@ -42,8 +42,8 @@ pub fn bench_stat_access(c: &mut Criterion) {
             
             b.iter(|| {
                 let entity_for_iter = entity; // Copy entity directly into the closure
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(entity_for_iter, "Life.base"));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(entity_for_iter, "Life.base"));
                 });
             });
         });
@@ -63,12 +63,12 @@ pub fn bench_dependent_stats(c: &mut Criterion) {
             let cl = chain_length; // No dereference needed, already a value
 
             // Set up a dependency chain of the specified length
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(el, "Base", 10.0);
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Base", 10.0);
                 for i in 1..=cl {
                     let prev_stat = if i == 1 { "Base".to_string() } else { format!("Level{}", i - 1) };
                     let curr_stat = format!("Level{}", i);
-                    stat_accessor.add_modifier(el, &curr_stat, Expression::new(&format!("{} * 1.1", prev_stat)).unwrap());
+                    stats_mutator.add_modifier(el, &curr_stat, Expression::new(&format!("{} * 1.1", prev_stat)).unwrap());
                 }
             });
             app.update();
@@ -76,8 +76,8 @@ pub fn bench_dependent_stats(c: &mut Criterion) {
             b.iter(|| {
                 let el_for_iter = el; // Copy entity
                 let final_stat_name_for_iter = final_stat_name.clone(); // Clone String inside b.iter
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(el_for_iter, &final_stat_name_for_iter));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &final_stat_name_for_iter));
                 });
             });
         });
@@ -94,19 +94,19 @@ pub fn bench_entity_dependencies(c: &mut Criterion) {
             let last_entity = entities[chain_length];
             let cl = chain_length; // User fixed: No dereference needed
 
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(entities[0], "Power.base", 100.0);
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(entities[0], "Power.base", 100.0);
                 for i in 1..=cl {
-                    stat_accessor.register_source(entities[i], "Source", entities[i-1]);
-                    stat_accessor.add_modifier(entities[i], "Power.base", Expression::new("Source@Power.base * 0.9").unwrap());
+                    stats_mutator.register_source(entities[i], "Source", entities[i-1]);
+                    stats_mutator.add_modifier(entities[i], "Power.base", Expression::new("Source@Power.base * 0.9").unwrap());
                 }
             });
             app.update();
             
             b.iter(|| {
                 let last_entity_for_iter = last_entity; // Copy entity
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(last_entity_for_iter, "Power.base"));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(last_entity_for_iter, "Power.base"));
                 });
             });
         });
@@ -127,12 +127,12 @@ pub fn bench_tag_based_stats(c: &mut Criterion) {
 
             let el = entity; // Copy for closure
             let tc = tag_count; // Copy for closure
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(el, "Damage.base.0", 10.0); // Untagged base damage
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Damage.base.0", 10.0); // Untagged base damage
                 for i in 0..tc {
                     let tag = 1u32 << i; // Simple tag, e.g., 1, 2, 4, 8...
-                    stat_accessor.add_modifier(el, &format!("Damage.added.{}", tag), 5.0 + i as f32);
-                    stat_accessor.add_modifier(el, &format!("Damage.increased.{}", tag), 0.1 * (i as f32 + 1.0));
+                    stats_mutator.add_modifier(el, &format!("Damage.added.{}", tag), 5.0 + i as f32);
+                    stats_mutator.add_modifier(el, &format!("Damage.increased.{}", tag), 0.1 * (i as f32 + 1.0));
                 }
             });
             app.update();
@@ -142,8 +142,8 @@ pub fn bench_tag_based_stats(c: &mut Criterion) {
             b.iter(|| {
                 let el_for_iter = el; // Copy entity
                 let first_tag_path_for_iter = first_tag_path.clone(); // Clone String inside b.iter
-                 let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(el_for_iter, &first_tag_path_for_iter));
+                 let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &first_tag_path_for_iter));
                 });
             });
         });
@@ -160,15 +160,15 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
             let last_entity = entities[complexity];
             let compl = complexity; // copy
 
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(entities[0], "Power.base", 20.0);
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(entities[0], "Power.base", 20.0);
                 for i in 1..=compl {
-                    stat_accessor.register_source(entities[i], "Source", entities[0]);
-                    stat_accessor.add_modifier(entities[i], "Multiplier.base", 1.0 + (i as f32 * 0.1));
-                    stat_accessor.add_modifier(entities[i], "Damage.base", Expression::new("Source@Power.base * Multiplier.base").unwrap());
+                    stats_mutator.register_source(entities[i], "Source", entities[0]);
+                    stats_mutator.add_modifier(entities[i], "Multiplier.base", 1.0 + (i as f32 * 0.1));
+                    stats_mutator.add_modifier(entities[i], "Damage.base", Expression::new("Source@Power.base * Multiplier.base").unwrap());
                     if i > 1 {
-                        stat_accessor.register_source(entities[i], "Prev", entities[i-1]);
-                        stat_accessor.add_modifier(
+                        stats_mutator.register_source(entities[i], "Prev", entities[i-1]);
+                        stats_mutator.add_modifier(
                             entities[i],
                             "ComplexDamage.base",
                             Expression::new("(Source@Power.base * 0.5) + (Prev@Damage.base * 0.3) * Multiplier.base").unwrap()
@@ -182,8 +182,8 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
             b.iter(|| {
                 let last_entity_for_iter = last_entity; // Copy entity
                 let stat_to_eval_for_iter = stat_to_eval.clone(); // Clone String inside b.iter
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(last_entity_for_iter, &stat_to_eval_for_iter));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(last_entity_for_iter, &stat_to_eval_for_iter));
                 });
             });
         });
@@ -202,19 +202,19 @@ pub fn bench_stats_update_propagation(c: &mut Criterion) {
             let dependent_entities_ids = entities[1..].to_vec(); // Clone for setup system
 
             // Setup: Central entity and dependents that rely on its "Aura.base"
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(central, "Aura.base", 10.0);
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(central, "Aura.base", 10.0);
                 for (i, &entity_id) in dependent_entities_ids.iter().enumerate() {
-                    stat_accessor.register_source(entity_id, "CentralSource", central);
+                    stats_mutator.register_source(entity_id, "CentralSource", central);
                     let multiplier = 0.8 + ((i as f32 % 5.0) * 0.1); // Vary multiplier
-                    stat_accessor.add_modifier(entity_id, "Buff.value", Expression::new(&format!("CentralSource@Aura.base * {}", multiplier)).unwrap());
+                    stats_mutator.add_modifier(entity_id, "Buff.value", Expression::new(&format!("CentralSource@Aura.base * {}", multiplier)).unwrap());
                 }
             });
             app.update();
 
             // Pre-register the system that updates the central entity's stat
-            let update_system_id = app.world_mut().register_system(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(central, "Aura.base", 1.0); // Increment aura
+            let update_system_id = app.world_mut().register_system(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(central, "Aura.base", 1.0); // Increment aura
             });
             app.update(); // process registration
 
@@ -230,9 +230,9 @@ pub fn bench_stats_update_propagation(c: &mut Criterion) {
 
                 // Evaluate all dependent entities in one go to measure read-after-write performance
                 let deps_clone = dependent_entities_for_eval.clone();
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
                     for &dep_entity in &deps_clone {
-                        black_box(accessor.get(dep_entity, "Buff.value"));
+                        black_box(stats_mutator.get(dep_entity, "Buff.value"));
                     }
                 });
             });
@@ -258,21 +258,21 @@ pub fn bench_complex_expression_evaluation(c: &mut Criterion) {
             let el = entity; // copy
             let expr_owned = expr_to_setup.to_string(); // own for system
 
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
-                stat_accessor.add_modifier(el, "Base", 100.0);
-                stat_accessor.add_modifier(el, "Added", 50.0);
-                stat_accessor.add_modifier(el, "Increased", 0.3);
-                stat_accessor.add_modifier(el, "More", 0.2);
-                stat_accessor.add_modifier(el, "Taken", 25.0);
-                stat_accessor.add_modifier(el, "Cap", 200.0);
-                stat_accessor.add_modifier(el, "Result", Expression::new(&expr_owned).unwrap());
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Base", 100.0);
+                stats_mutator.add_modifier(el, "Added", 50.0);
+                stats_mutator.add_modifier(el, "Increased", 0.3);
+                stats_mutator.add_modifier(el, "More", 0.2);
+                stats_mutator.add_modifier(el, "Taken", 25.0);
+                stats_mutator.add_modifier(el, "Cap", 200.0);
+                stats_mutator.add_modifier(el, "Result", Expression::new(&expr_owned).unwrap());
             });
             app.update();
             
             b.iter(|| {
                 let el_for_iter = el; // Copy entity
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(el_for_iter, "Result"));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, "Result"));
                 });
             });
         });
@@ -289,13 +289,13 @@ pub fn bench_many_modifiers_on_stat(c: &mut Criterion) {
             let el = entity; // copy
             let mc_val = mc; // copy
 
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
                 for _ in 0..mc_val {
                     // Assuming "Power.base" is modifiable or "Power.sum_part" if flat and summed.
                     // If "Power" is default Flat, "Power.base" is just a name.
                     // For Modifiable, add_modifier("Power", val) adds to base.
                     // Let's use a Modifiable stat for this.
-                    stat_accessor.add_modifier(el, "Power", 1.0); 
+                    stats_mutator.add_modifier(el, "Power", 1.0); 
                 }
             });
             // Ensure "Power" is Modifiable
@@ -304,8 +304,8 @@ pub fn bench_many_modifiers_on_stat(c: &mut Criterion) {
             
             b.iter(|| {
                 let el_for_iter = el; // Copy entity
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(el_for_iter, "Power")); // Evaluate the Modifiable stat "Power"
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, "Power")); // Evaluate the Modifiable stat "Power"
                 });
             });
         });
@@ -322,9 +322,9 @@ pub fn bench_many_distinct_stats(c: &mut Criterion) {
             let el = entity; // copy
             let sc_val = sc; // copy
 
-            let _ = app.world_mut().run_system_once(move |mut stat_accessor: StatAccessor| {
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
                 for i in 0..sc_val {
-                    stat_accessor.add_modifier(el, &format!("Stat{}.value", i), i as f32);
+                    stats_mutator.add_modifier(el, &format!("Stat{}.value", i), i as f32);
                 }
             });
             app.update();
@@ -333,8 +333,8 @@ pub fn bench_many_distinct_stats(c: &mut Criterion) {
             b.iter(|| {
                 let el_for_iter = el; // Copy entity
                 let target_stat_name_for_iter = target_stat_name.clone(); // Clone String inside b.iter
-                let _ = app.world_mut().run_system_once(move |accessor: StatAccessor| {
-                    black_box(accessor.get(el_for_iter, &target_stat_name_for_iter));
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &target_stat_name_for_iter));
                 });
             });
         });

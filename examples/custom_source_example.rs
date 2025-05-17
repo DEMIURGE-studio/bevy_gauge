@@ -52,11 +52,11 @@ fn spawn_entities(mut commands: Commands) {
 // --- Systems --- //
 
 fn register_parent_source_for_child(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     child_query: Query<(Entity, &Parent), Changed<Parent>>,
 ) {
     for (child_entity, parent) in child_query.iter() {
-        stat_accessor.register_source(
+        stats_mutator.register_source(
             child_entity,
             "MyParent", 
             parent.get(),

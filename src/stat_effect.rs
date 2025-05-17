@@ -1,5 +1,5 @@
 use bevy::ecs::{entity::Entity, system::Commands};
-use crate::prelude::StatAccessor;
+use crate::prelude::StatsMutator;
 
 /// A trait for defining operations that apply or remove a collection of stat changes.
 ///
@@ -15,23 +15,23 @@ pub trait StatEffect {
     /// Defaults to `Entity`, meaning the effect operates directly on a single target entity.
     type Context: StatEffectContext = Entity;
    
-    /// Applies the stat effect to the given context using the provided `StatAccessor`.
+    /// Applies the stat effect to the given context using the provided `StatsMutator`.
     ///
     /// # Arguments
     ///
-    /// * `stat_accessor`: A mutable reference to the `StatAccessor` to enact stat changes.
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator` to enact stat changes.
     /// * `context`: A reference to the context for this effect (e.g., the target `Entity`).
-    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context);
+    fn apply(&self, stats_mutator: &mut StatsMutator, context: &Self::Context);
 
-    /// Removes the stat effect from the given context using the provided `StatAccessor`.
+    /// Removes the stat effect from the given context using the provided `StatsMutator`.
     /// This method has a default empty implementation, as not all effects are removable
     /// or require explicit removal logic.
     ///
     /// # Arguments
     ///
-    /// * `stat_accessor`: A mutable reference to the `StatAccessor`.
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator`.
     /// * `context`: A reference to the context for this effect.
-    fn remove(&self, _stat_accessor: &mut StatAccessor, _context: &Self::Context) {}
+    fn remove(&self, _stats_mutator: &mut StatsMutator, _context: &Self::Context) {}
 }
 
 /// A marker trait for types that can serve as a context for `StatEffect` operations.

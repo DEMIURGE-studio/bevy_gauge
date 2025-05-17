@@ -57,7 +57,7 @@ impl StatContext {
 /// An entity with a `Stats` component can have various stats defined for it (e.g., Health, Damage),
 /// each with its own modifiers, expressions, and potential dependencies on other stats or entities.
 ///
-/// Most interactions with an entity's stats are performed through the `StatAccessor` system parameter,
+/// Most interactions with an entity's stats are performed through the `StatsMutator` system parameter,
 /// which operates on this component.
 #[derive(Component, Clone, Debug, Default)]
 pub struct Stats {
@@ -87,7 +87,7 @@ impl Stats {
     /// If the stat path has not been evaluated and cached yet during the current update cycle,
     /// this method will trigger an evaluation before returning the value.
     ///
-    /// Note: For most use cases, prefer using `StatAccessor::evaluate()` from a system, as it provides
+    /// Note: For most use cases, prefer using `StatsMutator::evaluate()` from a system, as it provides
     /// a more comprehensive and managed way to access stat values, including handling dependencies
     /// and updates across entities.
     ///

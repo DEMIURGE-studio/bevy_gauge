@@ -8,7 +8,7 @@ use crate::prelude::*;
 /// or fixed values.
 ///
 /// `Expression`s are used for calculating total stat values (see `Config::register_total_expression`)
-/// and for creating modifiers that depend on other stats (see `StatAccessor::add_modifier`).
+/// and for creating modifiers that depend on other stats (see `StatsMutator::add_modifier`).
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub(crate) definition: String,

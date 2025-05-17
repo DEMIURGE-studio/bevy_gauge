@@ -9,10 +9,10 @@ use super::prelude::*;
 #[derive(SystemParam)]
 /// A Bevy `SystemParam` that provides access to query and modify stats for entities.
 ///
-/// `StatAccessor` is the primary way to interact with the stat system from within Bevy systems.
+/// `StatsMutator` is the primary way to interact with the stat system from within Bevy systems.
 /// It allows for operations like adding/removing modifiers, evaluating stat values,
 /// registering dependencies between entities (sources), and managing the lifecycle of stats.
-pub struct StatAccessor<'w, 's> {
+pub struct StatsMutator<'w, 's> {
     query: Query<'w, 's, &'static mut Stats>,
 }
 
@@ -24,7 +24,7 @@ struct CacheUpdate {
     value: f32,
 }
 
-impl StatAccessor<'_, '_> {
+impl StatsMutator<'_, '_> {
     /// Retrieves the evaluated value of a stat for a given entity.
     ///
     /// If the entity does not have a `Stats` component or the path is invalid,
@@ -272,7 +272,7 @@ impl StatAccessor<'_, '_> {
             }
         }
 
-        // Ensure values for directly affected stats are correctly evaluated and in component cache using StatAccessor's full view
+        // Ensure values for directly affected stats are correctly evaluated and in component cache using StatsMutator's full view
         for update_info in &target_stats_to_update { // Iterate by reference first
             let correct_value = self.evaluate(update_info.entity, &update_info.stat_path_on_dependent);
             if let Ok(stats_comp) = self.query.get_mut(update_info.entity) {
@@ -424,7 +424,7 @@ impl StatAccessor<'_, '_> {
             stats_comp_for_clear.clear_internal_cache_for_path(&path_obj_for_clear);
         }
 
-        // Evaluate using StatAccessor's own evaluate method
+        // Evaluate using StatsMutator's own evaluate method
         let new_value = self.evaluate(entity_updated, path_updated);
 
         // Cache this new_value into the component's Stats
@@ -669,17 +669,17 @@ impl StatUpdate {
     }
 }
 
-/// A Bevy observer system that automatically calls `StatAccessor::remove_stat_entity`
+/// A Bevy observer system that automatically calls `StatsMutator::remove_stat_entity`
 /// when an entity with a `Stats` component is removed/despawned.
 ///
 /// This ensures that an entity's dependencies are properly cleaned up within the stat system
 /// when it ceases to exist.
 pub(crate) fn remove_stats(
     trigger: Trigger<OnRemove, Stats>,
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
 ) {
     let removed_entity = trigger.entity();
-    stat_accessor.remove_stat_entity(removed_entity);
+    stats_mutator.remove_stat_entity(removed_entity);
 }
 
 mod remove_stat_entity_tests {
@@ -750,15 +750,15 @@ mod remove_stat_entity_tests {
     }
 
     fn register_initial_sources(
-        mut stat_accessor: StatAccessor,
+        mut stats_mutator: StatsMutator,
         test_entities: Res<TestEntities>,
     ) {
         let entity_a = test_entities.a.expect("Entity A missing in register_initial_sources");
         let entity_b = test_entities.b.expect("Entity B missing in register_initial_sources");
         let entity_c = test_entities.c.expect("Entity C missing in register_initial_sources");
 
-        stat_accessor.register_source(entity_b, ALIAS_A_AS_SOURCE_FOR_B, entity_a);
-        stat_accessor.register_source(entity_a, ALIAS_C_AS_SOURCE_FOR_A, entity_c);
+        stats_mutator.register_source(entity_b, ALIAS_A_AS_SOURCE_FOR_B, entity_a);
+        stats_mutator.register_source(entity_a, ALIAS_C_AS_SOURCE_FOR_A, entity_c);
     }
 
     fn pre_removal_verification(
@@ -795,20 +795,20 @@ mod remove_stat_entity_tests {
 
     fn do_remove_entity_a(
         test_entities: Res<TestEntities>,
-        mut stat_accessor: StatAccessor,
+        mut stats_mutator: StatsMutator,
     ) {
         let entity_a = test_entities.a.unwrap();
-        stat_accessor.remove_stat_entity(entity_a);
+        stats_mutator.remove_stat_entity(entity_a);
     }
 
     fn post_removal_verification(
         test_entities: Res<TestEntities>,
-        stat_accessor: StatAccessor,
+        stats_mutator: StatsMutator,
     ) {
         let entity_b = test_entities.b.unwrap();
         let entity_c = test_entities.c.unwrap();
 
-        let stats_b = stat_accessor.get_stats(entity_b).expect("Entity B should still have Stats");
+        let stats_b = stats_mutator.get_stats(entity_b).expect("Entity B should still have Stats");
 
         assert!(!stats_b.sources.values().any(|&id| id == test_entities.a.unwrap()), "B.sources should not contain entity_A anymore");
         if let Some(source_entity_for_alias) = stats_b.sources.get(ALIAS_A_AS_SOURCE_FOR_B) {
@@ -818,9 +818,9 @@ mod remove_stat_entity_tests {
         let cached_key_b = format!("{}@{}", STAT_A_POWER, ALIAS_A_AS_SOURCE_FOR_B);
         assert_eq!(stats_b.get(&cached_key_b), 0.0, "B's cache for A.Power@SourceA should be 0.0 after A removed");
         
-        assert_eq!(stat_accessor.evaluate(entity_b, STAT_B_STRENGTH), 0.0, "B.Strength after A removed");
+        assert_eq!(stats_mutator.evaluate(entity_b, STAT_B_STRENGTH), 0.0, "B.Strength after A removed");
 
-        let stats_c = stat_accessor.get_stats(entity_c).expect("Entity C should still have Stats");
+        let stats_c = stats_mutator.get_stats(entity_c).expect("Entity C should still have Stats");
         let c_dependents_on_buff = stats_c.get_stat_dependents(STAT_C_BUFF);
         
         let removed_dependent_on_c = DependentType::EntityStat {

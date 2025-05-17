@@ -3,7 +3,7 @@ use super::prelude::*;
 /// Defines the fundamental behavior and interface for all stat types within the system.
 ///
 /// This trait is implemented by the various internal stat representations (e.g., `Flat`, `Modifiable`, `Tagged`)
-/// to provide a consistent way for the `Stats` component and `StatAccessor` to interact with them.
+/// to provide a consistent way for the `Stats` component and `StatsMutator` to interact with them.
 /// It covers creation, initialization, modifier application, direct setting, and value evaluation.
 pub trait Stat {
     /// Creates a new instance of a stat type based on the provided path and configuration.

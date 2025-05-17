@@ -1,5 +1,5 @@
 use bevy::{prelude::*, utils::HashMap};
-use crate::prelude::{StatAccessor, StatEffect, ModifierType};
+use crate::prelude::{StatsMutator, StatEffect, ModifierType};
 
 /// A component that represents a collection of stat modifiers, typically grouped by a common source
 /// like an item, buff, or skill.
@@ -44,18 +44,18 @@ impl StatEffect for ModifierSet {
     /// Applies all modifiers contained in this `ModifierSet` to the target entity.
     ///
     /// This iterates through each stat path and its associated modifiers in the set,
-    /// calling `StatAccessor::add_modifier_value` for each one on the target entity.
+    /// calling `StatsMutator::add_modifier_value` for each one on the target entity.
     ///
     /// # Arguments
     ///
-    /// * `stat_accessor`: A mutable reference to the `StatAccessor` used to apply the modifiers.
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator` used to apply the modifiers.
     /// * `context`: A reference to the target `Entity` to which the modifiers will be applied.
     ///              (Note: `Self::Context` for `ModifierSet` is `Entity`).
-    fn apply(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+    fn apply(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
         let target_entity = context;
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stat_accessor.add_modifier_value(*target_entity, stat, modifier.clone());
+                stats_mutator.add_modifier_value(*target_entity, stat, modifier.clone());
             }
         }
     }
@@ -63,19 +63,19 @@ impl StatEffect for ModifierSet {
     /// Removes all modifiers contained in this `ModifierSet` from the target entity.
     ///
     /// This iterates through each stat path and its associated modifiers in the set,
-    /// calling `StatAccessor::remove_modifier_value` for each one on the target entity.
+    /// calling `StatsMutator::remove_modifier_value` for each one on the target entity.
     /// It assumes the modifiers were previously applied in a similar manner.
     ///
     /// # Arguments
     ///
-    /// * `stat_accessor`: A mutable reference to the `StatAccessor` used to remove the modifiers.
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator` used to remove the modifiers.
     /// * `context`: A reference to the target `Entity` from which the modifiers will be removed.
     ///              (Note: `Self::Context` for `ModifierSet` is `Entity`).
-    fn remove(&self, stat_accessor: &mut StatAccessor, context: &Self::Context) {
+    fn remove(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
         let target_entity = context;
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stat_accessor.remove_modifier_value(*target_entity, stat, modifier);
+                stats_mutator.remove_modifier_value(*target_entity, stat, modifier);
             }
         }
     }

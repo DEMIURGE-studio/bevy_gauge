@@ -97,17 +97,17 @@ fn spawn_player(mut commands: Commands) {
 ```
 
 ### 4. Modifying Stats & Adding/Removing Modifiers
-Use the `StatAccessor` `SystemParam` for changes.
+Use the `StatsMutator` `SystemParam` for changes.
 
 ```rust
 fn apply_buff_system(
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
     player_query: Query<Entity, (With<Player>, Added<Player>)>, 
 ) {
     if let Ok(player_entity) = player_query.get_single() {
         // Add +5 to Strength (Modifiable stat)
         println!("Applying +5 Strength buff.");
-        stat_accessor.add_modifier(player_entity, "Strength", 5.0);
+        stats_mutator.add_modifier(player_entity, "Strength", 5.0);
     }
 }
 
@@ -170,13 +170,13 @@ impl WriteBack for Life {
     fn write_back(
         &self,
         target_entity: Entity,
-        stat_accessor: &mut bevy_gauge::prelude::StatAccessor,
+        stats_mutator: &mut bevy_gauge::prelude::StatsMutator,
     ) {
-        let _ = stat_accessor.set(target_entity, "CurrentLife", self.current);
+        let _ = stats_mutator.set(target_entity, "CurrentLife", self.current);
     }
 }
 ```
-The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `Life` component if `should_update` returns true. For a more detailed explanation and on how the `update_from_stats` is actually called with proper accessor, please refer to the full User Guide.
+The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `Life` component if `should_update` returns true..
 
 You can also use the `stat_component!` macro to more easily define your stat-derived components!
 ```rust

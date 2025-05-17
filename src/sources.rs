@@ -1,11 +1,11 @@
 use bevy::prelude::*;
-use crate::prelude::{StatAccessor, Stats};
+use crate::prelude::{StatsMutator, Stats};
 
 pub fn register_parent(
     parent_query: Query<(Entity, &Parent), (With<Stats>, Changed<Parent>)>,
-    mut stat_accessor: StatAccessor,
+    mut stats_mutator: StatsMutator,
 ) {
     for (entity, parent) in parent_query.iter() {
-        stat_accessor.register_source(entity, "Parent", parent.get());
+        stats_mutator.register_source(entity, "Parent", parent.get());
     }
 }
