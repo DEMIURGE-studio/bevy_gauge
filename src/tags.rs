@@ -111,7 +111,7 @@ pub trait TagSet {
 ///
 /// # Returns
 /// A `String` with the string tag expression replaced by its numerical u32 representation.
-pub fn convert_string_tagged_path_to_numerical(path_str: &str, tag_resolver: &(dyn TagSet + Send + Sync)) -> String {
+pub fn process_tag(path_str: &str, tag_resolver: &(dyn TagSet + Send + Sync)) -> String {
     let mut target_alias_part = "";
     let mut main_path_part = path_str;
 
@@ -206,95 +206,95 @@ mod tests {
     fn test_convert_simple_curly_tags() {
         let resolver = DamageTags;
         let fire_val = resolver.build_permissive_mask("FIRE");
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.increased.{FIRE}", &resolver), format!("Damage.increased.{}", fire_val));
+        assert_eq!(process_tag("Damage.increased.{FIRE}", &resolver), format!("Damage.increased.{}", fire_val));
         
         let axe_val = resolver.build_permissive_mask("AXE");
-        assert_eq!(convert_string_tagged_path_to_numerical("Attack.speed.{AXE}", &resolver), format!("Attack.speed.{}", axe_val));
+        assert_eq!(process_tag("Attack.speed.{AXE}", &resolver), format!("Attack.speed.{}", axe_val));
     }
 
     #[test]
     fn test_convert_combined_curly_tags() {
         let resolver = DamageTags;
         let fire_axe_val = resolver.build_permissive_mask("FIRE|AXE");
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.type.{FIRE|AXE}", &resolver), format!("Damage.type.{}", fire_axe_val));
+        assert_eq!(process_tag("Damage.type.{FIRE|AXE}", &resolver), format!("Damage.type.{}", fire_axe_val));
 
         let melee_phys_val = resolver.build_permissive_mask("MELEE|PHYSICAL");
-        assert_eq!(convert_string_tagged_path_to_numerical("Effect.scale.{MELEE|PHYSICAL}", &resolver), format!("Effect.scale.{}", melee_phys_val));
+        assert_eq!(process_tag("Effect.scale.{MELEE|PHYSICAL}", &resolver), format!("Effect.scale.{}", melee_phys_val));
     }
 
     #[test]
     fn test_convert_curly_with_target_alias() {
         let resolver = DamageTags;
         let fire_val = resolver.build_permissive_mask("FIRE");
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.increased.{FIRE}@Player", &resolver), format!("Damage.increased.{}@Player", fire_val));
+        assert_eq!(process_tag("Damage.increased.{FIRE}@Player", &resolver), format!("Damage.increased.{}@Player", fire_val));
 
         let melee_phys_val = resolver.build_permissive_mask("MELEE|PHYSICAL");
-        assert_eq!(convert_string_tagged_path_to_numerical("Effect.scale.{MELEE|PHYSICAL}@Enemy1", &resolver), format!("Effect.scale.{}@Enemy1", melee_phys_val));
+        assert_eq!(process_tag("Effect.scale.{MELEE|PHYSICAL}@Enemy1", &resolver), format!("Effect.scale.{}@Enemy1", melee_phys_val));
     }
 
     #[test]
     fn test_numerical_tags_and_no_curly_tags_unchanged() {
         let resolver = DamageTags;
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.increased.123", &resolver), "Damage.increased.123");
-        assert_eq!(convert_string_tagged_path_to_numerical("Effect.modifier.42@Source", &resolver), "Effect.modifier.42@Source");
-        assert_eq!(convert_string_tagged_path_to_numerical("Health.current", &resolver), "Health.current");
-        assert_eq!(convert_string_tagged_path_to_numerical("Health", &resolver), "Health");
-        assert_eq!(convert_string_tagged_path_to_numerical("Health@Player", &resolver), "Health@Player");
+        assert_eq!(process_tag("Damage.increased.123", &resolver), "Damage.increased.123");
+        assert_eq!(process_tag("Effect.modifier.42@Source", &resolver), "Effect.modifier.42@Source");
+        assert_eq!(process_tag("Health.current", &resolver), "Health.current");
+        assert_eq!(process_tag("Health", &resolver), "Health");
+        assert_eq!(process_tag("Health@Player", &resolver), "Health@Player");
     }
     
     #[test]
     fn test_curly_numerical_content_unchanged() { 
         let resolver = DamageTags;
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.increased.{123}", &resolver), "Damage.increased.{123}");
+        assert_eq!(process_tag("Damage.increased.{123}", &resolver), "Damage.increased.{123}");
     }
 
     #[test]
     fn test_pure_curly_tag_expression_no_base_path() {
         let resolver = DamageTags;
         let fire_axe_val = resolver.build_permissive_mask("FIRE|AXE");
-        assert_eq!(convert_string_tagged_path_to_numerical("{FIRE|AXE}", &resolver), format!("{}", fire_axe_val));
+        assert_eq!(process_tag("{FIRE|AXE}", &resolver), format!("{}", fire_axe_val));
         let sword_val = resolver.build_permissive_mask("SWORD");
-        assert_eq!(convert_string_tagged_path_to_numerical("{SWORD}@Source", &resolver), format!("{}@Source", sword_val));
+        assert_eq!(process_tag("{SWORD}@Source", &resolver), format!("{}@Source", sword_val));
     }
     
     #[test]
     fn test_empty_curly_tag_expression_or_parts() {
         let resolver = DamageTags;
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.increased.{}", &resolver), "Damage.increased.{}");
+        assert_eq!(process_tag("Damage.increased.{}", &resolver), "Damage.increased.{}");
         let fire_axe_val = resolver.build_permissive_mask("FIRE||AXE"); 
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.mod.{FIRE||AXE}", &resolver), format!("Damage.mod.{}", fire_axe_val));
+        assert_eq!(process_tag("Damage.mod.{FIRE||AXE}", &resolver), format!("Damage.mod.{}", fire_axe_val));
     }
 
     #[test]
     fn test_unknown_tags_in_curly_expression() {
         let resolver = DamageTags;
         let fire_unknown_val = resolver.build_permissive_mask("FIRE|UNKNOWNTAG"); 
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.value.{FIRE|UNKNOWNTAG}", &resolver), format!("Damage.value.{}", fire_unknown_val));
+        assert_eq!(process_tag("Damage.value.{FIRE|UNKNOWNTAG}", &resolver), format!("Damage.value.{}", fire_unknown_val));
         
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.value.{COMPLETELYUNKNOWN}", &resolver), "Damage.value.{COMPLETELYUNKNOWN}");
+        assert_eq!(process_tag("Damage.value.{COMPLETELYUNKNOWN}", &resolver), "Damage.value.{COMPLETELYUNKNOWN}");
     }
 
     #[test]
     fn test_case_insensitivity_in_curly() { // Renamed for clarity
         let resolver = DamageTags;
         let fire_axe_val = resolver.build_permissive_mask("fire|axe");
-        assert_eq!(convert_string_tagged_path_to_numerical("Damage.type.{FiRe|AxE}", &resolver), format!("Damage.type.{}", fire_axe_val));
+        assert_eq!(process_tag("Damage.type.{FiRe|AxE}", &resolver), format!("Damage.type.{}", fire_axe_val));
     }
 
     #[test]
     fn test_edge_cases_curly_empty_and_at_only() { // Renamed for clarity
         let resolver = DamageTags;
-        assert_eq!(convert_string_tagged_path_to_numerical("", &resolver), "");
-        assert_eq!(convert_string_tagged_path_to_numerical("@Player", &resolver), "@Player");
-        assert_eq!(convert_string_tagged_path_to_numerical(".{}", &resolver), ".{}"); 
-        assert_eq!(convert_string_tagged_path_to_numerical("Name.{}.@Target", &resolver), "Name.{}.@Target");
-        assert_eq!(convert_string_tagged_path_to_numerical("{}", &resolver), "{}");
-        assert_eq!(convert_string_tagged_path_to_numerical("{}@Target", &resolver), "{}@Target");
+        assert_eq!(process_tag("", &resolver), "");
+        assert_eq!(process_tag("@Player", &resolver), "@Player");
+        assert_eq!(process_tag(".{}", &resolver), ".{}"); 
+        assert_eq!(process_tag("Name.{}.@Target", &resolver), "Name.{}.@Target");
+        assert_eq!(process_tag("{}", &resolver), "{}");
+        assert_eq!(process_tag("{}@Target", &resolver), "{}@Target");
     }
      #[test]
     fn test_path_like_dot_curly_tag() {
         let resolver = DamageTags;
         let fire_val = resolver.build_permissive_mask("FIRE");
-        assert_eq!(convert_string_tagged_path_to_numerical(".{FIRE}", &resolver), format!(".{}", fire_val));
+        assert_eq!(process_tag(".{FIRE}", &resolver), format!(".{}", fire_val));
     }
 }

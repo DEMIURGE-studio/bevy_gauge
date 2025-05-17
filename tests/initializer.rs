@@ -35,6 +35,7 @@ fn test_basic_stats_initialization() {
 
     app.update(); // This should trigger the OnAdd<StatsInitializer> observer
 
+    // TODO generally access is done via a Stats query, and Stats::get()
     // Check if stats are applied
     let health_val = app.world_mut().run_system_once(
         move |accessor: StatAccessor| accessor.get(entity, "Health.base")

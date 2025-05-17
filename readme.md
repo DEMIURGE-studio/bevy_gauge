@@ -108,10 +108,6 @@ fn apply_buff_system(
         // Add +5 to Strength (Modifiable stat)
         println!("Applying +5 Strength buff.");
         stat_accessor.add_modifier(player_entity, "Strength", 5.0);
-
-        // Set CurrentHealth (Flat stat) directly
-        // let current_max_health = stat_accessor.evaluate(player_entity, "MaxHealth"); // May need evaluate for complex dependencies
-        // stat_accessor.set(player_entity, "CurrentHealth", current_max_health);
     }
 }
 
@@ -119,22 +115,20 @@ fn display_health_system(
     // For reading stats, query the Stats component directly.
     player_query: Query<(Entity, &Stats), With<Player>>,
 ) {
-    if let Ok((player_entity, stats_component)) = player_query.get_single() {
-        // Use stats_component.get() for direct stat values or parts.
-        // Use stats_component.evaluate() if the stat is Complex/Tagged or has expression modifiers
-        // that need full re-evaluation based on other potentially changed stats.
-        // StatAccessor::evaluate() is also an option if you don't have &Stats.
+    if let Ok((player_entity, stats)) = player_query.get_single() {
+        // Use stats.get() for direct stat values or parts.
 
-        let strength = stats_component.get("Strength");
-        let attack_power = stats_component.evaluate("AttackPower"); // Evaluate as it depends on Strength expression
-        let max_health = stats_component.evaluate("MaxHealth"); // Evaluate as it depends on Strength expression
-        let current_health = stats_component.get("CurrentHealth");
-        let attack_damage = stats_component.evaluate("AttackDamage"); // Complex stat, needs evaluation
+        // Get total
+        let strength = stats.get("Strength");
 
-        println!(
-            "Player Stats -- STR: {}, ATK_PWR: {}, HP: {}/{}, DMG: {}",
-            strength, attack_power, current_health, max_health, attack_damage
-        );
+        // Get added
+        let added_strength = stats.get("Strength.added");
+        
+        // Get increased fire damage with axes. Process the tag since bevy_gauge doesn't 
+        // implicitly understand string based tags.
+        // 
+        let inc_fire_damage_with_axes = stats.get(Konfig::process_path("Damage.increased.{FIRE|AXE}"));
+        let total_ice_damage_with_swords = stats.get(Konfig::process_path("Damage.{ICE|SWORD}"));
     }
 }
 ```
