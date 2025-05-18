@@ -39,7 +39,7 @@ Welcome to `bevy_gauge`, a flexible stat and modifier system for the Bevy game e
     *   [`Tagged`](#tagged)
 12. [Modifier Sets](#modifier-sets)
     *   [The `ModifierSet` Struct](#the-modifierset-struct)
-    *   [The `modifier_set!` Macro](#the-modifier_set-macro)
+    *   [The `mod_set!` Macro](#the-modifier_set-macro)
 13. [Stat Effects](#stat-effects)
     *   [The `StatEffect` Trait](#the-stateffect-trait)
     *   [Applying and Removing Effects](#applying-and-removing-effects)
@@ -514,20 +514,20 @@ modifiers.add("Strength.base", Expression::new("10.0 + Level * 2.0").unwrap());
 modifiers.add("Damage.increased.Fire", 0.25); // 25% increased Fire damage
 ```
 
-### The `modifier_set!` Macro
-The `modifier_set!` macro provides a more concise way to define a `ModifierSet`.
+### The `mod_set!` Macro
+The `mod_set!` macro provides a more concise way to define a `ModifierSet`.
 
 ```rust
 use bevy_gauge::prelude::*;
 
-let modifiers = modifier_set! {
+let modifiers = mod_set! {
     "Health.base" => 100.0,
     "Mana.base" => 50.0,
     "AttackPower.base" => [
         10.0, // Add a flat 10
         "Strength * 0.5", // And add 50% of Strength
     ],
-    "Damage.increased.Fire" => 0.15 // 15% increased Fire damage (tag is numeric)
+    "Damage.increased.{FIRE}" => 0.15 // 15% increased Fire damage (tag is numeric)
 };
 
 // Usage with StatsInitializer:

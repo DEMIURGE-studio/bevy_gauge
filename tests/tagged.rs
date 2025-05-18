@@ -38,8 +38,9 @@ fn test_basic_modifier_operations() {
 
     // Test the query using a one-shot system
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let value = stats_mutator.evaluate(entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(entity).unwrap();
+            let value = stats_comp.get("Damage.increased.1");
             assert_eq!(value, 50.0);
         }
     );
@@ -58,8 +59,9 @@ fn test_basic_modifier_operations() {
 
     // Verify removal using a one-shot system
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let value = stats_mutator.evaluate(entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(entity).unwrap();
+            let value = stats_comp.get("Damage.increased.1");
             assert_eq!(value, 0.0); // Should be 0 after removal
         }
     );
@@ -85,9 +87,10 @@ fn test_query_caching() {
     // Query for fire damage with weapon (tags 1 & 2 -> combined tag = 3)
     // Use a system to evaluate twice
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let v1 = stats_mutator.evaluate(entity, "Damage.increased.3"); // 3 = fire(1) | weapon(2)
-            let v2 = stats_mutator.evaluate(entity, "Damage.increased.3");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(entity).unwrap();
+            let v1 = stats_comp.get("Damage.increased.3"); // 3 = fire(1) | weapon(2)
+            let v2 = stats_comp.get("Damage.increased.3");
             assert_eq!(v1, v2, "Consecutive evaluations should yield the same result");
             assert_eq!(v1, 80.0, "Combined tagged modifiers should sum correctly");
         }
@@ -114,9 +117,10 @@ fn test_cache_invalidation() {
     app.world_mut().entity_mut(initial_value_holder).insert(TempValue(0.0));
 
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator, mut q_temp: Query<&mut TempValue>| {
+        move |q_stats: Query<&Stats>, mut q_temp: Query<&mut TempValue>| {
             if let Ok(mut temp_val) = q_temp.get_mut(initial_value_holder) {
-                 temp_val.0 = stats_mutator.evaluate(entity, "Damage.increased.3");
+                 let stats_comp = q_stats.get(entity).unwrap();
+                 temp_val.0 = stats_comp.get("Damage.increased.3");
             }
         }
     );
@@ -133,8 +137,9 @@ fn test_cache_invalidation() {
     
     // Evaluate after add and assert
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let after_add_value = stats_mutator.evaluate(entity, "Damage.increased.3");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(entity).unwrap();
+            let after_add_value = stats_comp.get("Damage.increased.3");
             assert_ne!(initial_value, after_add_value);
             assert_eq!(after_add_value, 80.0);
         }
@@ -171,16 +176,18 @@ fn test_source_dependency_updates() {
 
     // Test initial source value
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let val = stats_mutator.evaluate(source, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(source).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 50.0);
         }
     );
     
     // Test initial target value
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let val = stats_mutator.evaluate(target, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 50.0);
         }
     );
@@ -194,16 +201,18 @@ fn test_source_dependency_updates() {
 
     // Test updated source value
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let val = stats_mutator.evaluate(source, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(source).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 80.0);
         }
     );
 
     // Check that target was updated
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let val = stats_mutator.evaluate(target, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 80.0); // Failing assertion expected here if bug persists
         }
     );
@@ -247,14 +256,18 @@ fn test_complex_dependency_chain() {
 
     // Evaluate initial chain and assert
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let gp_val = stats_mutator.evaluate(grandparent, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let gp_stats = q_stats.get(grandparent).unwrap();
+            let p_stats = q_stats.get(parent).unwrap();
+            let c_stats = q_stats.get(child).unwrap();
+
+            let gp_val = gp_stats.get("Damage.increased.1");
             assert_eq!(gp_val, 50.0);
 
-            let p_val = stats_mutator.evaluate(parent, "Damage.increased.1");
+            let p_val = p_stats.get("Damage.increased.1");
             assert_eq!(p_val, 75.0); // 50 * 1.5
 
-            let c_val = stats_mutator.evaluate(child, "Damage.increased.1");
+            let c_val = c_stats.get("Damage.increased.1");
             assert_eq!(c_val, 150.0); // 75 * 2.0
         }
     );
@@ -268,14 +281,18 @@ fn test_complex_dependency_chain() {
 
     // Evaluate updated chain and assert
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let new_gp_val = stats_mutator.evaluate(grandparent, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let gp_stats = q_stats.get(grandparent).unwrap();
+            let p_stats = q_stats.get(parent).unwrap();
+            let c_stats = q_stats.get(child).unwrap();
+
+            let new_gp_val = gp_stats.get("Damage.increased.1");
             assert_eq!(new_gp_val, 100.0);
 
-            let new_parent_val = stats_mutator.evaluate(parent, "Damage.increased.1");
+            let new_parent_val = p_stats.get("Damage.increased.1");
             assert_eq!(new_parent_val, 150.0);
 
-            let new_child_val = stats_mutator.evaluate(child, "Damage.increased.1");
+            let new_child_val = c_stats.get("Damage.increased.1");
             assert_eq!(new_child_val, 300.0);
         }
     );
@@ -322,14 +339,18 @@ fn test_complex_dependency_chain_modifiable() {
     // Evaluate initial chain and assert
     // System 3
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let gp_val = stats_mutator.evaluate(grandparent, "Power");
+        move |q_stats: Query<&Stats>| {
+            let gp_stats = q_stats.get(grandparent).unwrap();
+            let p_stats = q_stats.get(parent).unwrap();
+            let c_stats = q_stats.get(child).unwrap();
+
+            let gp_val = gp_stats.get("Power");
             assert_eq!(gp_val, 50.0);
 
-            let p_val = stats_mutator.evaluate(parent, "Power");
+            let p_val = p_stats.get("Power");
             assert_eq!(p_val, 60.0); // 50 (from G) + 10
 
-            let c_val = stats_mutator.evaluate(child, "Power");
+            let c_val = c_stats.get("Power");
             assert_eq!(c_val, 65.0); // 60 (from P) + 5
         }
     );
@@ -346,14 +367,18 @@ fn test_complex_dependency_chain_modifiable() {
     // Evaluate updated chain and assert
     // System 5
     let _ = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| {
-            let new_gp_val = stats_mutator.evaluate(grandparent, "Power");
+        move |q_stats: Query<&Stats>| {
+            let gp_stats = q_stats.get(grandparent).unwrap();
+            let p_stats = q_stats.get(parent).unwrap();
+            let c_stats = q_stats.get(child).unwrap();
+
+            let new_gp_val = gp_stats.get("Power");
             assert_eq!(new_gp_val, 70.0);
 
-            let new_parent_val = stats_mutator.evaluate(parent, "Power");
+            let new_parent_val = p_stats.get("Power");
             assert_eq!(new_parent_val, 80.0); // 70 (from G) + 10
 
-            let new_child_val = stats_mutator.evaluate(child, "Power");
+            let new_child_val = c_stats.get("Power");
             assert_eq!(new_child_val, 85.0); // 80 (from P) + 5
         }
     );
@@ -388,8 +413,9 @@ fn test_add_modifier_then_register_source_tagged() {
 
     // System 3: Evaluate target (source not registered yet)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             // Expression "Damage.increased.1@MySource" should eval to 0 as MySource provides 0
             assert_eq!(val, 0.0, "Target should be 0 before source registration"); 
         }
@@ -404,8 +430,9 @@ fn test_add_modifier_then_register_source_tagged() {
 
     // System 5: Evaluate target (source IS registered)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 100.0, "Target should be 100.0 after source registration");
         }
     );
@@ -419,8 +446,9 @@ fn test_add_modifier_then_register_source_tagged() {
 
     // System 7: Evaluate target (should reflect source change)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 150.0, "Target should update to 150.0 after source modification");
         }
     );
@@ -455,8 +483,9 @@ fn test_add_modifier_then_register_source_modifiable() {
 
     // System 3: Evaluate target (source not registered yet)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Power");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Power");
             // Power@MySource = 0, so 0 + 10.0 = 10.0
             assert_eq!(val, 10.0, "Target should be 10.0 before source registration"); 
         }
@@ -472,8 +501,9 @@ fn test_add_modifier_then_register_source_modifiable() {
     // System 5: Evaluate target (source IS registered)
     // Power@MySource = 100, so 100 + 10.0 = 110.0
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Power");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Power");
             assert_eq!(val, 110.0, "Target should be 110.0 after source registration");
         }
     );
@@ -488,8 +518,9 @@ fn test_add_modifier_then_register_source_modifiable() {
     // System 7: Evaluate target (should reflect source change)
     // Power@MySource = 150, so 150 + 10.0 = 160.0
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Power");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Power");
             assert_eq!(val, 160.0, "Target should update to 160.0 after source modification");
         }
     );
@@ -525,8 +556,9 @@ fn test_source_despawn_updates_dependent_tagged() {
 
     // System 2: Evaluate target (source is live)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             assert_eq!(val, 100.0, "Target should be 100.0 before source despawn");
         }
     );
@@ -541,8 +573,9 @@ fn test_source_despawn_updates_dependent_tagged() {
 
     // System 5: Evaluate target (source is despawned)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Damage.increased.1");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Damage.increased.1");
             // The expression "Damage.increased.1@MySource" should now evaluate with MySource contributing 0
             // because remove_stat_entity should have cleared the cached value for this source variable.
             assert_eq!(val, 0.0, "Target should be 0.0 after source despawn and update");
@@ -575,8 +608,9 @@ fn test_source_despawn_updates_dependent_modifiable() {
 
     // System 2: Evaluate target (source is live)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Power");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Power");
             assert_eq!(val, 85.0, "Target should be 85.0 (75+10) before source despawn");
         }
     );
@@ -590,8 +624,9 @@ fn test_source_despawn_updates_dependent_modifiable() {
 
     // System 5: Evaluate target (source is despawned)
     let _ = app.world_mut().run_system_once(
-        move |sa: StatsMutator| {
-            let val = sa.evaluate(target_entity, "Power");
+        move |q_stats: Query<&Stats>| {
+            let stats_comp = q_stats.get(target_entity).unwrap();
+            let val = stats_comp.get("Power");
             // Power@MyPowerSource should be 0, so expression evaluates to 0.0 + 10.0
             assert_eq!(val, 10.0, "Target should be 10.0 after source despawn and update");
         }

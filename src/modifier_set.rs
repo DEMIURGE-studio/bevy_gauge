@@ -10,7 +10,7 @@ use crate::prelude::{StatsMutator, StatEffect, ModifierType};
 ///
 /// It dereferences to `HashMap<String, Vec<ModifierType>>`, allowing direct manipulation
 /// of the underlying map if needed, though `add` provides a convenient way to insert modifiers.
-#[derive(Component, Clone, Debug, Default, Deref, DerefMut)]
+#[derive(Component, Clone, Debug, Default)]
 pub struct ModifierSet(HashMap<String, Vec<ModifierType>>);
 
 impl ModifierSet {
@@ -34,7 +34,7 @@ impl ModifierSet {
     /// * `path`: The string representation of the stat path (e.g., "Health.base", "CritChance.added").
     /// * `value`: The modifier to add, convertible into `ModifierType` (e.g., `10.0f32` or an `Expression`).
     pub fn add<V: Into<ModifierType>>(&mut self, path: &str, value: V) {
-        self.entry(path.to_string())
+        self.0.entry(path.to_string())
             .or_insert_with(Vec::new)
             .push(value.into());
     }
