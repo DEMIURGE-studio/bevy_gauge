@@ -378,7 +378,7 @@ impl Tagged {
             return 0.0;
         };
 
-        let mod_type = if part == "increased" || part == "base" { ModType::Add } else { ModType::Mul };
+        let mod_type = Konfig::get_relationship_type(part);
 
         let mut relevant_mod_values = Vec::new();
         for (mod_tag_key, modifiable_stat_for_tag) in &tagged_entry.0 {
