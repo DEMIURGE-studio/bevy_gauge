@@ -380,10 +380,7 @@ impl Tagged {
         let mod_type = Konfig::get_relationship_type(part);
 
         let mut relevant_mod_values = Vec::new();
-        for (mod_tag_key, modifiable_stat_for_tag) in &tagged_entry.0 {
-            // Debug output
-            println!("Checking modifier tag {} against query tag {}", mod_tag_key, tag);
-            
+        for (mod_tag_key, modifiable_stat_for_tag) in &tagged_entry.0 {            
             // Check if a permissive modifier applies to a strict query
             // Permissive modifiers start as u32::MAX and have category bits cleared, then specific bits set
             // Strict queries are just the combination of specific bits (e.g., FIRE | AXE = 65)
@@ -399,15 +396,9 @@ impl Tagged {
                 (tag & mod_tag_key) == tag
             };
             
-            println!("  (tag & mod_tag_key) == tag: ({} & {}) == {} -> {} == {} -> {}", 
-                     tag, mod_tag_key, tag, tag & mod_tag_key, tag, modifier_applies);
-            
             if modifier_applies {
                 let mod_value = modifiable_stat_for_tag.evaluate(&StatPath::parse(""), stats);
                 relevant_mod_values.push(mod_value);
-                println!("  -> Modifier applies, value: {}", mod_value);
-            } else {
-                println!("  -> Modifier does not apply");
             }
         }
 
