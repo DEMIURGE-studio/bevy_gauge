@@ -784,7 +784,7 @@ mod remove_stat_entity_tests {
         
         let expected_dependent_on_c = DependentType::EntityStat {
             entity: entity_a,
-            path: STAT_A_BUFFED_POWER.to_string(),
+            path: format!("{}.expr", STAT_A_BUFFED_POWER),
             source_alias: ALIAS_C_AS_SOURCE_FOR_A.to_string(),
         };
         assert!(
@@ -825,7 +825,7 @@ mod remove_stat_entity_tests {
         
         let removed_dependent_on_c = DependentType::EntityStat {
             entity: test_entities.a.unwrap(),
-            path: STAT_A_BUFFED_POWER.to_string(),
+            path: format!("{}.expr", STAT_A_BUFFED_POWER),
             source_alias: ALIAS_C_AS_SOURCE_FOR_A.to_string(),
         };
         assert!(
