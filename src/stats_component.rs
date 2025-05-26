@@ -174,7 +174,7 @@ impl Stats {
                 if let Some(source_alias_ref) = &parsed_var_path.target { // source_alias_ref is &String
                     let requirement = SourceRequirement {
                         path_on_source: parsed_var_path.without_target_as_string(),
-                        local_dependent: path.name.to_string(),
+                        local_dependent: path.full_path.to_string(),
                         path_in_expression: var_name_in_expr_str.to_string(),
                     };
                     self.source_requirements

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy_gauge::prelude::*;
+use serial_test::serial;
 
 // Helper function to create a basic config for testing
 fn create_test_config()  {
@@ -17,6 +18,7 @@ fn create_modifiable_power_config() {
 }
 
 #[test]
+#[serial]
 fn test_basic_modifier_operations() {
     let mut app = App::new();
     create_test_config();
@@ -68,6 +70,7 @@ fn test_basic_modifier_operations() {
 }
 
 #[test]
+#[serial]
 fn test_query_caching() {
     let mut app = App::new();
     create_test_config();
@@ -98,6 +101,7 @@ fn test_query_caching() {
 }
 
 #[test]
+#[serial]
 fn test_cache_invalidation() {
     let mut app = App::new();
     create_test_config();
@@ -147,6 +151,7 @@ fn test_cache_invalidation() {
 }
 
 #[test]
+#[serial]
 fn test_source_dependency_updates() {
     let mut app = App::new();
     create_test_config();
@@ -220,6 +225,7 @@ fn test_source_dependency_updates() {
 
 
 #[test]
+#[serial]
 fn test_complex_dependency_chain() {
     let mut app = App::new();
     create_test_config();
@@ -299,6 +305,7 @@ fn test_complex_dependency_chain() {
 }
 
 #[test]
+#[serial]
 fn test_complex_dependency_chain_modifiable() {
     let mut app = App::new();
     create_modifiable_power_config();
@@ -385,6 +392,7 @@ fn test_complex_dependency_chain_modifiable() {
 }
 
 #[test]
+#[serial]
 fn test_add_modifier_then_register_source_tagged() {
     let mut app = App::new();
     create_test_config();
@@ -455,6 +463,7 @@ fn test_add_modifier_then_register_source_tagged() {
 }
 
 #[test]
+#[serial]
 fn test_add_modifier_then_register_source_modifiable() {
     let mut app = App::new();
     create_modifiable_power_config();
@@ -527,6 +536,7 @@ fn test_add_modifier_then_register_source_modifiable() {
 }
 
 #[test]
+#[serial]
 fn test_source_despawn_updates_dependent_tagged() {
     let mut app = App::new();
     create_test_config();
@@ -584,6 +594,7 @@ fn test_source_despawn_updates_dependent_tagged() {
 }
 
 #[test]
+#[serial]
 fn test_source_despawn_updates_dependent_modifiable() {
     let mut app = App::new();
     create_modifiable_power_config();
