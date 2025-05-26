@@ -210,9 +210,8 @@ impl Stat for Modifiable {
     fn evaluate(&self, _path: &StatPath, stats: &Stats) -> f32 {
         let computed: Vec<f32> = self.mods.iter()
             .map(|expr| {
-                let context = stats.get_context();
-                let val = expr.evaluate(context);
-                val
+                // Use Stats::evaluate_expression which handles missing variables properly
+                stats.evaluate_expression(&expr.definition, None).unwrap_or(0.0)
             })
             .collect();
         
@@ -358,7 +357,7 @@ impl Stat for Complex {
 pub(crate) struct Tagged {
     pub(crate) total: Expression,
     pub(crate) modifier_steps: HashMap<String, TaggedEntry>,
-    query_cache: DashMap<(String, u32), f32>,
+    pub(crate) query_tracker: DashMap<(String, u32), ()>, // Track queries made, but don't cache results
 }
 
 /// Entry in a Tagged stat's modifier map, storing modifiers for a specific combination of tags.
@@ -382,9 +381,33 @@ impl Tagged {
 
         let mut relevant_mod_values = Vec::new();
         for (mod_tag_key, modifiable_stat_for_tag) in &tagged_entry.0 {
-            if tag == 0 || (tag & mod_tag_key) == *mod_tag_key {
+            // Debug output
+            println!("Checking modifier tag {} against query tag {}", mod_tag_key, tag);
+            
+            // Check if a permissive modifier applies to a strict query
+            // Permissive modifiers start as u32::MAX and have category bits cleared, then specific bits set
+            // Strict queries are just the combination of specific bits (e.g., FIRE | AXE = 65)
+            // A permissive modifier applies if the strict query "satisfies" what the modifier requires
+            let modifier_applies = if tag == 0 {
+                true // tag 0 means "match everything"
+            } else if *mod_tag_key == u32::MAX {
+                false // u32::MAX means no valid tags were resolved, shouldn't match anything
+            } else {
+                // For permissive tags: check if the strict query has all the bits that the permissive modifier requires
+                // The permissive modifier has the required bits set and "don't care" bits as 1
+                // We need to check if (query & modifier) == query, meaning the modifier covers the query
+                (tag & mod_tag_key) == tag
+            };
+            
+            println!("  (tag & mod_tag_key) == tag: ({} & {}) == {} -> {} == {} -> {}", 
+                     tag, mod_tag_key, tag, tag & mod_tag_key, tag, modifier_applies);
+            
+            if modifier_applies {
                 let mod_value = modifiable_stat_for_tag.evaluate(&StatPath::parse(""), stats);
                 relevant_mod_values.push(mod_value);
+                println!("  -> Modifier applies, value: {}", mod_value);
+            } else {
+                println!("  -> Modifier does not apply");
             }
         }
 
@@ -399,10 +422,34 @@ impl Tagged {
         final_value
     }
 
-    fn invalidate_dependent_cache_entries(&self, affected_tag: u32) {
-        self.query_cache.retain(|(_part, query_tag_from_key), _value| {
-            !query_tag_from_key.has_any(affected_tag)
+    fn invalidate_dependent_cache_entries(&self, affected_tag: u32, stats: &Stats) {
+        // Find all tracked queries that would be affected by this tag change
+        let mut paths_to_invalidate = Vec::new();
+        
+        self.query_tracker.retain(|(part, query_tag_from_key), _| {
+            // Check if the affected permissive tag could impact this tracked query
+            let should_invalidate = if *query_tag_from_key == 0 {
+                true // query tag 0 means "match everything", so any change affects it
+            } else if affected_tag == u32::MAX {
+                false // u32::MAX means no valid tags, shouldn't affect anything
+            } else {
+                // Check if the affected permissive modifier would apply to this tracked query
+                (*query_tag_from_key & affected_tag) == *query_tag_from_key
+            };
+            
+            if should_invalidate {
+                // Build the full path for this query to invalidate in Stats cache
+                let full_path = format!("Damage.{}.{}", part, query_tag_from_key);
+                paths_to_invalidate.push(full_path);
+            }
+            
+            !should_invalidate // retain returns true for items to keep, false for items to remove
         });
+        
+        // Invalidate the affected paths in the Stats component's cache
+        for path in paths_to_invalidate {
+            stats.remove_cached(&path);
+        }
     }
 }
 
@@ -420,7 +467,7 @@ impl Stat for Tagged {
         Self {
             total: compiled_expression,
             modifier_steps,
-            query_cache: DashMap::new(),
+            query_tracker: DashMap::new(),
         }
     }
 
@@ -433,7 +480,8 @@ impl Stat for Tagged {
         let step = step_map.0.entry(tag).or_insert(Modifiable::new(path));
         step.add_modifier(path, modifier);
 
-        self.invalidate_dependent_cache_entries(tag);
+        // Note: We can't call invalidate_dependent_cache_entries here because we don't have access to Stats
+        // The invalidation will be handled by the StatsMutator when it calls clear_internal_cache_for_path
     }
 
     fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
@@ -446,19 +494,19 @@ impl Stat for Tagged {
             }
         }
 
-        self.invalidate_dependent_cache_entries(tag);
+        // Note: We can't call invalidate_dependent_cache_entries here because we don't have access to Stats
+        // The invalidation will be handled by the StatsMutator when it calls clear_internal_cache_for_path
     }
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         if let (Some(part_name), Some(tag_val)) = (&path.part, path.tag) {
-            let cache_key = (part_name.to_string(), tag_val);
-            if let Some(value_ref) = self.query_cache.get(&cache_key) {
-                return *value_ref;
-            } else {
-                let value = self.evaluate_part(part_name, tag_val, stats);
-                self.query_cache.insert(cache_key.clone(), value);
-                return value;
-            }
+            // Track this query for future invalidation, but don't cache the result
+            let query_key = (part_name.to_string(), tag_val);
+            self.query_tracker.insert(query_key, ());
+            
+            // Always compute the value fresh (Stats component will handle caching)
+            let value = self.evaluate_part(part_name, tag_val, stats);
+            return value;
         } 
         // There is no (part.part.is_some() && path.tag.is_none()) case, because a tag is required for a tagged stat.
         else if path.part.is_none() && path.tag.is_some() {
@@ -475,7 +523,27 @@ impl Stat for Tagged {
         0.0
     }
 
-    fn clear_internal_cache(&mut self, _path: &StatPath) {
-        self.query_cache.clear();
+    fn clear_internal_cache(&mut self, path: &StatPath) {
+        // For Tagged stats, we need to invalidate Stats cache entries for affected queries
+        // Since we don't have access to Stats here, we'll clear our query tracker
+        // The actual Stats cache invalidation should be handled by the caller
+        if let Some(tag) = path.tag {
+            // Remove tracked queries that would be affected by this tag change
+            self.query_tracker.retain(|(_part, query_tag_from_key), _| {
+                let should_invalidate = if *query_tag_from_key == 0 {
+                    true // query tag 0 means "match everything", so any change affects it
+                } else if tag == u32::MAX {
+                    false // u32::MAX means no valid tags, shouldn't affect anything
+                } else {
+                    // Check if the affected permissive modifier would apply to this tracked query
+                    (*query_tag_from_key & tag) == *query_tag_from_key
+                };
+                
+                !should_invalidate // retain returns true for items to keep, false for items to remove
+            });
+        } else {
+            // If no specific tag, clear all tracked queries for this stat
+            self.query_tracker.clear();
+        }
     }
 }

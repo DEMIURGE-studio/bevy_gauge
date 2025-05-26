@@ -122,7 +122,7 @@ impl Stats {
     }
 
     pub(crate) fn remove_cached(&self, key: &str) {
-        self.cached_stats.set(key, 0.0);
+        self.cached_stats.remove_entry(key);
     }
 
     pub(crate) fn get_context(&self) -> &HashMapContext {
@@ -264,6 +264,17 @@ impl Stats {
             new_eval_context.set_value(key.into(), val.clone()).map_err(|e| StatError::Internal { details: format!("Failed to set internal context var: {}", e)})?;
         }
         
+        // Parse the expression to find all variable identifiers
+        if let Ok(compiled_expr) = evalexpr::build_operator_tree::<evalexpr::DefaultNumericTypes>(expr_str) {
+            // Ensure all variables in the expression have values, defaulting missing ones to 0.0
+            for var_name in compiled_expr.iter_variable_identifiers() {
+                if new_eval_context.get_value(var_name).is_none() {
+                    new_eval_context.set_value(var_name.to_string(), Value::Float(0.0))
+                        .map_err(|e| StatError::Internal { details: format!("Failed to set default value for missing variable '{}': {}", var_name, e)})?;
+                }
+            }
+        }
+        
         let eval_result = evalexpr::eval_with_context(expr_str, &new_eval_context)
             .map_err(|e| StatError::ExpressionError { expression: expr_str.to_string(), details: e.to_string() })?;
         
@@ -271,9 +282,45 @@ impl Stats {
     }
 
     pub(crate) fn clear_internal_cache_for_path(&mut self, path: &StatPath) {
+        // First, collect paths to invalidate for Tagged stats
+        let mut paths_to_invalidate = Vec::new();
+        
         if let Some(stat_definition) = self.definitions.get_mut(path.name) {
+            // For Tagged stats, we need to clear Stats cache entries for affected queries
+            if let StatType::Tagged(tagged_stat) = stat_definition {
+                if let Some(tag) = path.tag {
+                    // Find all tracked queries that would be affected by this tag change
+                    tagged_stat.query_tracker.retain(|(part, query_tag_from_key), _| {                        
+                        let should_invalidate = if *query_tag_from_key == 0 {
+                            true // query tag 0 means "match everything", so any change affects it
+                        } else if tag == u32::MAX {
+                            false // u32::MAX means no valid tags, shouldn't affect anything
+                        } else {
+                            // Check if the affected permissive modifier would apply to this tracked query
+                            (*query_tag_from_key & tag) == *query_tag_from_key
+                        };
+                        
+                        if should_invalidate {
+                            // Build the full path for this query to invalidate in Stats cache
+                            let full_path = format!("{}.{}.{}", path.name, part, query_tag_from_key);
+                            paths_to_invalidate.push(full_path);
+                        }
+                        
+                        !should_invalidate // retain returns true for items to keep, false for items to remove
+                    });
+                }
+            }
+            
             stat_definition.clear_internal_cache(path);
         }
+        
+        // Now invalidate the affected paths in the Stats component's cache
+        for invalidate_path in paths_to_invalidate {
+            self.remove_cached(&invalidate_path);
+        }
+        
+        // Also clear the Stats component's own cache for this specific path
+        self.remove_cached(&path.full_path);
     }
 }
 
@@ -297,6 +344,23 @@ impl SyncContext {
     fn set(&self, path: &str, value: f32) {
         unsafe {
             (*self.0.get()).set_value(path.to_string(), Value::Float(value as f64)).unwrap()
+        }
+    }
+
+    fn remove_entry(&self, key: &str) {
+        unsafe {
+            let old_context = &*self.0.get();
+            let mut new_context = HashMapContext::new();
+            
+            // Copy all entries except the one we want to remove
+            for (existing_key, value) in old_context.iter_variables() {
+                if existing_key != key {
+                    new_context.set_value(existing_key.into(), value.clone()).unwrap();
+                }
+            }
+            
+            // Replace the old context with the new one
+            *self.0.get() = new_context;
         }
     }
 

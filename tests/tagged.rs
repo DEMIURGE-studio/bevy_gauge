@@ -2,6 +2,20 @@ use bevy::prelude::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy_gauge::prelude::*;
 use serial_test::serial;
+    
+// Define tag categories and values for proper tag system testing
+stat_macros::define_tags! {
+    DamageTags,
+    damage_type {
+        elemental { fire, cold, lightning },
+        physical,
+        chaos,
+    },
+    weapon_type {
+        melee { sword, axe },
+        ranged { bow, wand },
+    },
+}
 
 // Helper function to create a basic config for testing
 fn create_test_config()  {
@@ -9,6 +23,9 @@ fn create_test_config()  {
     // Configure for a damage stat with base/increased/more parts
     Konfig::register_stat_type("Damage", "Tagged");
     Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more"); // Ensure 1.0 for float context
+    
+    // Register the tag resolver with Konfig
+    Konfig::register_tag_set("Damage", Box::new(DamageTags));
 }
 
 // New config for Modifiable "Power" stat
@@ -29,9 +46,10 @@ fn test_basic_modifier_operations() {
     // Add modifier using a one-shot system
     let add_mod_id = app.world_mut().register_system(
         move |mut stats_mutator: StatsMutator| {
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
             stats_mutator.add_modifier(
                 entity,
-                "Damage.increased.1", // 1 = fire tag
+                &fire_path,
                 50.0f32, // 50% increased fire damage
             );
         }
@@ -42,7 +60,8 @@ fn test_basic_modifier_operations() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(entity).unwrap();
-            let value = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let value = stats_comp.get(&fire_query_path);
             assert_eq!(value, 50.0);
         }
     );
@@ -50,9 +69,10 @@ fn test_basic_modifier_operations() {
     // Remove the modifier using a one-shot system
     let remove_mod_id = app.world_mut().register_system(
         move |mut stats_mutator: StatsMutator| {
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
             stats_mutator.remove_modifier(
                 entity,
-                "Damage.increased.1",
+                &fire_path,
                 50.0f32,
             );
         }
@@ -63,7 +83,8 @@ fn test_basic_modifier_operations() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(entity).unwrap();
-            let value = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let value = stats_comp.get(&fire_query_path);
             assert_eq!(value, 0.0); // Should be 0 after removal
         }
     );
@@ -81,19 +102,22 @@ fn test_query_caching() {
     // Add modifiers using a one-shot system
     let add_mods_id = app.world_mut().register_system(
         move |mut stats_mutator: StatsMutator| {
-            stats_mutator.add_modifier(entity, "Damage.increased.1", 50.0f32); // fire (tag=1)
-            stats_mutator.add_modifier(entity, "Damage.increased.2", 30.0f32); // weapon (tag=2)
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            let axe_path = Konfig::process_path("Damage.increased.{AXE}");
+            stats_mutator.add_modifier(entity, &fire_path, 50.0f32); // fire damage
+            stats_mutator.add_modifier(entity, &axe_path, 30.0f32); // axe damage
         }
     );
     let _ = app.world_mut().run_system(add_mods_id).unwrap();
 
-    // Query for fire damage with weapon (tags 1 & 2 -> combined tag = 3)
+    // Query for fire damage with axe (combined tags)
     // Use a system to evaluate twice
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(entity).unwrap();
-            let v1 = stats_comp.get("Damage.increased.3"); // 3 = fire(1) | weapon(2)
-            let v2 = stats_comp.get("Damage.increased.3");
+            let fire_axe_query_path = format!("Damage.increased.{}", DamageTags::FIRE | DamageTags::AXE);
+            let v1 = stats_comp.get(&fire_axe_query_path);
+            let v2 = stats_comp.get(&fire_axe_query_path);
             assert_eq!(v1, v2, "Consecutive evaluations should yield the same result");
             assert_eq!(v1, 80.0, "Combined tagged modifiers should sum correctly");
         }
@@ -109,43 +133,53 @@ fn test_cache_invalidation() {
 
     let entity = app.world_mut().spawn(Stats::new()).id();
 
-    // Initial setup
+    // Initial setup: Add a permissive modifier (fire + axe)
     let _ = app.world_mut().run_system_once(
-        move |mut stats_mutator: StatsMutator| {
-            stats_mutator.add_modifier(entity, "Damage.increased.1", 50.0f32);
+        move |mut stats_mutator: StatsMutator| { 
+            let fire_axe_path = Konfig::process_path("Damage.increased.{FIRE|AXE}");
+            println!("Processed FIRE+AXE path: {}", fire_axe_path);
+            stats_mutator.add_modifier(entity, &fire_axe_path, 50.0f32);
         }
     );
-    // Evaluate initial value and store it for comparison (this one needs to be captured)
-    let initial_value_holder = app.world_mut().spawn_empty().id(); // Dummy entity to hold a component
+    
+    // Query with strict tags (fire + axe) and store initial value
+    let initial_value_holder = app.world_mut().spawn_empty().id();
     #[derive(Component)] struct TempValue(f32);
     app.world_mut().entity_mut(initial_value_holder).insert(TempValue(0.0));
 
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>, mut q_temp: Query<&mut TempValue>| {
             if let Ok(mut temp_val) = q_temp.get_mut(initial_value_holder) {
-                 let stats_comp = q_stats.get(entity).unwrap();
-                 temp_val.0 = stats_comp.get("Damage.increased.3");
+                let stats_comp = q_stats.get(entity).unwrap();
+                let strict_query_path = format!("Damage.increased.{}", DamageTags::FIRE | DamageTags::AXE);
+                println!("Querying with path: {}", strict_query_path);
+                let value = stats_comp.get(&strict_query_path);
+                println!("Initial query result: {}", value);
+                temp_val.0 = value;
             }
         }
     );
     let initial_value = app.world().get::<TempValue>(initial_value_holder).unwrap().0;
-    app.world_mut().despawn(initial_value_holder); // Clean up dummy entity
+    app.world_mut().despawn(initial_value_holder);
 
-
-    // Add new modifier
+    // Add a new permissive modifier (fire only) - this should affect the fire+axe query
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
-            stats_mutator.add_modifier(entity, "Damage.increased.2", 30.0f32);
+            let fire_only_path = Konfig::process_path("Damage.increased.{FIRE}");
+            stats_mutator.add_modifier(entity, &fire_only_path, 30.0f32);
         }
     );
     
-    // Evaluate after add and assert
+    // Query again with strict tags and verify cache was invalidated
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(entity).unwrap();
-            let after_add_value = stats_comp.get("Damage.increased.3");
-            assert_ne!(initial_value, after_add_value);
-            assert_eq!(after_add_value, 80.0);
+            let strict_query_path = format!("Damage.increased.{}", DamageTags::FIRE | DamageTags::AXE);
+            println!("Final query path: {}", strict_query_path);
+            let after_add_value = stats_comp.get(&strict_query_path);
+            println!("Final query result: {}", after_add_value);
+            assert_ne!(initial_value, after_add_value, "Cache should have been invalidated");
+            assert_eq!(after_add_value, 80.0, "FIRE+AXE query should include both FIRE-only and FIRE+AXE modifiers");
         }
     );
 }
@@ -164,17 +198,20 @@ fn test_source_dependency_updates() {
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
             stats_mutator.register_source(target, "Source", source);
-            stats_mutator.add_modifier(source, "Damage.increased.1", 50.0f32);
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            stats_mutator.add_modifier(source, &fire_path, 50.0f32);
         }
     );
 
     // Add expression modifier to target, referencing source
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            let fire_source_expr = format!("{}@Source", fire_path);
             stats_mutator.add_modifier(
                 target,
-                "Damage.increased.1",
-                "Damage.increased.1@Source",
+                &fire_path,
+                Expression::new(&fire_source_expr).unwrap(),
             );
         }
     );
@@ -183,7 +220,8 @@ fn test_source_dependency_updates() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(source).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 50.0);
         }
     );
@@ -192,7 +230,8 @@ fn test_source_dependency_updates() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 50.0);
         }
     );
@@ -200,7 +239,8 @@ fn test_source_dependency_updates() {
     // Modify source
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
-            stats_mutator.add_modifier(source, "Damage.increased.1", 30.0f32);
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            stats_mutator.add_modifier(source, &fire_path, 30.0f32);
         }
     );
 
@@ -208,7 +248,8 @@ fn test_source_dependency_updates() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(source).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 80.0);
         }
     );
@@ -217,7 +258,8 @@ fn test_source_dependency_updates() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 80.0); // Failing assertion expected here if bug persists
         }
     );
@@ -240,22 +282,26 @@ fn test_complex_dependency_chain() {
         move |mut stats_mutator: StatsMutator| {
             stats_mutator.register_source(parent, "Parent", grandparent);
             stats_mutator.register_source(child, "Parent", parent);
-            stats_mutator.add_modifier(grandparent, "Damage.increased.1", 50.0f32);
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            stats_mutator.add_modifier(grandparent, &fire_path, 50.0f32);
         }
     );
 
     // Add expression modifiers to parent and child
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            let fire_parent_expr = format!("{}@Parent * 1.5", fire_path);
+            let fire_parent_expr2 = format!("{}@Parent * 2.0", fire_path);
             stats_mutator.add_modifier(
                 parent,
-                "Damage.increased.1",
-                "Damage.increased.1@Parent * 1.5",
+                &fire_path,
+                Expression::new(&fire_parent_expr).unwrap(),
             );
             stats_mutator.add_modifier(
                 child,
-                "Damage.increased.1",
-                "Damage.increased.1@Parent * 2.0",
+                &fire_path,
+                Expression::new(&fire_parent_expr2).unwrap(),
             );
         }
     );
@@ -267,13 +313,14 @@ fn test_complex_dependency_chain() {
             let p_stats = q_stats.get(parent).unwrap();
             let c_stats = q_stats.get(child).unwrap();
 
-            let gp_val = gp_stats.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let gp_val = gp_stats.get(&fire_query_path);
             assert_eq!(gp_val, 50.0);
 
-            let p_val = p_stats.get("Damage.increased.1");
+            let p_val = p_stats.get(&fire_query_path);
             assert_eq!(p_val, 75.0); // 50 * 1.5
 
-            let c_val = c_stats.get("Damage.increased.1");
+            let c_val = c_stats.get(&fire_query_path);
             assert_eq!(c_val, 150.0); // 75 * 2.0
         }
     );
@@ -281,7 +328,8 @@ fn test_complex_dependency_chain() {
     // Modify grandparent
     let _ = app.world_mut().run_system_once(
         move |mut stats_mutator: StatsMutator| {
-            stats_mutator.add_modifier(grandparent, "Damage.increased.1", 50.0f32); // Adds to existing 50, total 100
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            stats_mutator.add_modifier(grandparent, &fire_path, 50.0f32); // Adds to existing 50, total 100
         }
     );
 
@@ -292,13 +340,14 @@ fn test_complex_dependency_chain() {
             let p_stats = q_stats.get(parent).unwrap();
             let c_stats = q_stats.get(child).unwrap();
 
-            let new_gp_val = gp_stats.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let new_gp_val = gp_stats.get(&fire_query_path);
             assert_eq!(new_gp_val, 100.0);
 
-            let new_parent_val = p_stats.get("Damage.increased.1");
+            let new_parent_val = p_stats.get(&fire_query_path);
             assert_eq!(new_parent_val, 150.0);
 
-            let new_child_val = c_stats.get("Damage.increased.1");
+            let new_child_val = c_stats.get(&fire_query_path);
             assert_eq!(new_child_val, 300.0);
         }
     );
@@ -404,17 +453,20 @@ fn test_add_modifier_then_register_source_tagged() {
     // System 1: Add modifier to source
     let _ = app.world_mut().run_system_once(
         move |mut sa: StatsMutator| {
-            sa.add_modifier(source_entity, "Damage.increased.1", 100.0f32);
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            sa.add_modifier(source_entity, &fire_path, 100.0f32);
         }
     );
 
     // System 2: Add expression modifier to target, referencing a currently unknown source alias
     let _ = app.world_mut().run_system_once(
         move |mut sa: StatsMutator| {
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            let fire_source_expr = format!("{}@MySource", fire_path);
             sa.add_modifier(
                 target_entity,
-                "Damage.increased.1", 
-                Expression::new("Damage.increased.1@MySource").unwrap(),
+                &fire_path, 
+                Expression::new(&fire_source_expr).unwrap(),
             );
         }
     );
@@ -423,8 +475,9 @@ fn test_add_modifier_then_register_source_tagged() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target_entity).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
-            // Expression "Damage.increased.1@MySource" should eval to 0 as MySource provides 0
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
+            // Expression should eval to 0 as MySource provides 0
             assert_eq!(val, 0.0, "Target should be 0 before source registration"); 
         }
     );
@@ -440,7 +493,8 @@ fn test_add_modifier_then_register_source_tagged() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target_entity).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 100.0, "Target should be 100.0 after source registration");
         }
     );
@@ -448,7 +502,8 @@ fn test_add_modifier_then_register_source_tagged() {
     // System 6: Modify source stat
     let _ = app.world_mut().run_system_once(
         move |mut sa: StatsMutator| {
-            sa.add_modifier(source_entity, "Damage.increased.1", 50.0f32); // Source is now 100 + 50 = 150
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            sa.add_modifier(source_entity, &fire_path, 50.0f32); // Source is now 100 + 50 = 150
         }
     );
 
@@ -456,7 +511,8 @@ fn test_add_modifier_then_register_source_tagged() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target_entity).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 150.0, "Target should update to 150.0 after source modification");
         }
     );
@@ -550,16 +606,18 @@ fn test_source_despawn_updates_dependent_tagged() {
     let _ = app.world_mut().run_system_once(
         move |mut sa: StatsMutator| {
             // Add modifier to source
-            sa.add_modifier(source_entity, "Damage.increased.1", 100.0f32);
+            let fire_path = Konfig::process_path("Damage.increased.{FIRE}");
+            sa.add_modifier(source_entity, &fire_path, 100.0f32);
             
             // Register source for target
             sa.register_source(target_entity, "MySource", source_entity);
             
             // Add expression modifier to target, referencing the source
+            let fire_source_expr = format!("{}@MySource", fire_path);
             sa.add_modifier(
                 target_entity,
-                "Damage.increased.1", 
-                Expression::new("Damage.increased.1@MySource").unwrap(),
+                &fire_path, 
+                Expression::new(&fire_source_expr).unwrap(),
             );
         }
     );
@@ -568,7 +626,8 @@ fn test_source_despawn_updates_dependent_tagged() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target_entity).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
             assert_eq!(val, 100.0, "Target should be 100.0 before source despawn");
         }
     );
@@ -585,8 +644,9 @@ fn test_source_despawn_updates_dependent_tagged() {
     let _ = app.world_mut().run_system_once(
         move |q_stats: Query<&Stats>| {
             let stats_comp = q_stats.get(target_entity).unwrap();
-            let val = stats_comp.get("Damage.increased.1");
-            // The expression "Damage.increased.1@MySource" should now evaluate with MySource contributing 0
+            let fire_query_path = format!("Damage.increased.{}", DamageTags::FIRE);
+            let val = stats_comp.get(&fire_query_path);
+            // The expression should now evaluate with MySource contributing 0
             // because remove_stat_entity should have cleared the cached value for this source variable.
             assert_eq!(val, 0.0, "Target should be 0.0 after source despawn and update");
         }

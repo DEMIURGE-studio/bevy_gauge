@@ -189,17 +189,78 @@ pub fn process_tag(path_str: &str, tag_resolver: &(dyn TagSet + Send + Sync)) ->
 mod tests {
     use super::*;
     
-    stat_macros::define_tags! {
-        DamageTags,
-        damage_type {
-            elemental { fire, cold, lightning },
-            physical,
-            chaos,
-        },
-        weapon_type {
-            melee { sword, axe },
-            ranged { bow, wand },
-        },
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct DamageTags;
+
+    impl DamageTags {
+        pub const FIRE: u32 = 1u32 << 0u32;
+        pub const COLD: u32 = 1u32 << 1u32;
+        pub const LIGHTNING: u32 = 1u32 << 2u32;
+        pub const ELEMENTAL: u32 = 1u32 << 0u32 | 1u32 << 1u32 | 1u32 << 2u32;
+        pub const PHYSICAL: u32 = 1u32 << 3u32;
+        pub const CHAOS: u32 = 1u32 << 4u32;
+        pub const DAMAGE_TYPE: u32 =
+            1u32 << 0u32 | 1u32 << 1u32 | 1u32 << 2u32 | 1u32 << 3u32 | 1u32 << 4u32;
+        pub const SWORD: u32 = 1u32 << 5u32;
+        pub const AXE: u32 = 1u32 << 6u32;
+        pub const MELEE: u32 = 1u32 << 5u32 | 1u32 << 6u32;
+        pub const BOW: u32 = 1u32 << 7u32;
+        pub const WAND: u32 = 1u32 << 8u32;
+        pub const RANGED: u32 = 1u32 << 7u32 | 1u32 << 8u32;
+        pub const WEAPON_TYPE: u32 = 1u32 << 5u32 | 1u32 << 6u32 | 1u32 << 7u32 | 1u32 << 8u32;
+        fn generated_tag_category(tag_value: u32) -> u32 {
+            match tag_value {
+                Self::ELEMENTAL => Self::DAMAGE_TYPE,
+                Self::FIRE => Self::DAMAGE_TYPE,
+                Self::COLD => Self::DAMAGE_TYPE,
+                Self::LIGHTNING => Self::DAMAGE_TYPE,
+                Self::PHYSICAL => Self::DAMAGE_TYPE,
+                Self::CHAOS => Self::DAMAGE_TYPE,
+                Self::MELEE => Self::WEAPON_TYPE,
+                Self::SWORD => Self::WEAPON_TYPE,
+                Self::AXE => Self::WEAPON_TYPE,
+                Self::RANGED => Self::WEAPON_TYPE,
+                Self::BOW => Self::WEAPON_TYPE,
+                Self::WAND => Self::WEAPON_TYPE,
+                val => val,
+            }
+        }
+    }
+    impl TagSet for DamageTags {
+        fn match_tag(&self, tag_str: &str) -> u32 {
+            match tag_str.trim().to_lowercase().as_str() {
+                "damage_type" => Self::DAMAGE_TYPE,
+                "elemental" => Self::ELEMENTAL,
+                "fire" => Self::FIRE,
+                "cold" => Self::COLD,
+                "lightning" => Self::LIGHTNING,
+                "physical" => Self::PHYSICAL,
+                "chaos" => Self::CHAOS,
+                "weapon_type" => Self::WEAPON_TYPE,
+                "melee" => Self::MELEE,
+                "sword" => Self::SWORD,
+                "axe" => Self::AXE,
+                "ranged" => Self::RANGED,
+                "bow" => Self::BOW,
+                "wand" => Self::WAND,
+                _ => 0,
+            }
+        }
+        fn tag_category_for_bit(&self, tag_bit: u32) -> u32 {
+            Self::generated_tag_category(tag_bit)
+        }
+        fn tag_category_for_group(&self, group_tag: u32) -> u32 {
+            Self::generated_tag_category(group_tag)
+        }
+        fn all_defined_groups(&self) -> &'static [u32] {
+            &[
+                Self::DAMAGE_TYPE,
+                Self::ELEMENTAL,
+                Self::WEAPON_TYPE,
+                Self::MELEE,
+                Self::RANGED,
+            ]
+        }
     }
 
     #[test]

@@ -66,7 +66,7 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
         
-        impl crate::tags::TagSet for #struct_name_ident {
+        impl bevy_gauge::tags::TagSet for #struct_name_ident {
             fn match_tag(&self, tag_str: &str) -> u32 {
                 match tag_str.trim().to_lowercase().as_str() {
                     #(#match_tag_arms)*
