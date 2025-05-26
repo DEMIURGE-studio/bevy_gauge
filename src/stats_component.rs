@@ -282,39 +282,14 @@ impl Stats {
     }
 
     pub(crate) fn clear_internal_cache_for_path(&mut self, path: &StatPath) {
-        // First, collect paths to invalidate for Tagged stats
         let mut paths_to_invalidate = Vec::new();
         
         if let Some(stat_definition) = self.definitions.get_mut(path.name) {
-            // For Tagged stats, we need to clear Stats cache entries for affected queries
-            if let StatType::Tagged(tagged_stat) = stat_definition {
-                if let Some(tag) = path.tag {
-                    // Find all tracked queries that would be affected by this tag change
-                    tagged_stat.query_tracker.retain(|(part, query_tag_from_key), _| {                        
-                        let should_invalidate = if *query_tag_from_key == 0 {
-                            true // query tag 0 means "match everything", so any change affects it
-                        } else if tag == u32::MAX {
-                            false // u32::MAX means no valid tags, shouldn't affect anything
-                        } else {
-                            // Check if the affected permissive modifier would apply to this tracked query
-                            (*query_tag_from_key & tag) == *query_tag_from_key
-                        };
-                        
-                        if should_invalidate {
-                            // Build the full path for this query to invalidate in Stats cache
-                            let full_path = format!("{}.{}.{}", path.name, part, query_tag_from_key);
-                            paths_to_invalidate.push(full_path);
-                        }
-                        
-                        !should_invalidate // retain returns true for items to keep, false for items to remove
-                    });
-                }
-            }
-            
-            stat_definition.clear_internal_cache(path);
+            // Get the list of paths to invalidate from the stat type
+            paths_to_invalidate = stat_definition.clear_internal_cache(path);
         }
         
-        // Now invalidate the affected paths in the Stats component's cache
+        // Invalidate the affected paths in the Stats component's cache
         for invalidate_path in paths_to_invalidate {
             self.remove_cached(&invalidate_path);
         }

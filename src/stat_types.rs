@@ -87,11 +87,11 @@ impl Stat for StatType {
         }
     }
 
-    fn clear_internal_cache(&mut self, path: &StatPath) {
+    fn clear_internal_cache(&mut self, path: &StatPath) -> Vec<String> {
         match self {
-            StatType::Flat(_) => { /* No internal cache for Flat */ }
-            StatType::Modifiable(_) => { /* No internal cache for Modifiable */ }
-            StatType::Complex(_) => { /* No internal cache for Complex currently, or it's handled by parts */ }
+            StatType::Flat(_) => Vec::new(), /* No internal cache for Flat */
+            StatType::Modifiable(_) => Vec::new(), /* No internal cache for Modifiable */
+            StatType::Complex(_) => Vec::new(), /* No internal cache for Complex currently, or it's handled by parts */
             StatType::Tagged(tagged) => tagged.clear_internal_cache(path),
         }
     }
@@ -422,35 +422,7 @@ impl Tagged {
         final_value
     }
 
-    fn invalidate_dependent_cache_entries(&self, affected_tag: u32, stats: &Stats) {
-        // Find all tracked queries that would be affected by this tag change
-        let mut paths_to_invalidate = Vec::new();
-        
-        self.query_tracker.retain(|(part, query_tag_from_key), _| {
-            // Check if the affected permissive tag could impact this tracked query
-            let should_invalidate = if *query_tag_from_key == 0 {
-                true // query tag 0 means "match everything", so any change affects it
-            } else if affected_tag == u32::MAX {
-                false // u32::MAX means no valid tags, shouldn't affect anything
-            } else {
-                // Check if the affected permissive modifier would apply to this tracked query
-                (*query_tag_from_key & affected_tag) == *query_tag_from_key
-            };
-            
-            if should_invalidate {
-                // Build the full path for this query to invalidate in Stats cache
-                let full_path = format!("Damage.{}.{}", part, query_tag_from_key);
-                paths_to_invalidate.push(full_path);
-            }
-            
-            !should_invalidate // retain returns true for items to keep, false for items to remove
-        });
-        
-        // Invalidate the affected paths in the Stats component's cache
-        for path in paths_to_invalidate {
-            stats.remove_cached(&path);
-        }
-    }
+
 }
 
 impl Stat for Tagged {
@@ -523,13 +495,12 @@ impl Stat for Tagged {
         0.0
     }
 
-    fn clear_internal_cache(&mut self, path: &StatPath) {
-        // For Tagged stats, we need to invalidate Stats cache entries for affected queries
-        // Since we don't have access to Stats here, we'll clear our query tracker
-        // The actual Stats cache invalidation should be handled by the caller
+    fn clear_internal_cache(&mut self, path: &StatPath) -> Vec<String> {
+        let mut paths_to_invalidate = Vec::new();
+        
         if let Some(tag) = path.tag {
-            // Remove tracked queries that would be affected by this tag change
-            self.query_tracker.retain(|(_part, query_tag_from_key), _| {
+            // Find all tracked queries that would be affected by this tag change
+            self.query_tracker.retain(|(part, query_tag_from_key), _| {
                 let should_invalidate = if *query_tag_from_key == 0 {
                     true // query tag 0 means "match everything", so any change affects it
                 } else if tag == u32::MAX {
@@ -539,11 +510,19 @@ impl Stat for Tagged {
                     (*query_tag_from_key & tag) == *query_tag_from_key
                 };
                 
+                if should_invalidate {
+                    // Build the full path for this query to invalidate in Stats cache
+                    let full_path = format!("{}.{}.{}", path.name, part, query_tag_from_key);
+                    paths_to_invalidate.push(full_path);
+                }
+                
                 !should_invalidate // retain returns true for items to keep, false for items to remove
             });
         } else {
             // If no specific tag, clear all tracked queries for this stat
             self.query_tracker.clear();
         }
+        
+        paths_to_invalidate
     }
 }

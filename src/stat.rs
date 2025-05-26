@@ -74,6 +74,7 @@ pub trait Stat {
 
     /// Clears any internal caches that the stat might hold, potentially for a specific path.
     /// This is useful when underlying data changes and cached evaluations need to be invalidated.
-    /// The default implementation does nothing.
-    fn clear_internal_cache(&mut self, _path: &StatPath) { /* default no-op */ }
+    /// Returns a list of cache keys that should be invalidated in the parent Stats component.
+    /// The default implementation does nothing and returns an empty list.
+    fn clear_internal_cache(&mut self, _path: &StatPath) -> Vec<String> { Vec::new() }
 }
