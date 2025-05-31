@@ -489,32 +489,6 @@ impl StatsMutator<'_, '_> {
         (cache_updates, stat_updates)
     }
 
-    /// Applies all modifiers from a `ModifierSet` to the target entity.
-    ///
-    /// This is a convenience method to add multiple modifiers at once, typically
-    /// defined in an external source like an item, buff, or skill.
-    ///
-    /// # Arguments
-    ///
-    /// * `target_entity`: The `Entity` to which the modifiers will be applied.
-    /// * `modifier_set`: A reference to the `ModifierSet` containing the modifiers to apply.
-    pub fn apply_modifier_set(&mut self, target_entity: Entity, modifier_set: &ModifierSet) {
-        modifier_set.apply(self, &target_entity);
-    }
-
-    /// Removes all modifiers from a `ModifierSet` from the target entity.
-    ///
-    /// This is a convenience method to remove multiple modifiers at once, assuming they
-    /// were previously added via a similar `ModifierSet`.
-    ///
-    /// # Arguments
-    ///
-    /// * `target_entity`: The `Entity` from which the modifiers will be removed.
-    /// * `modifier_set`: A reference to the `ModifierSet` containing the modifiers to remove.
-    pub fn remove_modifier_set(&mut self, target_entity: Entity, modifier_set: &ModifierSet) {
-        modifier_set.remove(self, &target_entity);
-    }
-
     /// Removes an entity from the stat system's tracking, cleaning up its dependencies.
     ///
     /// This function is intended to be called when an entity with a `Stats` component

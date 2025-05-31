@@ -1,12 +1,10 @@
 use bevy::{prelude::*, utils::HashMap};
-use crate::prelude::{StatsMutator, StatEffect, ModifierType};
+use crate::prelude::{StatsMutator, ModifierType};
 
 /// A component that represents a collection of stat modifiers, typically grouped by a common source
 /// like an item, buff, or skill.
 ///
-/// `ModifierSet` allows defining multiple modifiers that can be applied or removed together
-/// from an entity using the `StatEffect` trait methods. This simplifies managing complex
-/// sets of stat changes.
+/// `ModifierSet` allows defining multiple modifiers that can be applied or removed together.
 ///
 /// It dereferences to `HashMap<String, Vec<ModifierType>>`, allowing direct manipulation
 /// of the underlying map if needed, though `add` provides a convenient way to insert modifiers.
@@ -38,9 +36,7 @@ impl ModifierSet {
             .or_insert_with(Vec::new)
             .push(value.into());
     }
-}
 
-impl StatEffect for ModifierSet {
     /// Applies all modifiers contained in this `ModifierSet` to the target entity.
     ///
     /// This iterates through each stat path and its associated modifiers in the set,
@@ -48,14 +44,12 @@ impl StatEffect for ModifierSet {
     ///
     /// # Arguments
     ///
-    /// * `stats_mutator`: A mutable reference to the `StatsMutator` used to apply the modifiers.
-    /// * `context`: A reference to the target `Entity` to which the modifiers will be applied.
-    ///              (Note: `Self::Context` for `ModifierSet` is `Entity`).
-    fn apply(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
-        let target_entity = context;
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator` for applying modifiers.
+    /// * `target_entity`: The entity to apply the modifiers to.
+    pub fn apply_to(&self, stats_mutator: &mut StatsMutator, target_entity: Entity) {
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stats_mutator.add_modifier_value(*target_entity, stat, modifier.clone());
+                stats_mutator.add_modifier_value(target_entity, stat, modifier.clone());
             }
         }
     }
@@ -68,14 +62,12 @@ impl StatEffect for ModifierSet {
     ///
     /// # Arguments
     ///
-    /// * `stats_mutator`: A mutable reference to the `StatsMutator` used to remove the modifiers.
-    /// * `context`: A reference to the target `Entity` from which the modifiers will be removed.
-    ///              (Note: `Self::Context` for `ModifierSet` is `Entity`).
-    fn remove(&self, stats_mutator: &mut StatsMutator, context: &Self::Context) {
-        let target_entity = context;
+    /// * `stats_mutator`: A mutable reference to the `StatsMutator` for removing modifiers.
+    /// * `target_entity`: The entity to remove the modifiers from.
+    pub fn remove_from(&self, stats_mutator: &mut StatsMutator, target_entity: Entity) {
         for (stat, modifiers) in self.0.iter() {
             for modifier in modifiers.iter() {
-                stats_mutator.remove_modifier_value(*target_entity, stat, modifier);
+                stats_mutator.remove_modifier_value(target_entity, stat, modifier);
             }
         }
     }

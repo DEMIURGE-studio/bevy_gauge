@@ -7,7 +7,6 @@ pub use super::modifier_set::*;
 pub use super::stats_mutator::*;
 pub use super::stat_addressing::*;
 pub use super::stat_derived::*;
-pub use super::stat_effect::*;
 pub use super::stat_error::*;
 pub use super::stat::*;
 pub use super::stat_requirements::*;

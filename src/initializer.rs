@@ -1,5 +1,5 @@
-use bevy::prelude::*;
-use crate::prelude::*;
+use bevy::{prelude::*, utils::HashSet};
+use crate::prelude::{ModifierSet, StatsMutator, Stats};
 
 /// A component used to initialize an entity's stats with a predefined `ModifierSet`
 /// when this component is added to an entity.
@@ -54,8 +54,8 @@ pub(crate) fn apply_stats_initializer(
 ) {
     let entity = trigger.entity();
     if let Ok(initializer) = query_initializer.get(entity) {
-        initializer.modifiers.apply(&mut stats_mutator, &entity);
+        initializer.modifiers.apply_to(&mut stats_mutator, entity);
         
         commands.entity(entity).remove::<StatsInitializer>();
     }
-} 
+}

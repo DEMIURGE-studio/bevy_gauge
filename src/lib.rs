@@ -108,7 +108,6 @@ pub mod sources;
 pub mod stats_mutator;
 pub mod stat_addressing;
 pub mod stat_derived;
-pub mod stat_effect;
 pub mod stat_error;
 pub mod stat;
 pub mod stat_requirements;
