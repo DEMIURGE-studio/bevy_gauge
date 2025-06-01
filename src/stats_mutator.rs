@@ -65,38 +65,7 @@ impl StatsMutator<'_, '_> {
             return;
         };
 
-        let old_value = stats.get(path);
         stats.set(path, value);
-        
-        // Track the change for writeback resolution
-        stats.track_stat_change(path, old_value, value);
-    }
-
-    /// Resolves writeback conflicts for bidirectional stat-component sync.
-    ///
-    /// This method combines component changes and stat changes intelligently to determine
-    /// the final value that should be set in the stat system, then sets it automatically.
-    ///
-    /// # Arguments
-    ///
-    /// * `target_entity`: The `Entity` whose stat writeback is being resolved.
-    /// * `path`: A string representing the stat path to resolve.
-    /// * `current_component_value`: The current value from the component that wants to write back.
-    ///
-    /// # Returns
-    ///
-    /// The resolved value that was set in the stat system, so the component can be updated to match.
-    pub fn resolve_writeback(&mut self, target_entity: Entity, path: &str, current_component_value: f32) -> f32 {
-        let Ok(mut stats) = self.query.get_mut(target_entity) else {
-            return current_component_value;
-        };
-
-        let resolved_value = stats.resolve_writeback(path, current_component_value);
-        
-        // Set the resolved value directly (bypassing track_stat_change since resolve_writeback already handled tracking)
-        stats.set(path, resolved_value);
-        
-        resolved_value
     }
     
     /// Retrieves a read-only reference to the `Stats` component of an entity.

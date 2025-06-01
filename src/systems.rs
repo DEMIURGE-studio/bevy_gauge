@@ -34,16 +34,11 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component>(
     }
 }
 
-/// Generic system for resolving writeback conflicts for a specific component type.
-/// This should be scheduled in the Resolution schedule for each WriteBack component.
-/// Only processes components that have actually changed to avoid infinite Changed loops.
-pub(crate) fn resolve_writeback_component_system<T: WriteBack + Component>(
-    mut component_query: Query<(Entity, &mut T), Changed<T>>,
+pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
+    stats_query: Query<(Entity, &T), Dirty<T>>,
     mut stats_mutator: StatsMutator,
 ) {
-    for (entity, mut component) in component_query.iter_mut() {
-        if component.should_write_back(entity, &stats_mutator) {
-            component.write_back(entity, &mut stats_mutator);
-        }
+    for (entity, write_back) in stats_query.iter() {
+        write_back.write_back(entity, &mut stats_mutator);
     }
-} 
+}
