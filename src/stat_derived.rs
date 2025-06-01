@@ -13,5 +13,6 @@ pub trait StatDerived {
 }
 
 pub trait WriteBack {
-    fn write_back(&self, target_entity: Entity, stats_mutator: &mut StatsMutator);
+    fn should_write_back(&self, target_entity: Entity, stats_mutator: &StatsMutator) -> bool;
+    fn write_back(&mut self, target_entity: Entity, stats_mutator: &mut StatsMutator);
 }

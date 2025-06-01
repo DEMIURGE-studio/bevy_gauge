@@ -324,7 +324,7 @@ fn expand_single_struct_def(
 ) -> syn::Result<proc_macro2::TokenStream> {
     // Add required derives
     let forced_attrs = quote! {
-        #[derive(::bevy::prelude::Component, ::std::default::Default)]
+        #[derive(::bevy::prelude::Component, ::std::default::Default, ::std::clone::Clone, ::std::cmp::PartialEq)]
     };
 
     // Generate field definitions
@@ -391,6 +391,7 @@ fn expand_trait_impls_for_variant(
     // Build implementation bodies
     let should_update_body = collect_should_update_lines(fields, quote!(self));
     let update_body = collect_update_lines(fields, quote!(self));
+    let should_write_back_body = collect_should_write_back_lines(fields, quote!(self));
     let is_valid_body = collect_is_valid_lines(fields);
     let wb_body = collect_writeback_lines(fields, quote!(self));
 
@@ -413,7 +414,10 @@ fn expand_trait_impls_for_variant(
         }
 
         impl WriteBack for #struct_name_with_variant {
-            fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
+            fn should_write_back(&self, target_entity: Entity, stats_mutator: &bevy_gauge::prelude::StatsMutator) -> bool {
+                #should_write_back_body
+            }
+            fn write_back(&mut self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #wb_body
             }
         }
@@ -697,8 +701,9 @@ fn collect_writeback_lines(
                 });
             },
             ParsedField::Both { name, path } => {
+                // For bidirectional fields, use resolve_writeback to handle conflicts and sync component
                 lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
+                    #self_expr.#name = stats_mutator.resolve_writeback(target_entity, #path, #self_expr.#name);
                 });
             },
             ParsedField::ReadFrom { .. } => { /* skip */ },
@@ -712,8 +717,9 @@ fn collect_writeback_lines(
                 });
             },
             ParsedField::AutoBoth { name, resolved_path } => {
+                // For bidirectional auto fields, use resolve_writeback to handle conflicts and sync component
                 lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
+                    #self_expr.#name = stats_mutator.resolve_writeback(target_entity, #resolved_path, #self_expr.#name);
                 });
             },
             ParsedField::AutoReadFrom { .. } => { /* skip */ },
@@ -721,6 +727,52 @@ fn collect_writeback_lines(
     }
 
     quote! { #(#lines)* }
+}
+
+fn collect_should_write_back_lines(
+    fields: &[ParsedField],
+    self_expr: proc_macro2::TokenStream
+) -> proc_macro2::TokenStream {
+    let mut lines = Vec::new();
+
+    for pf in fields {
+        match pf {
+            ParsedField::WriteTo { name, path } => {
+                // Write-only fields always need to write back
+                lines.push(quote! { true });
+            },
+            ParsedField::Both { name, path } => {
+                // Bidirectional fields need to write back if they differ from stat value
+                lines.push(quote! {
+                    #self_expr.#name != stats_mutator.get(target_entity, #path)
+                });
+            },
+            ParsedField::ReadFrom { .. } => { /* skip read-only */ },
+            ParsedField::Nested { name, fields, .. } => {
+                let nested_code = collect_should_write_back_lines(fields, quote!(#self_expr.#name));
+                lines.push(nested_code);
+            },
+            ParsedField::AutoWriteTo { .. } => {
+                // Auto write-only fields always need to write back
+                lines.push(quote! { true });
+            },
+            ParsedField::AutoBoth { name, resolved_path } => {
+                // Auto bidirectional fields need to write back if they differ from stat value
+                lines.push(quote! {
+                    #self_expr.#name != stats_mutator.get(target_entity, #resolved_path)
+                });
+            },
+            ParsedField::AutoReadFrom { .. } => { /* skip read-only */ },
+        }
+    }
+
+    // If no lines, return false (no writeback needed)
+    if lines.is_empty() {
+        return quote! { false };
+    }
+
+    // Combine with OR (any field needing writeback means we should write back)
+    quote! { #(#lines)||* }
 }
 
 fn expand_trait_impls_for_no_variant(
@@ -732,6 +784,7 @@ fn expand_trait_impls_for_no_variant(
 
     let should_update_body = collect_should_update_lines(fields, quote!(self));
     let update_body = collect_update_lines(fields, quote!(self));
+    let should_write_back_body = collect_should_write_back_lines(fields, quote!(self));
     let writeback_body = collect_writeback_lines(fields, quote!(self));
     let is_valid_body = collect_is_valid_lines(fields);
 
@@ -754,7 +807,10 @@ fn expand_trait_impls_for_no_variant(
         }
 
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
-            fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
+            fn should_write_back(&self, target_entity: Entity, stats_mutator: &bevy_gauge::prelude::StatsMutator) -> bool {
+                #should_write_back_body
+            }
+            fn write_back(&mut self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #writeback_body
             }
         }

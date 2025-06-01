@@ -52,6 +52,24 @@ impl StatContext {
     // Potentially add get_value, iter_variables etc. if needed by users directly
 }
 
+/// Tracks changes for bidirectional stat-component sync to resolve conflicts intelligently.
+#[derive(Debug, Clone)]
+pub struct WriteBackTracker {
+    /// The last value we read from the component during sync
+    pub last_read_component_value: f32,
+    /// How much the stat has changed since the last sync (via StatsMutator)
+    pub accumulated_stat_changes: f32,
+}
+
+impl WriteBackTracker {
+    pub fn new(initial_value: f32) -> Self {
+        Self {
+            last_read_component_value: initial_value,
+            accumulated_stat_changes: 0.0,
+        }
+    }
+}
+
 /// The Bevy `Component` that holds all stat-related data for an entity.
 ///
 /// An entity with a `Stats` component can have various stats defined for it (e.g., Health, Damage),
@@ -68,6 +86,8 @@ pub struct Stats {
     /// Maps a source alias (e.g., "Parent", "Weapon") to a list of specific stats
     /// this entity's expressions require from any entity registered with that alias.
     pub(crate) source_requirements: HashMap<String, Vec<SourceRequirement>>,
+    /// Tracks bidirectional sync changes for WriteBack components
+    pub(crate) writeback_tracking: HashMap<String, WriteBackTracker>,
 }
 
 impl Stats {
@@ -79,6 +99,7 @@ impl Stats {
             dependents_map: DependencyMap::new(),
             sources: HashMap::new(),
             source_requirements: HashMap::new(),
+            writeback_tracking: HashMap::new(),
         }
     }
     
@@ -296,6 +317,42 @@ impl Stats {
         
         // Also clear the Stats component's own cache for this specific path
         self.remove_cached(&path.full_path);
+    }
+
+    /// Mark that we read a component value during StatsToComponents sync
+    pub(crate) fn mark_component_read(&mut self, path: &str, component_value: f32) {
+        let tracker = self.writeback_tracking.entry(path.to_string()).or_insert_with(|| {
+            WriteBackTracker::new(component_value)
+        });
+        tracker.last_read_component_value = component_value;
+        tracker.accumulated_stat_changes = 0.0; // Reset since we just synced
+    }
+    
+    /// Track a stat change via StatsMutator for writeback resolution
+    pub(crate) fn track_stat_change(&mut self, path: &str, old_value: f32, new_value: f32) {
+        if let Some(tracker) = self.writeback_tracking.get_mut(path) {
+            tracker.accumulated_stat_changes += new_value - old_value;
+        }
+    }
+    
+    /// Resolve conflicts during ComponentsToStats sync
+    pub(crate) fn resolve_writeback(&mut self, path: &str, current_component_value: f32) -> f32 {
+        let Some(tracker) = self.writeback_tracking.get_mut(path) else {
+            // No tracking info, component value wins
+            return current_component_value;
+        };
+        
+        let component_diff = current_component_value - tracker.last_read_component_value;
+        let stat_diff = tracker.accumulated_stat_changes;
+        
+        // Resolution strategy: additive (both changes apply)
+        let final_value = tracker.last_read_component_value + component_diff + stat_diff;
+        
+        // Update tracking for next cycle
+        tracker.last_read_component_value = final_value;
+        tracker.accumulated_stat_changes = 0.0;
+        
+        final_value
     }
 }
 
