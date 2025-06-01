@@ -59,6 +59,13 @@ enum StatField {
         _brace_token: Brace,
         nested_fields: Punctuated<StatField, Token![,]>,
     },
+    AutoPath {
+        name: Ident,
+        _colon_token: Token![:],
+        direction: Direction,
+        _dollar_token: Token![$],
+        explicit_suffix: Option<String>, // Optional ".part.tag@target" after $
+    },
 }
 
 /// Represents one field after parsing
@@ -80,6 +87,18 @@ enum ParsedField {
         name: Ident,
         type_name: Ident,
         fields: Vec<ParsedField>
+    },
+    AutoReadFrom { 
+        name: Ident, 
+        resolved_path: String 
+    },
+    AutoWriteTo { 
+        name: Ident, 
+        resolved_path: String 
+    },
+    AutoBoth { 
+        name: Ident, 
+        resolved_path: String 
     },
 }
 
@@ -169,7 +188,16 @@ impl Parse for StatField {
                     let _gt_token: Token![>] = input.parse()?;
                     
                     // It's bidirectional: <->
-                    if input.peek(LitStr) {
+                    if input.peek(Token![$]) {
+                        let dollar_token: Token![$] = input.parse()?;
+                        return Ok(StatField::AutoPath {
+                            name,
+                            _colon_token: colon_token,
+                            direction: Direction::Both,
+                            _dollar_token: dollar_token,
+                            explicit_suffix: None,
+                        });
+                    } else if input.peek(LitStr) {
                         let path: LitStr = input.parse()?;
                         return Ok(StatField::WithDirection {
                             name,
@@ -178,12 +206,21 @@ impl Parse for StatField {
                             path,
                         });
                     } else {
-                        return Err(input.error("expected string literal after `<->`"));
+                        return Err(input.error("expected string literal or $ after `<->`"));
                     }
                 }
                 
                 // It's read-from: <-
-                if input.peek(LitStr) {
+                if input.peek(Token![$]) {
+                    let dollar_token: Token![$] = input.parse()?;
+                    return Ok(StatField::AutoPath {
+                        name,
+                        _colon_token: colon_token,
+                        direction: Direction::ReadFrom,
+                        _dollar_token: dollar_token,
+                        explicit_suffix: None,
+                    });
+                } else if input.peek(LitStr) {
                     let path: LitStr = input.parse()?;
                     return Ok(StatField::WithDirection {
                         name,
@@ -192,7 +229,7 @@ impl Parse for StatField {
                         path,
                     });
                 } else {
-                    return Err(input.error("expected string literal after `<-`"));
+                    return Err(input.error("expected string literal or $ after `<-`"));
                 }
             } else {
                 return Err(input.error("expected `-` after `<`"));
@@ -207,7 +244,16 @@ impl Parse for StatField {
                 let _gt_token: Token![>] = input.parse()?;
                 
                 // It's write-to: ->
-                if input.peek(LitStr) {
+                if input.peek(Token![$]) {
+                    let dollar_token: Token![$] = input.parse()?;
+                    return Ok(StatField::AutoPath {
+                        name,
+                        _colon_token: colon_token,
+                        direction: Direction::WriteTo,
+                        _dollar_token: dollar_token,
+                        explicit_suffix: None,
+                    });
+                } else if input.peek(LitStr) {
                     let path: LitStr = input.parse()?;
                     return Ok(StatField::WithDirection {
                         name,
@@ -216,7 +262,7 @@ impl Parse for StatField {
                         path,
                     });
                 } else {
-                    return Err(input.error("expected string literal after `->`"));
+                    return Err(input.error("expected string literal or $ after `->`"));
                 }
             } else {
                 return Err(input.error("expected `>` after `-`"));
@@ -233,7 +279,8 @@ impl Parse for StatField {
 impl StatStructInput {
     pub fn expand(&self) -> syn::Result<proc_macro2::TokenStream> {
         // parse fields into a Vec<ParsedField>
-        let parsed_fields = parse_fields_list(&self.fields)?;
+        let struct_name = self.ident.to_string();
+        let parsed_fields = parse_fields_list_with_context(&self.fields, &struct_name, &[])?;
 
         // Step A) Build exactly ONE generic struct definition
         let struct_code = expand_single_struct_def(
@@ -294,6 +341,15 @@ fn expand_single_struct_def(
             },
             ParsedField::Nested { name, type_name, .. } => {
                 quote! { pub #name: #type_name }
+            },
+            ParsedField::AutoReadFrom { name, .. } => {
+                quote! { pub #name: f32 }
+            },
+            ParsedField::AutoWriteTo { name, .. } => {
+                quote! { pub #name: f32 }
+            },
+            ParsedField::AutoBoth { name, .. } => {
+                quote! { pub #name: f32 }
             },
         }
     });
@@ -389,7 +445,30 @@ fn build_phantom_tuple(generics: &syn::Generics) -> proc_macro2::TokenStream {
 // 4) Parse fields from the user input to our intermediate representation
 // ---------------------------------------------------------------------
 
-fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<Vec<ParsedField>> {
+fn resolve_auto_path(
+    struct_name: &str,
+    nested_path: &[String], 
+    field_name: &str,
+    explicit_suffix: Option<&str>
+) -> String {
+    let mut path_parts = vec![struct_name.to_string()];
+    path_parts.extend(nested_path.iter().cloned());
+    path_parts.push(field_name.to_string());
+    
+    let auto_base = format!("$[{}]", path_parts.join("."));
+    
+    if let Some(suffix) = explicit_suffix {
+        format!("{}{}", auto_base, suffix)
+    } else {
+        auto_base
+    }
+}
+
+fn parse_fields_list_with_context(
+    fields: &Punctuated<StatField, Token![,]>,
+    struct_name: &str,
+    nested_path: &[String]
+) -> syn::Result<Vec<ParsedField>> {
     let mut results = Vec::new();
     for f in fields {
         let pf = match f {
@@ -410,8 +489,39 @@ fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<V
                     },
                 }
             },
+            StatField::AutoPath { name, direction, explicit_suffix, .. } => {
+                let resolved = resolve_auto_path(
+                    struct_name,
+                    nested_path,
+                    &name.to_string(),
+                    explicit_suffix.as_deref()
+                );
+                
+                match direction {
+                    Direction::ReadFrom => ParsedField::AutoReadFrom {
+                        name: name.clone(),
+                        resolved_path: resolved,
+                    },
+                    Direction::WriteTo => ParsedField::AutoWriteTo {
+                        name: name.clone(),
+                        resolved_path: resolved,
+                    },
+                    Direction::Both => ParsedField::AutoBoth {
+                        name: name.clone(),
+                        resolved_path: resolved,
+                    },
+                }
+            },
             StatField::Nested { name, type_name, nested_fields, .. } => {
-                let sub = parse_fields_list(nested_fields)?;
+                let mut new_nested_path = nested_path.to_vec();
+                new_nested_path.push(name.to_string());
+                
+                let sub = parse_fields_list_with_context(
+                    nested_fields, 
+                    struct_name,
+                    &new_nested_path
+                )?;
+                
                 ParsedField::Nested {
                     name: name.clone(),
                     type_name: type_name.clone(),
@@ -422,6 +532,10 @@ fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<V
         results.push(pf);
     }
     Ok(results)
+}
+
+fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<Vec<ParsedField>> {
+    parse_fields_list_with_context(fields, "", &[])
 }
 
 // ---------------------------------------------------------------------
@@ -453,6 +567,19 @@ fn collect_update_lines(
                 let nested_code = collect_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
+            ParsedField::AutoReadFrom { name, resolved_path } => {
+                lines.push(quote! {
+                    #self_expr.#name = stats.get(#resolved_path);
+                });
+            },
+            ParsedField::AutoBoth { name, resolved_path } => {
+                lines.push(quote! {
+                    #self_expr.#name = stats.get(#resolved_path);
+                });
+            },
+            ParsedField::AutoWriteTo { .. } => {
+                // AutoWriteTo fields aren't updated from stats
+            },
         }
     }
 
@@ -482,6 +609,17 @@ fn collect_should_update_lines(
                 let nested_code = collect_should_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
+            ParsedField::AutoReadFrom { name, resolved_path } => {
+                lines.push(quote! {
+                    #self_expr.#name != stats.get(#resolved_path)
+                });
+            },
+            ParsedField::AutoBoth { name, resolved_path } => {
+                lines.push(quote! {
+                    #self_expr.#name != stats.get(#resolved_path)
+                });
+            },
+            ParsedField::AutoWriteTo { .. } => { /* skip */ },
         }
     }
 
@@ -518,6 +656,21 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
                 let nested_code = collect_is_valid_lines(fields);
                 lines.push(nested_code);
             },
+            ParsedField::AutoReadFrom { resolved_path, .. } => {
+                lines.push(quote! {
+                    stats.get(#resolved_path) != 0.0
+                });
+            },
+            ParsedField::AutoWriteTo { resolved_path, .. } => {
+                lines.push(quote! {
+                    stats.get(#resolved_path) != 0.0
+                });
+            },
+            ParsedField::AutoBoth { resolved_path, .. } => {
+                lines.push(quote! {
+                    stats.get(#resolved_path) != 0.0
+                });
+            },
         }
     }
     
@@ -553,6 +706,17 @@ fn collect_writeback_lines(
                 let nested_code = collect_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
+            ParsedField::AutoWriteTo { name, resolved_path } => {
+                lines.push(quote! {
+                    let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
+                });
+            },
+            ParsedField::AutoBoth { name, resolved_path } => {
+                lines.push(quote! {
+                    let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
+                });
+            },
+            ParsedField::AutoReadFrom { .. } => { /* skip */ },
         }
     }
 

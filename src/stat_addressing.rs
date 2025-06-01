@@ -120,7 +120,25 @@ impl<'a> StatPath<'a> {
             };
         }
 
-        let all_segments: Vec<&'a str> = path_to_parse.split('.').collect();
+        // NEW: Handle $[...] auto-generated names
+        let all_segments: Vec<&'a str> = if path_to_parse.starts_with("$[") {
+            if let Some(bracket_end) = path_to_parse.find(']') {
+                let name_part = &path_to_parse[..=bracket_end]; // "$[Damage.range.min]"
+                let remaining = &path_to_parse[bracket_end + 1..]; // ".increased.FIRE"
+                
+                let mut segments = vec![name_part];
+                if remaining.starts_with('.') && remaining.len() > 1 {
+                    segments.extend(remaining[1..].split('.'));
+                }
+                segments
+            } else {
+                // Malformed $[ without ], fall back to normal parsing
+                path_to_parse.split('.').collect()
+            }
+        } else {
+            // Normal parsing (unchanged)
+            path_to_parse.split('.').collect()
+        };
 
         let mut name_val: &'a str = "";
         let mut part_val: Option<&'a str> = None;
@@ -190,5 +208,84 @@ impl<'a> StatPath<'a> {
 impl<'a> ToString for StatPath<'a> {
     fn to_string(&self) -> String {
         self.full_path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auto_generated_stat_basic() {
+        let p = StatPath::parse("$[Damage.range.min]");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, None);
+        assert_eq!(p.tag, None);
+        assert_eq!(p.target, None);
+    }
+
+    #[test]
+    fn test_auto_generated_stat_with_part() {
+        let p = StatPath::parse("$[Damage.range.min].increased");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, Some("increased"));
+        assert_eq!(p.tag, None);
+        assert_eq!(p.target, None);
+    }
+
+    #[test]
+    fn test_auto_generated_stat_with_tag() {
+        let p = StatPath::parse("$[Damage.range.min].123");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, None);
+        assert_eq!(p.tag, Some(123));
+        assert_eq!(p.target, None);
+    }
+
+    #[test]
+    fn test_auto_generated_stat_with_part_and_tag() {
+        let p = StatPath::parse("$[Damage.range.min].increased.456");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, Some("increased"));
+        assert_eq!(p.tag, Some(456));
+        assert_eq!(p.target, None);
+    }
+
+    #[test]
+    fn test_auto_generated_stat_with_target() {
+        let p = StatPath::parse("$[Damage.range.min]@parent");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, None);
+        assert_eq!(p.tag, None);
+        assert_eq!(p.target, Some("parent"));
+    }
+
+    #[test]
+    fn test_auto_generated_stat_complex() {
+        let p = StatPath::parse("$[Damage.range.min].increased.FIRE@parent");
+        assert_eq!(p.name, "$[Damage.range.min]");
+        assert_eq!(p.part, Some("increased"));
+        assert_eq!(p.tag, None); // FIRE is not numerical
+        assert_eq!(p.target, Some("parent"));
+    }
+
+    #[test]
+    fn test_auto_generated_malformed_fallback() {
+        // Missing closing bracket should fall back to normal parsing
+        let p = StatPath::parse("$[Damage.range.min");
+        assert_eq!(p.name, "$[Damage");
+        assert_eq!(p.part, Some("range"));
+        assert_eq!(p.tag, None);
+        assert_eq!(p.target, None);
+    }
+
+    #[test]
+    fn test_normal_parsing_unchanged() {
+        // Ensure normal parsing still works
+        let p = StatPath::parse("Damage.increased.123@target");
+        assert_eq!(p.name, "Damage");
+        assert_eq!(p.part, Some("increased"));
+        assert_eq!(p.tag, Some(123));
+        assert_eq!(p.target, Some("target"));
     }
 }
