@@ -155,14 +155,14 @@ impl StatDerived for Life {
     }
     fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
         self.max != stats.get("Life").unwrap_or(0.0)
-            || self.current != stats.get("CurrentLife").unwrap_or(0.0)
+            || self.current != stats.get("$[Life.current]").unwrap_or(0.0)
     }
     fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
         self.max = stats.get("Life").unwrap_or(0.0);
-        self.current = stats.get("CurrentLife").unwrap_or(0.0);
+        self.current = stats.get("$[Life.current]").unwrap_or(0.0);
     }
     fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-        stats.get("Life").is_ok() && stats.get("CurrentLife").is_ok()
+        stats.get("Life").is_ok() && stats.get("$[Life.current]").is_ok()
     }
 }
 
@@ -172,7 +172,7 @@ impl WriteBack for Life {
         target_entity: Entity,
         stats_mutator: &mut bevy_gauge::prelude::StatsMutator,
     ) {
-        let _ = stats_mutator.set(target_entity, "CurrentLife", self.current);
+        let _ = stats_mutator.set(target_entity, "$[Life.current]", self.current);
     }
 }
 ```
@@ -181,10 +181,30 @@ The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automa
 You can also use the `stat_component!` macro to more easily define your stat-derived components!
 ```rust
 stat_component!(pub struct Life {
-    max: <- "Life", // Updated from stats
-    current: <-> "CurrentLife", // Updated from stats AND written back.
+    max: <- "Life",           // Explicit path - reads from "Life" stat
+    current: <- $,            // Auto-generated path - reads from "$[Life.current]"
+});
+
+// For more complex examples:
+stat_component!(pub struct Damage {
+    base: <- $,               // Auto-generated: "$[Damage.base]"
+    current: <-> $,           // Auto-generated: "$[Damage.current]" (bidirectional)
+    bonus: <- "BonusDamage",  // Explicit path to a different stat
+});
+
+// Nested structures work too:
+stat_component!(pub struct WeaponStats {
+    damage: DamageRange {
+        min: <- $,            // Auto-generated: "$[WeaponStats.damage.min]"
+        max: <- $,            // Auto-generated: "$[WeaponStats.damage.max]"
+    }
 });
 ```
+
+The `$` syntax automatically generates stat paths based on your component's structure:
+- `field: <- $` becomes `field: <- "$[StructName.field]"`
+- For nested fields: `nested.field: <- $` becomes `"$[StructName.nested.field]"`
+- You can mix explicit paths and auto-generated ones as needed
 
 TODO explain why this (2 sources of truth) can be done safely
 

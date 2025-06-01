@@ -289,7 +289,7 @@ mod tests {
         Konfig::register_stat_type_regex(r"(?i)(base|added|increased)", "Complex").unwrap();
         Konfig::register_stat_type("CurrentBananas", "Complex");
 
-        assert_eq!(Konfig::get_stat_type("CurrentLife"), "Flat"); // Regex match
+        assert_eq!(Konfig::get_stat_type("$[Life.current]"), "Flat"); // Regex match
         assert_eq!(Konfig::get_stat_type("CurrentBananas"), "Complex"); // Exact match
         assert_eq!(Konfig::get_stat_type("SomeOtherStat"), "CustomDefault"); // Default match
     }
