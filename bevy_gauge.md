@@ -614,7 +614,7 @@ fn buff_expiry_system(
 
 ## Stat Derived Components
 
-Sometimes, you want Bevy components whose fields are directly derived from an entity's stats, and in some cases, you might want changes to those component fields to write back to the stats. `bevy_gauge` provides traits and a macro for this.
+Sometimes, you want Bevy components whose fields are directly derived from an entity's stats, and in some cases, you might want certain component fields to write back to the stats. `bevy_gauge` provides traits and a macro for this.
 
 ### The `StatDerived` Trait
 This trait is for components whose fields should be populated from an entity's `Stats`. It defines methods to:
@@ -624,11 +624,11 @@ This trait is for components whose fields should be populated from an entity's `
 *   Check if the required stats are valid (`is_valid`).
 
 ### The `WriteBack` Trait
-This trait is for `StatDerived` components that also need to write some of their field values *back* to the entity's `Stats`.
+This trait is for components that need to write some of their field values *back* to the entity's `Stats`. Note that fields cannot be both derived and write-back in a single field - you need separate fields or manual implementation.
 *   `write_back`: Takes the component's current state and uses `StatsMutator` to update the underlying stats (typically using `set`).
 
 ### The `stat_component!` Macro
-This macro simplifies the creation of components that implement `StatDerived` and optionally `WriteBack`.
+This macro simplifies the creation of components that implement `StatDerived` and `WriteBack`.
 
 **Note:** The `stat_component!` macro generates components compatible with the `StatDerived` and `WriteBack` traits. The macro supports both explicit stat paths and auto-generated paths using the `$` syntax.
 
@@ -641,8 +641,8 @@ use bevy_gauge::prelude::*;
 stat_component!(
     #[derive(Default, Debug)] // You can add other derives here
     pub struct Life {
-        max: <- "Life",              // Explicit path: reads from "Life" stat
-        current: <- $,               // Auto-generated: reads from "$[Life.current]"
+        max: <- "Life",              // Read-only: reads from "Life" stat
+        current: -> "Life.current",  // Write-only: writes to "Life.current" stat
     }
 );
 
@@ -650,12 +650,12 @@ stat_component!(
 stat_component!(
     pub struct PlayerStats {
         health: HealthStats {
-            max: <- $,               // Auto-generated: "$[PlayerStats.health.max]"
-            current: <-> $,          // Auto-generated: "$[PlayerStats.health.current]" (bidirectional)
-            regen: <- "HealthRegen", // Explicit path to a different stat
+            max: <- $,                   // Auto-generated: "$[PlayerStats.health.max]" (read-only)
+            current: -> $,               // Auto-generated: "$[PlayerStats.health.current]" (write-only)
+            regen: <- "HealthRegen",     // Explicit path to a different stat
         },
-        mana: <- $,                  // Auto-generated: "$[PlayerStats.mana]"
-        experience: -> $,            // Auto-generated: "$[PlayerStats.experience]" (write-only)
+        mana: <- $,                      // Auto-generated: "$[PlayerStats.mana]" (read-only)
+        experience: -> $,                // Auto-generated: "$[PlayerStats.experience]" (write-only)
     }
 );
 ```
@@ -663,7 +663,6 @@ stat_component!(
 **Auto-Generated Path Syntax:**
 - `field: <- $` - Read-only field with auto-generated path `"$[StructName.field]"`
 - `field: -> $` - Write-only field with auto-generated path `"$[StructName.field]"`  
-- `field: <-> $` - Bidirectional field with auto-generated path `"$[StructName.field]"`
 - For nested fields: `nested.field: <- $` generates `"$[StructName.nested.field]"`
 
 **Mixing Explicit and Auto-Generated Paths:**
@@ -689,22 +688,20 @@ impl StatDerived for Life {
         s
     }
     fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
-        self.max != stats.get("Life")
-            || self.current != stats.get("$[Life.current]") // Auto-generated path
+        self.max != stats.get("Life") // Only checks read-only fields
     }
     fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
-        self.max = stats.get("Life");
-        self.current = stats.get("$[Life.current]"); // Auto-generated path
+        self.max = stats.get("Life"); // Only updates read-only fields
     }
     fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-        stats.get("Life") != 0.0 && stats.get("$[Life.current]") != 0.0 // Auto-generated path
+        stats.get("Life") != 0.0 && stats.get("Life.current") != 0.0
     }
 }
 
 impl WriteBack for Life {
     fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
-        // Only write back the current value since max is read-only (<-)
-        let _ = stats_mutator.set(target_entity, "$[Life.current]", self.current);
+        // Only writes back the write-only fields
+        let _ = stats_mutator.set(target_entity, "Life.current", self.current);
     }
 }
 ```
@@ -712,7 +709,6 @@ impl WriteBack for Life {
 **Explanation of Direction Operators:**
 - `fieldName: <- "StatPath"` or `fieldName: <- $`: The `fieldName` is populated from the stat path (explicit or auto-generated). It's read-only; changes to this field in the component won't affect the underlying stat.
 - `fieldName: -> "StatPath"` or `fieldName: -> $`: The `fieldName` writes to the stat path. It's write-only via the `WriteBack` trait.
-- `fieldName: <-> "StatPath"` or `fieldName: <-> $`: The `fieldName` both reads from and writes to the stat path. It's bidirectional.
 
 **Auto-Generated Path Resolution:**
 The `$` syntax generates stat paths based on the component structure:
@@ -723,3 +719,5 @@ The `$` syntax generates stat paths based on the component structure:
 `bevy_gauge` includes systems (`update_derived_stats` and `write_back_stats`) that run at different stages in the Bevy schedule to keep these components synchronized with the `Stats` component. You'll need to ensure the `bevy_gauge::plugin` is added to your app.
 
 This guide should cover the main aspects of `bevy_gauge`. Let me know if you'd like any section expanded or clarified!
+
+TODO maybe separate adding-components-based-on-stats from StatDerived

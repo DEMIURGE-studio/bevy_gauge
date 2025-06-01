@@ -35,15 +35,13 @@ struct StatStructInput {
 enum Direction {
     ReadFrom,    // <-
     WriteTo,     // ->
-    Both,        // <->
 }
 
 /// One field in the user's DSL, e.g.
 /// 
 /// ```plain
 ///   foo: <- "Stats.foo",
-///   bar: -> "Stats.bar",
-///   baz: <-> "Stats.baz"
+///   bar: -> "Stats.bar"
 /// ```
 enum StatField {
     WithDirection {
@@ -79,10 +77,6 @@ enum ParsedField {
         name: Ident, 
         path: String 
     },
-    Both { 
-        name: Ident, 
-        path: String 
-    },
     Nested { 
         name: Ident,
         type_name: Ident,
@@ -93,10 +87,6 @@ enum ParsedField {
         resolved_path: String 
     },
     AutoWriteTo { 
-        name: Ident, 
-        resolved_path: String 
-    },
-    AutoBoth { 
         name: Ident, 
         resolved_path: String 
     },
@@ -183,33 +173,6 @@ impl Parse for StatField {
             if input.peek(Token![-]) {
                 let _minus_token: Token![-] = input.parse()?;
                 
-                // Now check if it's followed by > for <->
-                if input.peek(Token![>]) {
-                    let _gt_token: Token![>] = input.parse()?;
-                    
-                    // It's bidirectional: <->
-                    if input.peek(Token![$]) {
-                        let dollar_token: Token![$] = input.parse()?;
-                        return Ok(StatField::AutoPath {
-                            name,
-                            _colon_token: colon_token,
-                            direction: Direction::Both,
-                            _dollar_token: dollar_token,
-                            explicit_suffix: None,
-                        });
-                    } else if input.peek(LitStr) {
-                        let path: LitStr = input.parse()?;
-                        return Ok(StatField::WithDirection {
-                            name,
-                            _colon_token: colon_token,
-                            direction: Direction::Both,
-                            path,
-                        });
-                    } else {
-                        return Err(input.error("expected string literal or $ after `<->`"));
-                    }
-                }
-                
                 // It's read-from: <-
                 if input.peek(Token![$]) {
                     let dollar_token: Token![$] = input.parse()?;
@@ -269,7 +232,7 @@ impl Parse for StatField {
             }
         }
 
-        Err(input.error("expected one of `<- \"path\"`, `-> \"path\"`, `<-> \"path\"`, or `TypeName { ... }`"))
+        Err(input.error("expected one of `<- \"path\"`, `-> \"path\"`, or `TypeName { ... }`"))
     }
 }
 
@@ -336,9 +299,6 @@ fn expand_single_struct_def(
             ParsedField::WriteTo { name, .. } => {
                 quote! { pub #name: f32 }
             },
-            ParsedField::Both { name, .. } => {
-                quote! { pub #name: f32 }
-            },
             ParsedField::Nested { name, type_name, .. } => {
                 quote! { pub #name: #type_name }
             },
@@ -346,9 +306,6 @@ fn expand_single_struct_def(
                 quote! { pub #name: f32 }
             },
             ParsedField::AutoWriteTo { name, .. } => {
-                quote! { pub #name: f32 }
-            },
-            ParsedField::AutoBoth { name, .. } => {
                 quote! { pub #name: f32 }
             },
         }
@@ -483,10 +440,6 @@ fn parse_fields_list_with_context(
                         name: name.clone(), 
                         path: path_str 
                     },
-                    Direction::Both => ParsedField::Both { 
-                        name: name.clone(), 
-                        path: path_str 
-                    },
                 }
             },
             StatField::AutoPath { name, direction, explicit_suffix, .. } => {
@@ -503,10 +456,6 @@ fn parse_fields_list_with_context(
                         resolved_path: resolved,
                     },
                     Direction::WriteTo => ParsedField::AutoWriteTo {
-                        name: name.clone(),
-                        resolved_path: resolved,
-                    },
-                    Direction::Both => ParsedField::AutoBoth {
                         name: name.clone(),
                         resolved_path: resolved,
                     },
@@ -555,11 +504,6 @@ fn collect_update_lines(
                     #self_expr.#name = stats.get(#path);
                 });
             },
-            ParsedField::Both { name, path } => {
-                lines.push(quote! {
-                    #self_expr.#name = stats.get(#path);
-                });
-            },
             ParsedField::WriteTo { .. } => {
                 // WriteTo fields aren't updated from stats
             },
@@ -568,11 +512,6 @@ fn collect_update_lines(
                 lines.push(nested_code);
             },
             ParsedField::AutoReadFrom { name, resolved_path } => {
-                lines.push(quote! {
-                    #self_expr.#name = stats.get(#resolved_path);
-                });
-            },
-            ParsedField::AutoBoth { name, resolved_path } => {
                 lines.push(quote! {
                     #self_expr.#name = stats.get(#resolved_path);
                 });
@@ -599,22 +538,12 @@ fn collect_should_update_lines(
                     #self_expr.#name != stats.get(#path)
                 });
             },
-            ParsedField::Both { name, path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats.get(#path)
-                });
-            },
             ParsedField::WriteTo { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_should_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
             ParsedField::AutoReadFrom { name, resolved_path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats.get(#resolved_path)
-                });
-            },
-            ParsedField::AutoBoth { name, resolved_path } => {
                 lines.push(quote! {
                     #self_expr.#name != stats.get(#resolved_path)
                 });
@@ -647,11 +576,6 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
                     stats.get(#path) != 0.0
                 });
             },
-            ParsedField::Both { path, .. } => {
-                lines.push(quote! {
-                    stats.get(#path) != 0.0
-                });
-            },
             ParsedField::Nested { fields, .. } => {
                 let nested_code = collect_is_valid_lines(fields);
                 lines.push(nested_code);
@@ -662,11 +586,6 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
                 });
             },
             ParsedField::AutoWriteTo { resolved_path, .. } => {
-                lines.push(quote! {
-                    stats.get(#resolved_path) != 0.0
-                });
-            },
-            ParsedField::AutoBoth { resolved_path, .. } => {
                 lines.push(quote! {
                     stats.get(#resolved_path) != 0.0
                 });
@@ -696,22 +615,12 @@ fn collect_writeback_lines(
                     let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
                 });
             },
-            ParsedField::Both { name, path } => {
-                lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
-                });
-            },
             ParsedField::ReadFrom { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
             ParsedField::AutoWriteTo { name, resolved_path } => {
-                lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
-                });
-            },
-            ParsedField::AutoBoth { name, resolved_path } => {
                 lines.push(quote! {
                     let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
                 });
