@@ -53,7 +53,7 @@ fn spawn_entities(mut commands: Commands) {
 
 fn register_parent_source_for_child(
     mut stats_mutator: StatsMutator,
-    child_query: Query<(Entity, &Parent), Changed<Parent>>,
+    child_query: Query<(Entity, &ChildOf), Changed<ChildOf>>,
 ) {
     for (child_entity, parent) in child_query.iter() {
         stats_mutator.register_source(
@@ -65,7 +65,7 @@ fn register_parent_source_for_child(
 }
 
 fn read_stats_system(
-    child_query: Query<&Stats, With<Parent>>,
+    child_query: Query<&Stats, With<ChildOf>>,
 ) {
     for child in child_query.iter() {
         let child_bonus = child.get("ChildBonus");

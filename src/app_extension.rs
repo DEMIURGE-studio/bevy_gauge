@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::component::Mutable, prelude::*};
 use super::prelude::*;
 
 /// An extension trait for `bevy::prelude::App` to simplify the setup of components
@@ -16,7 +16,7 @@ pub trait StatsAppExtension {
     /// # Type Parameters
     ///
     /// * `T`: The component type that implements `StatDerived`.
-    fn add_stat_component<T: StatDerived + Component>(&mut self) -> &mut Self;
+    fn add_stat_component<T: StatDerived + Component<Mutability = Mutable>>(&mut self) -> &mut Self;
 
     /// Registers systems to manage a component `T` that implements `WriteBack`.
     ///
@@ -34,11 +34,11 @@ pub trait StatsAppExtension {
     /// # Type Parameters
     ///
     /// * `T`: The component type that implements both `StatDerived` and `WriteBack`.
-    fn add_complex_component<T: StatDerived + WriteBack + Component>(&mut self) -> &mut Self;
+    fn add_complex_component<T: StatDerived + WriteBack + Component<Mutability = Mutable>>(&mut self) -> &mut Self;
 }
 
 impl StatsAppExtension for App {
-    fn add_stat_component<T: StatDerived + Component>(&mut self) -> &mut Self {
+    fn add_stat_component<T: StatDerived + Component<Mutability = Mutable>>(&mut self) -> &mut Self {
         self.add_systems(StatsMutation, add_stat_component_system::<T>);
         self.add_systems(StatsMutation, update_stat_component_system::<T>.after(add_stat_component_system::<T>));
         self
@@ -49,7 +49,7 @@ impl StatsAppExtension for App {
         self
     }
 
-    fn add_complex_component<T: StatDerived + WriteBack + Component>(&mut self) -> &mut Self {
+    fn add_complex_component<T: StatDerived + WriteBack + Component<Mutability = Mutable>>(&mut self) -> &mut Self {
         self.add_stat_component::<T>();
         self.add_writeback_component::<T>();
         self

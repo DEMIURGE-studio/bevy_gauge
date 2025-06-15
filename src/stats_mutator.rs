@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemParam, prelude::*, utils::{HashSet, HashMap}};
+use bevy::{ecs::system::SystemParam, platform::collections::{HashMap, HashSet}, prelude::*};
 use super::prelude::*;
 
 // TODO:  
@@ -652,7 +652,7 @@ pub(crate) fn remove_stats(
     trigger: Trigger<OnRemove, Stats>,
     mut stats_mutator: StatsMutator,
 ) {
-    let removed_entity = trigger.entity();
+    let removed_entity = trigger.target();
     stats_mutator.remove_stat_entity(removed_entity);
 }
 
@@ -823,13 +823,13 @@ mod remove_stat_entity_tests {
         app.add_systems(Update, 
             (
                 setup_test_entities_for_removal.in_set(TestPhase::Setup),
-                apply_deferred.after(TestPhase::Setup).before(TestPhase::RegisterSources),
+                ApplyDeferred.after(TestPhase::Setup).before(TestPhase::RegisterSources),
                 register_initial_sources.in_set(TestPhase::RegisterSources),
-                apply_deferred.after(TestPhase::RegisterSources).before(TestPhase::PreVerify),
+                ApplyDeferred.after(TestPhase::RegisterSources).before(TestPhase::PreVerify),
                 pre_removal_verification.in_set(TestPhase::PreVerify),
-                apply_deferred.after(TestPhase::PreVerify).before(TestPhase::Remove),
+                ApplyDeferred.after(TestPhase::PreVerify).before(TestPhase::Remove),
                 do_remove_entity_a.in_set(TestPhase::Remove),
-                apply_deferred.after(TestPhase::Remove).before(TestPhase::PostVerify),
+                ApplyDeferred.after(TestPhase::Remove).before(TestPhase::PostVerify),
                 post_removal_verification.in_set(TestPhase::PostVerify),
             ).chain()
         );

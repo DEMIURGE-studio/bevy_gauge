@@ -1,6 +1,6 @@
 use std::cell::SyncUnsafeCell;
 
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use evalexpr::{Context, ContextWithMutableVariables, HashMapContext, Value, IterateVariablesContext};
 use super::prelude::*;
 

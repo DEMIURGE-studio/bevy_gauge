@@ -119,13 +119,8 @@ pub(crate) trait DebugCheckedUnwrap {
 /// `update_component_access` adds a `With` filter for a component.
 /// This is sound because `matches_component_set` returns whether the set contains that component.
 unsafe impl<T: Component> WorldQuery for Dirty<T> {
-    type Item<'w> = bool;
     type Fetch<'w> = DirtyFetch<'w, T>;
     type State = ComponentId;
-
-    fn shrink<'wlong: 'wshort, 'wshort>(item: Self::Item<'wlong>) -> Self::Item<'wshort> {
-        item
-    }
 
     fn shrink_fetch<'wlong: 'wshort, 'wshort>(fetch: Self::Fetch<'wlong>) -> Self::Fetch<'wshort> {
         fetch
@@ -192,32 +187,6 @@ unsafe impl<T: Component> WorldQuery for Dirty<T> {
         unsafe { fetch.ticks.set_table(table_ticks) };
     }
 
-    #[inline(always)]
-    unsafe fn fetch<'w>(
-        fetch: &mut Self::Fetch<'w>,
-        entity: Entity,
-        table_row: TableRow,
-    ) -> Self::Item<'w> {
-        fetch.ticks.extract(
-            |table| {
-                // SAFETY: set_table was previously called
-                let table = unsafe { table.debug_checked_unwrap() };
-                // SAFETY: The caller ensures `table_row` is in range.
-                let tick = unsafe { table.get(table_row.as_usize()) };
-
-                tick.deref().is_newer_than(fetch.last_run, fetch.this_run)
-            },
-            |sparse_set| {
-                // SAFETY: The caller ensures `entity` is in range.
-                let tick = unsafe {
-                    ComponentSparseSet::get_changed_tick(sparse_set, entity).debug_checked_unwrap()
-                };
-
-                tick.deref().is_newer_than(fetch.last_run, fetch.this_run)
-            },
-        )
-    }
-
     #[inline]
     fn update_component_access(&_id: &ComponentId, _access: &mut FilteredAccess<ComponentId>) {
         // if access.access().has_component_write(id) {
@@ -248,11 +217,10 @@ unsafe impl<T: Component> QueryFilter for Dirty<T> {
 
     #[inline(always)]
     unsafe fn filter_fetch(
-        fetch: &mut Self::Fetch<'_>,
-        entity: Entity,
-        table_row: TableRow,
+        _fetch: &mut Self::Fetch<'_>,
+        _entity: Entity,
+        _table_row: TableRow,
     ) -> bool {
-        // SAFETY: The invariants are uphold by the caller.
-        unsafe { Self::fetch(fetch, entity, table_row) }
+        true
     }
 }

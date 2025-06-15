@@ -1,4 +1,4 @@
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use crate::prelude::{StatsMutator, ModifierType};
 
 /// A component that represents a collection of stat modifiers, typically grouped by a common source

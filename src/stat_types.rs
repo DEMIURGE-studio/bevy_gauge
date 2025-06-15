@@ -1,4 +1,4 @@
-use bevy::utils::HashMap;
+use bevy::platform::collections::HashMap;
 use evalexpr::{ContextWithMutableVariables, Value, IterateVariablesContext, Context};
 
 use super::prelude::*;
@@ -477,7 +477,7 @@ impl Stat for Tagged {
             let mut context = stats.cached_stats.context().clone();
             for (part_name_in_total_expr, _step_definition) in &self.modifier_steps {
                 let part_value = self.evaluate_part(part_name_in_total_expr, tag_val, stats);
-                context.set_value(part_name_in_total_expr.clone(), Value::Float(part_value as f64)).unwrap();
+                context.set_value(part_name_in_total_expr.to_string(), Value::Float(part_value as f64)).unwrap();
             }
             let total_val = self.total.evaluate(&context);
             stats.set_cached(&path.full_path, total_val);
