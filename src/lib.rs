@@ -70,14 +70,14 @@
 //!     # struct PlayerTag;
 //!     # fn spawn_player(mut commands: Commands) { commands.spawn((PlayerTag, Stats::new())); }
 //!     fn apply_damage_buff(mut stats_mutator: StatsMutator, query: Query<Entity, With<PlayerTag>>) {
-//!         if let Ok(player_entity) = query.get_single() {
+//!         if let Ok(player_entity) = query.single() {
 //!             // Add a 20% increased damage modifier with tag 1 (e.g., "Fire")
 //!             stats_mutator.add_modifier(player_entity, "Damage.increased.1", 0.20);
 //!         }
 //!     }
 //!
 //!     fn print_player_damage(stats_mutator: StatsMutator, query: Query<Entity, With<PlayerTag>>) {
-//!         if let Ok(player_entity) = query.get_single() {
+//!         if let Ok(player_entity) = query.single() {
 //!             // Evaluate total damage (no specific tag, so considers all relevant tags)
 //!             let total_damage = stats_mutator.evaluate(player_entity, "Damage");
 //!             // Evaluate fire damage (tag 1)

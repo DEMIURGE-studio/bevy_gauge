@@ -63,7 +63,7 @@ fn add_modifiers_system(
     mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<Player>>,
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         stats_mutator.add_modifier(player_entity, "Strength", Expression::new("25.0").unwrap());
     }
 }
@@ -71,7 +71,7 @@ fn add_modifiers_system(
 fn get_stats_system(
     player_query: Query<&Stats, With<Player>>,
 ) {
-    if let Ok(player_stats) = player_query.get_single() {
+    if let Ok(player_stats) = player_query.single() {
         // Access stats directly
         let strength = player_stats.get("Strength");
         let dexterity = player_stats.get("Dexterity");

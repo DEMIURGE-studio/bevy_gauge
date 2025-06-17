@@ -104,7 +104,7 @@ fn apply_buff_system(
     mut stats_mutator: StatsMutator,
     player_query: Query<Entity, (With<Player>, Added<Player>)>, 
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         // Add +5 to Strength (Modifiable stat)
         println!("Applying +5 Strength buff.");
         stats_mutator.add_modifier(player_entity, "Strength", 5.0);
@@ -115,7 +115,7 @@ fn display_health_system(
     // For reading stats, query the Stats component directly.
     player_query: Query<(Entity, &Stats), With<Player>>,
 ) {
-    if let Ok((player_entity, stats)) = player_query.get_single() {
+    if let Ok((player_entity, stats)) = player_query.single() {
         // Use stats.get() for direct stat values or parts.
 
         // Get total

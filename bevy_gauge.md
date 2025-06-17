@@ -178,7 +178,7 @@ fn apply_strength_buff(
     mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         // Add +10 to the "base" part of the "Strength" stat
         stats_mutator.add_modifier(player_entity, "Strength.base", 10.0);
 
@@ -209,7 +209,7 @@ fn remove_strength_buff(
     mut stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         // Remove the +10 "Strength.base" modifier
         stats_mutator.remove_modifier(player_entity, "Strength.base", 10.0);
 
@@ -234,7 +234,7 @@ fn display_player_health(
     stats_mutator: StatsMutator,
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         let current_health = stats_mutator.evaluate(player_entity, "Health"); // Evaluating the top level stat gives you the total
         let fire_damage = stats_mutator.evaluate(player_entity, "Damage.Fire"); // Assuming "Fire" tag
         println!("Player Health: {}, Fire Damage: {}", current_health, fire_damage);
@@ -255,7 +255,7 @@ fn take_damage(
     player_query: Query<Entity, With<PlayerTag>>,
     damage_amount: f32,
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         let current_health = stats_mutator.evaluate(player_entity, "Health.current");
         let new_health = current_health - damage_amount;
         // Directly set the "base" of "Health.current"
@@ -583,7 +583,7 @@ fn cast_might_buff_system(
     player_query: Query<Entity, With<PlayerTag>>,
     // In a real game, you'd likely have an event or input trigger this
 ) {
-    if let Ok(player_entity) = player_query.get_single() {
+    if let Ok(player_entity) = player_query.single() {
         let buff = MightBuff { strength_bonus: 5.0, duration: 10.0 };
 
         // Apply the effect
