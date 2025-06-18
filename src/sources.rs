@@ -6,6 +6,6 @@ pub fn register_parent(
     mut stats_mutator: StatsMutator,
 ) {
     for (entity, parent) in parent_query.iter() {
-        stats_mutator.register_source(entity, "Parent", parent.get());
+        stats_mutator.register_source(entity, "Parent", parent.parent());
     }
 }

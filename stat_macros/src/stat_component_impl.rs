@@ -350,6 +350,7 @@ fn expand_trait_impls_for_variant(
     let update_body = collect_update_lines(fields, quote!(self));
     let is_valid_body = collect_is_valid_lines(fields);
     let wb_body = collect_writeback_lines(fields, quote!(self));
+    let should_wb_body = collect_should_writeback_lines(fields, quote!(self));
 
     quote! {
         impl StatDerived for #struct_name_with_variant {
@@ -372,6 +373,10 @@ fn expand_trait_impls_for_variant(
         impl WriteBack for #struct_name_with_variant {
             fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #wb_body
+            }
+            
+            fn should_write_back(&self, target_entity: Entity, stats_mutator: &bevy_gauge::prelude::StatsMutator) -> bool {
+                #should_wb_body
             }
         }
     }
@@ -632,6 +637,42 @@ fn collect_writeback_lines(
     quote! { #(#lines)* }
 }
 
+fn collect_should_writeback_lines(
+    fields: &[ParsedField],
+    self_expr: proc_macro2::TokenStream
+) -> proc_macro2::TokenStream {
+    let mut lines = Vec::new();
+
+    for pf in fields {
+        match pf {
+            ParsedField::WriteTo { name, path } => {
+                lines.push(quote! {
+                    #self_expr.#name != stats_mutator.get(target_entity, #path)
+                });
+            },
+            ParsedField::ReadFrom { .. } => { /* skip */ },
+            ParsedField::Nested { name, fields, .. } => {
+                let nested_code = collect_should_writeback_lines(fields, quote!(#self_expr.#name));
+                lines.push(nested_code);
+            },
+            ParsedField::AutoWriteTo { name, resolved_path } => {
+                lines.push(quote! {
+                    #self_expr.#name != stats_mutator.get(target_entity, #resolved_path)
+                });
+            },
+            ParsedField::AutoReadFrom { .. } => { /* skip */ },
+        }
+    }
+
+    // If no writeback fields, return false (never write back)
+    if lines.is_empty() {
+        return quote! { false };
+    }
+
+    // Combine with OR - if any writeback field has changed, we should write back
+    quote! { #(#lines)||* }
+}
+
 fn expand_trait_impls_for_no_variant(
     struct_ident: &Ident,
     generics: &syn::Generics,
@@ -642,6 +683,7 @@ fn expand_trait_impls_for_no_variant(
     let should_update_body = collect_should_update_lines(fields, quote!(self));
     let update_body = collect_update_lines(fields, quote!(self));
     let writeback_body = collect_writeback_lines(fields, quote!(self));
+    let should_wb_body = collect_should_writeback_lines(fields, quote!(self));
     let is_valid_body = collect_is_valid_lines(fields);
 
     quote! {
@@ -665,6 +707,10 @@ fn expand_trait_impls_for_no_variant(
         impl #impl_generics WriteBack for #struct_ident #ty_generics #where_clause {
             fn write_back(&self, target_entity: Entity, stats_mutator: &mut bevy_gauge::prelude::StatsMutator) {
                 #writeback_body
+            }
+            
+            fn should_write_back(&self, target_entity: Entity, stats_mutator: &bevy_gauge::prelude::StatsMutator) -> bool {
+                #should_wb_body
             }
         }
     }

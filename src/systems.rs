@@ -39,6 +39,8 @@ pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
     mut stats_mutator: StatsMutator,
 ) {
     for (entity, write_back) in stats_query.iter() {
-        write_back.write_back(entity, &mut stats_mutator);
+        if write_back.should_write_back(entity, &stats_mutator) {
+            write_back.write_back(entity, &mut stats_mutator);
+        }
     }
 }

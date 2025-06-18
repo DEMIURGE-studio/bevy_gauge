@@ -114,6 +114,9 @@ impl Stats {
             .entry(path.to_string())
             .or_insert(StatType::Flat(Flat::new(&StatPath::parse(path))))
             .set(&StatPath::parse(path), base);
+        
+        // Update the cache to reflect the new value
+        self.set_cached(path, base);
         self
     }
 
