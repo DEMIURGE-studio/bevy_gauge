@@ -18,7 +18,7 @@ use crate::prelude::{ModifierSet, StatsMutator, Stats};
 /// # use bevy_gauge::prelude::*;
 /// # fn system(mut commands: Commands) {
 /// let mut player_initial_stats = ModifierSet::default();
-/// player_initial_stats.add("Health.base", 100.0);
+/// player_initial_stats.add("Life.base", 100.0);
 /// player_initial_stats.add("Mana.base", 50.0);
 /// player_initial_stats.add("Strength.base", 10.0);
 ///

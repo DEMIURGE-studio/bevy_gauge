@@ -38,7 +38,7 @@ impl StatContext {
     ///
     /// # Arguments
     ///
-    /// * `key`: The name of the variable (e.g., "Health.base", "Damage@Source").
+    /// * `key`: The name of the variable (e.g., "Life.base", "Damage@Source").
     /// * `value`: The `f32` value of the variable.
     ///
     /// # Returns
@@ -54,7 +54,7 @@ impl StatContext {
 
 /// The Bevy `Component` that holds all stat-related data for an entity.
 ///
-/// An entity with a `Stats` component can have various stats defined for it (e.g., Health, Damage),
+/// An entity with a `Stats` component can have various stats defined for it (e.g., Life, Damage),
 /// each with its own modifiers, expressions, and potential dependencies on other stats or entities.
 ///
 /// Most interactions with an entity's stats are performed through the `StatsMutator` system parameter,
@@ -93,7 +93,7 @@ impl Stats {
     ///
     /// # Arguments
     ///
-    /// * `path`: A string representing the stat path (e.g., "Damage", "Health.base").
+    /// * `path`: A string representing the stat path (e.g., "Damage", "Life.base").
     ///
     /// # Returns
     ///
@@ -189,6 +189,7 @@ impl Stats {
             stat.add_modifier(path, modifier);
         } else {
             let mut new_stat = StatType::new(path);
+            new_stat.initialize(path, self);
             new_stat.add_modifier(path, modifier);
             self.definitions.insert(base_stat_name.to_string(), new_stat);
         }

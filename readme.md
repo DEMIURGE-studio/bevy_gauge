@@ -8,7 +8,7 @@ _(License: MIT OR Apache-2.0)_
 
 ## Core Features
 
-*   **Dynamic Stats:** Define stats like Health, Mana, Strength, etc.
+*   **Dynamic Stats:** Define stats like Life, Mana, Strength, etc.
 *   **Modifiers:** Add flat bonuses, percentage increases, or complex calculations via expressions.
 *   **Expression Engine:** Use mathematical expressions to define how stats are calculated (e.g., `base * (1 + increased) * more`).
 *   **Dependencies:** Stats can depend on other stats, even across different entities (Sources).

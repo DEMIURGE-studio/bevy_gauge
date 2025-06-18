@@ -59,15 +59,6 @@ fn setup_player(mut commands: Commands) {
     println!("Initial attributes: Str: 25, Dex: 18, Int: 33");
 }
 
-fn add_modifiers_system(
-    mut stats_mutator: StatsMutator,
-    player_query: Query<Entity, With<Player>>,
-) {
-    if let Ok(player_entity) = player_query.single() {
-        stats_mutator.add_modifier(player_entity, "Strength", Expression::new("25.0").unwrap());
-    }
-}
-
 fn get_stats_system(
     player_query: Query<&Stats, With<Player>>,
 ) {

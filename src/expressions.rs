@@ -21,7 +21,7 @@ impl Expression {
     /// # Arguments
     ///
     /// * `expression`: A string slice representing the mathematical expression
-    ///                 (e.g., `"Health.base + Vitality * 10"`).
+    ///                 (e.g., `"Life.base + Vitality * 10"`).
     ///
     /// # Returns
     ///

@@ -34,8 +34,8 @@
 //!     use bevy_gauge::prelude::*;
 //!
 //!     fn setup_config() {
-//!         Konfig::register_stat_type("Health", "Modifiable"); // Max health
-//!         Konfig::register_total_expression("Health", "base"); // Total is just its base
+//!         Konfig::register_stat_type("Life", "Modifiable"); // Max health
+//!         Konfig::register_total_expression("Life", "base"); // Total is just its base
 //!
 //!         Konfig::register_stat_type("Damage", "Tagged");
 //!         Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more");

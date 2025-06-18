@@ -29,7 +29,7 @@ impl ModifierSet {
     ///
     /// # Arguments
     ///
-    /// * `path`: The string representation of the stat path (e.g., "Health.base", "CritChance.added").
+    /// * `path`: The string representation of the stat path (e.g., "Life.base", "CritChance.added").
     /// * `value`: The modifier to add, convertible into `ModifierType` (e.g., `10.0f32` or an `Expression`).
     pub fn add<V: Into<ModifierType>>(&mut self, path: &str, value: V) {
         self.0.entry(path.to_string())

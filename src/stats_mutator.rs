@@ -33,7 +33,7 @@ impl StatsMutator<'_, '_> {
     /// # Arguments
     ///
     /// * `target_entity`: The `Entity` whose stat value is to be retrieved.
-    /// * `path`: A string representing the stat path (e.g., "Damage", "Health.base").
+    /// * `path`: A string representing the stat path (e.g., "Damage", "Life.base").
     ///
     /// # Returns
     ///
@@ -58,7 +58,7 @@ impl StatsMutator<'_, '_> {
     /// # Arguments
     ///
     /// * `target_entity`: The `Entity` whose stat is to be set.
-    /// * `path`: A string representing the stat path to set (e.g., "Health.base").
+    /// * `path`: A string representing the stat path to set (e.g., "Life.base").
     /// * `value`: The `f32` value to set for the stat.
     pub fn set(&mut self, target_entity: Entity, path: &str, value: f32) {
         let Ok(mut stats) = self.query.get_mut(target_entity) else {
@@ -377,7 +377,7 @@ impl StatsMutator<'_, '_> {
     /// # Arguments
     ///
     /// * `target_entity`: The `Entity` whose stat is to be evaluated.
-    /// * `path`: The string representation of the stat path (e.g., "Damage", "Health.current").
+    /// * `path`: The string representation of the stat path (e.g., "Damage", "Life.current").
     ///
     /// # Returns
     ///

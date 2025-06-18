@@ -86,10 +86,10 @@ use bevy_gauge::prelude::*;
 fn setup_game_config() -> Config {
     let mut config = Config::default();
 
-    // Define a "Health" stat that is Modifiable (e.g., can have +MaxHP mods)
-    config.register_stat_type("Health", "Modifiable");
+    // Define a "Life" stat that is Modifiable (e.g., can have +MaxHP mods)
+    config.register_stat_type("Life", "Modifiable");
     // Its total value is determined by its "base" part.
-    config.register_total_expression("Health", "base");
+    config.register_total_expression("Life", "base");
 
     // Define a "Damage" stat that is Tagged (e.g., can have "Fire" Damage, "Physical" Damage)
     config.register_stat_type("Damage", "Tagged");
@@ -121,7 +121,7 @@ use bevy_gauge::prelude::*;
 
 fn spawn_player(mut commands: Commands) {
     let mut initial_mods = ModifierSet::default();
-    initial_mods.add("Health.base", 100.0); // Base Health
+    initial_mods.add("Life.base", 100.0); // Base Life
     initial_mods.add("Mana.base", 50.0);   // Base Mana
     initial_mods.add("Damage.base.Fire", 10.0); // Base Fire Damage
 
@@ -152,7 +152,7 @@ fn spawn_enemy(mut commands: Commands) {
         EnemyTag,
         Stats::new(),
         stats! { // Creates a StatsInitializer
-            "Health.base" => 50.0,
+            "Life.base" => 50.0,
             "AttackPower.base" => 5.0
         }
     ));
@@ -235,9 +235,9 @@ fn display_player_health(
     player_query: Query<Entity, With<PlayerTag>>,
 ) {
     if let Ok(player_entity) = player_query.single() {
-        let current_health = stats_mutator.evaluate(player_entity, "Health"); // Evaluating the top level stat gives you the total
+        let current_health = stats_mutator.evaluate(player_entity, "Life"); // Evaluating the top level stat gives you the total
         let fire_damage = stats_mutator.evaluate(player_entity, "Damage.Fire"); // Assuming "Fire" tag
-        println!("Player Health: {}, Fire Damage: {}", current_health, fire_damage);
+        println!("Player Life: {}, Fire Damage: {}", current_health, fire_damage);
     }
 }
 ```
@@ -256,12 +256,12 @@ fn take_damage(
     damage_amount: f32,
 ) {
     if let Ok(player_entity) = player_query.single() {
-        let current_health = stats_mutator.evaluate(player_entity, "Health.current");
+        let current_health = stats_mutator.evaluate(player_entity, "Life.current");
         let new_health = current_health - damage_amount;
-        // Directly set the "base" of "Health.current"
-        // Note: "Health.current" would typically be a "Flat" or "Modifiable" stat
+        // Directly set the "base" of "Life.current"
+        // Note: "Life.current" would typically be a "Flat" or "Modifiable" stat
         // configured to use its "base" as its total.
-        stats_mutator.set(player_entity, "Health.current", new_health.max(0.0));
+        stats_mutator.set(player_entity, "Life.current", new_health.max(0.0));
     }
 }
 ```
@@ -482,7 +482,7 @@ TODO specify that this is the only value that can be set, and is useful for valu
 *   **Behavior**: Modifiers can be additive or multiplicative, determined by the `Config` for that stat part. It has a `base` value and a list of `mods` (expressions or literals).
     *   Additive: `final = base + sum_of_mods`
     *   Multiplicative: `final = base * product_of_mods`
-*   **Use Case**: Max Health (base + flat bonuses + % bonuses), armor, resistance.
+*   **Use Case**: Max Life (base + flat bonuses + % bonuses), armor, resistance.
 *   **Default `total_expression`**: Often `"base"` where `base` itself is calculated by applying modifiers. Or, the `Modifiable` struct is a *part* of a `Complex` stat.
 
 ### `Complex`
@@ -509,7 +509,7 @@ A user defined tag could look like "Damage.increased.FIRE|AXE" for example
 use bevy_gauge::prelude::*;
 
 let mut modifiers = ModifierSet::default();
-modifiers.add("Health.base", 100.0);
+modifiers.add("Life.base", 100.0);
 modifiers.add("Strength.base", Expression::new("10.0 + Level * 2.0").unwrap());
 modifiers.add("Damage.increased.Fire", 0.25); // 25% increased Fire damage
 ```
@@ -521,7 +521,7 @@ The `mod_set!` macro provides a more concise way to define a `ModifierSet`.
 use bevy_gauge::prelude::*;
 
 let modifiers = mod_set! {
-    "Health.base" => 100.0,
+    "Life.base" => 100.0,
     "Mana.base" => 50.0,
     "AttackPower.base" => [
         10.0, // Add a flat 10

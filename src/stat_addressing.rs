@@ -2,7 +2,7 @@
 ///
 /// Stat paths are strings used throughout the system to identify specific stats or their components.
 /// Examples:
-/// - `"Health"`: Refers to the base "Health" stat.
+/// - `"Life"`: Refers to the base "Life" stat.
 /// - `"Damage.base"`: Refers to the "base" part of the "Damage" stat.
 /// - `"Damage.increased.123"`: Refers to the "increased" part of "Damage", specifically with tag `123`.
 /// - `"Strength@Player"`: Refers to the "Strength" stat from the source aliased as "Player".
@@ -25,7 +25,7 @@ pub struct StatPath<'a> {
     /// Example: `123` in `"Damage.increased.123"` or `"Buff.42"`.
     pub tag: Option<u32>,
     /// An optional source alias, indicating that the stat originates from a different entity or context.
-    /// This is the segment following an `@` symbol (e.g., "Player" in `"Health@Player"`).
+    /// This is the segment following an `@` symbol (e.g., "Player" in `"Life@Player"`).
     pub target: Option<&'a str>,
 }
 

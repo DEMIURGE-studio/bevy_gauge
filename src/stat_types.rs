@@ -269,7 +269,7 @@ impl Stat for Complex {
     fn initialize(&self, path: &StatPath, stats: &mut Stats) {
         for part in self.total.compiled.iter_identifiers() {
             let part_path = format!("{}.{}", path.name, part);
-            stats.add_dependent(path.name, DependentType::LocalStat(part_path));
+            stats.add_dependent(&part_path, DependentType::LocalStat(path.name.to_string()));
         }
     }
 

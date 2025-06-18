@@ -269,11 +269,11 @@ mod tests {
     fn test_konfig_access_and_registration() {
         Konfig::reset_for_test();
 
-        Konfig::register_stat_type("Health", "Complex");
+        Konfig::register_stat_type("Life", "Complex");
         Konfig::register_relationship_type("Strength", ModType::Mul);
         Konfig::register_total_expression("Mana", "base * (1 + increased)");
 
-        assert_eq!(Konfig::get_stat_type("Health"), "Complex");
+        assert_eq!(Konfig::get_stat_type("Life"), "Complex");
         assert_eq!(Konfig::get_relationship_type("Strength"), ModType::Mul);
         assert_eq!(Konfig::get_total_expression("Mana"), "base * (1 + increased)");
         assert_eq!(Konfig::get_stat_type("Dexterity"), "Modifiable"); // Checks default

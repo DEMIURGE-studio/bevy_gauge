@@ -298,9 +298,9 @@ mod tests {
         let resolver = DamageTags;
         assert_eq!(process_tag("Damage.increased.123", &resolver), "Damage.increased.123");
         assert_eq!(process_tag("Effect.modifier.42@Source", &resolver), "Effect.modifier.42@Source");
-        assert_eq!(process_tag("Health.current", &resolver), "Health.current");
-        assert_eq!(process_tag("Health", &resolver), "Health");
-        assert_eq!(process_tag("Health@Player", &resolver), "Health@Player");
+        assert_eq!(process_tag("Life.current", &resolver), "Life.current");
+        assert_eq!(process_tag("Life", &resolver), "Life");
+        assert_eq!(process_tag("Life@Player", &resolver), "Life@Player");
     }
     
     #[test]

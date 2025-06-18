@@ -10,8 +10,8 @@ fn setup_app() -> App {
 
 fn setup_health_config() {
     Konfig::reset_for_test(); // Ensure clean state
-    Konfig::register_stat_type("Health", "Complex");
-    Konfig::register_total_expression("Health", "base + bonus - reduction");
+    Konfig::register_stat_type("Life", "Complex");
+    Konfig::register_total_expression("Life", "base + bonus - reduction");
 }
 
 fn setup_damage_config() {
@@ -25,7 +25,7 @@ fn test_basic_stats_initialization() {
     let mut app = setup_app();
 
     let mut initial_mods = ModifierSet::default();
-    initial_mods.add("Health.base", 100.0);
+    initial_mods.add("Life.base", 100.0);
     initial_mods.add("Mana.base", 50.0);
 
     let entity = app.world_mut().spawn((
@@ -38,9 +38,9 @@ fn test_basic_stats_initialization() {
     // TODO generally access is done via a Stats query, and Stats::get()
     // Check if stats are applied
     let health_val = app.world_mut().run_system_once(
-        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Health.base")
+        move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Life.base")
     ).unwrap();
-    assert_eq!(health_val, 100.0, "Health.base should be initialized to 100.0");
+    assert_eq!(health_val, 100.0, "Life.base should be initialized to 100.0");
 
     let mana_val = app.world_mut().run_system_once(
         move |stats_mutator: StatsMutator| stats_mutator.get(entity, "Mana.base")
