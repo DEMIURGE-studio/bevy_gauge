@@ -488,10 +488,6 @@ fn parse_fields_list_with_context(
     Ok(results)
 }
 
-fn parse_fields_list(fields: &Punctuated<StatField, Token![,]>) -> syn::Result<Vec<ParsedField>> {
-    parse_fields_list_with_context(fields, "", &[])
-}
-
 // ---------------------------------------------------------------------
 // 5) Code generation for the implementation methods
 // ---------------------------------------------------------------------
@@ -604,7 +600,7 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
     }
     
     // Combine with AND
-    quote! { #(#lines)&&* }
+    quote! { #(#lines)||* }
 }
 
 fn collect_writeback_lines(

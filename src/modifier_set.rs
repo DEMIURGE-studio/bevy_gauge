@@ -71,4 +71,20 @@ impl ModifierSet {
             }
         }
     }
+
+    /// Combines another `ModifierSet` into this one.
+    ///
+    /// This adds all modifiers from the other set to this set. If both sets have
+    /// modifiers for the same stat path, they will be combined (both will be applied).
+    ///
+    /// # Arguments
+    ///
+    /// * `other`: The other `ModifierSet` to combine into this one.
+    pub fn combine(&mut self, other: &ModifierSet) {
+        for (stat, modifiers) in other.0.iter() {
+            for modifier in modifiers.iter() {
+                self.add(stat, modifier.clone());
+            }
+        }
+    }
 }
