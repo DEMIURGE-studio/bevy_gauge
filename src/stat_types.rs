@@ -26,7 +26,7 @@ pub enum ModType {
 #[derive(Debug, Clone)]
 pub(crate) enum StatType {
     /// Simple numeric value with no complex modification rules.
-    /// Example: Base health that just gets directly modified
+    /// Example: Current resource values that are modified directly.
     Flat(Flat),
     /// Value that can be modified by additive or multiplicative modifiers.
     /// Example: Damage that can be increased by percentage modifiers
