@@ -630,7 +630,7 @@ This trait is for components that need to write some of their field values *back
 ### The `stat_component!` Macro
 This macro simplifies the creation of components that implement `StatDerived` and `WriteBack`.
 
-**Note:** The `stat_component!` macro generates components compatible with the `StatDerived` and `WriteBack` traits. The macro supports both explicit stat paths and auto-generated paths using the `$` syntax.
+**Note:** The `stat_component!` macro generates components compatible with the `StatDerived` and `WriteBack` traits. The macro supports both explicit stat paths and auto-generated paths using the `$` syntax. It fully supports different field types including `f32`, `Option<f32>`, `String`, `bool`, and other user-defined types in any combination and order.
 
 **Example:**
 
@@ -641,8 +641,32 @@ use bevy_gauge::prelude::*;
 stat_component!(
     #[derive(Default, Debug)] // You can add other derives here
     pub struct Life {
-        max: <- "Life",              // Read-only: reads from "Life" stat
-        current: -> "Life.current",  // Write-only: writes to "Life.current" stat
+        max: f32 <- "Life",              // Read-only f32: reads from "Life" stat
+        current: f32 -> "Life.current",  // Write-only f32: writes to "Life.current" stat
+    }
+);
+
+// Example with Option<f32> fields - these work seamlessly in any position
+stat_component!(
+    #[derive(Clone, Debug)]
+    pub struct ConditionalStatModifier {
+        pub stat_name: String,                    // Non-stat field
+        pub amount_per_second: f32 <- $,          // f32 stat field
+        pub min_value: Option<f32> <- $,          // Option<f32> stat field (0 -> None)
+        pub max_value: Option<f32> <- $,          // Option<f32> stat field (0 -> None)
+        pub is_enabled: bool,                     // Non-stat field
+    }
+);
+
+// Example starting with Option<f32> fields - this now works correctly
+stat_component!(
+    #[derive(Debug, Clone)]
+    pub struct StatModifierOverTime {
+        pub modifier: ModifierSet,                // Non-stat field
+        pub duration: Option<f32> <- $,           // Option<f32> as first stat field
+        pub interval: Option<f32> <- $,           // Multiple Option<f32> fields
+        pub min_value: Option<f32> <- $,          // All work in any order
+        pub max_value: Option<f32> <- $,
     }
 );
 
@@ -650,20 +674,27 @@ stat_component!(
 stat_component!(
     pub struct PlayerStats {
         health: HealthStats {
-            max: <- $,                   // Auto-generated: "$[PlayerStats.health.max]" (read-only)
-            current: -> $,               // Auto-generated: "$[PlayerStats.health.current]" (write-only)
-            regen: <- "HealthRegen",     // Explicit path to a different stat
+            max: f32 <- $,                   // Auto-generated: "$[PlayerStats.health.max]" (read-only)
+            current: f32 -> $,               // Auto-generated: "$[PlayerStats.health.current]" (write-only)
+            regen: Option<f32> <- "HealthRegen",     // Explicit path to a different stat
         },
-        mana: <- $,                      // Auto-generated: "$[PlayerStats.mana]" (read-only)
-        experience: -> $,                // Auto-generated: "$[PlayerStats.experience]" (write-only)
+        mana: f32 <- $,                      // Auto-generated: "$[PlayerStats.mana]" (read-only)
+        experience: f32 -> $,                // Auto-generated: "$[PlayerStats.experience]" (write-only)
     }
 );
 ```
 
+**Field Type Support:**
+The macro supports various field types:
+- `f32`: Standard floating-point stat values
+- `Option<f32>`: Optional stats where `0.0` values are converted to `None`, and `None` values write back as `0.0`
+- `String`, `bool`, and other types: Non-stat fields that maintain their values but aren't derived from stats
+- `ModifierSet` and other complex types: For advanced use cases
+
 **Auto-Generated Path Syntax:**
-- `field: <- $` - Read-only field with auto-generated path `"$[StructName.field]"`
-- `field: -> $` - Write-only field with auto-generated path `"$[StructName.field]"`  
-- For nested fields: `nested.field: <- $` generates `"$[StructName.nested.field]"`
+- `field: f32 <- $` - Read-only field with auto-generated path `"$[StructName.field]"`
+- `field: f32 -> $` - Write-only field with auto-generated path `"$[StructName.field]"`  
+- For nested fields: `nested.field: f32 <- $` generates `"$[StructName.nested.field]"`
 
 **Mixing Explicit and Auto-Generated Paths:**
 You can freely mix explicit stat paths (strings) with auto-generated paths (`$`) within the same component. This is useful when some fields map to standard stat names while others follow your component's naming convention.

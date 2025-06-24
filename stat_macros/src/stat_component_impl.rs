@@ -1,6 +1,6 @@
 use quote::quote;
 use syn::token::{Brace, Paren, Semi};
-use syn::{parse_macro_input, Attribute, Ident, Token, Visibility, LitStr};
+use syn::{parse_macro_input, Attribute, Ident, Token, Visibility, LitStr, Type};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 
@@ -40,29 +40,41 @@ enum Direction {
 /// One field in the user's DSL, e.g.
 /// 
 /// ```plain
-///   foo: <- "Stats.foo",
-///   bar: -> "Stats.bar"
+///   foo: f32 <- "Stats.foo",
+///   bar: Option<f32> -> "Stats.bar",
+///   baz: String,  // non-stat field
 /// ```
 enum StatField {
     WithDirection {
+        vis: Visibility,
         name: Ident,
         _colon_token: Token![:],
+        field_type: Type,
         direction: Direction,
         path: LitStr,
     },
+    AutoPath {
+        vis: Visibility,
+        name: Ident,
+        _colon_token: Token![:],
+        field_type: Type,
+        direction: Direction,
+        _dollar_token: Token![$],
+        explicit_suffix: Option<String>, // Optional ".part.tag@target" after $
+    },
     Nested {
+        vis: Visibility,
         name: Ident,
         _colon_token: Token![:],
         type_name: Ident,
         _brace_token: Brace,
         nested_fields: Punctuated<StatField, Token![,]>,
     },
-    AutoPath {
+    NonStat {
+        vis: Visibility,
         name: Ident,
         _colon_token: Token![:],
-        direction: Direction,
-        _dollar_token: Token![$],
-        explicit_suffix: Option<String>, // Optional ".part.tag@target" after $
+        field_type: Type,
     },
 }
 
@@ -70,25 +82,39 @@ enum StatField {
 #[derive(Debug)]
 enum ParsedField {
     ReadFrom { 
+        vis: Visibility,
         name: Ident, 
+        field_type: Type,
         path: String 
     },
     WriteTo { 
+        vis: Visibility,
         name: Ident, 
+        field_type: Type,
         path: String 
     },
     Nested { 
+        vis: Visibility,
         name: Ident,
         type_name: Ident,
         fields: Vec<ParsedField>
     },
     AutoReadFrom { 
+        vis: Visibility,
         name: Ident, 
+        field_type: Type,
         resolved_path: String 
     },
     AutoWriteTo { 
+        vis: Visibility,
         name: Ident, 
+        field_type: Type,
         resolved_path: String 
+    },
+    NonStat {
+        vis: Visibility,
+        name: Ident,
+        field_type: Type,
     },
 }
 
@@ -141,99 +167,151 @@ impl Parse for StatStructInput {
 
 impl Parse for StatField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let vis: Visibility = input.parse()?;
         let name: Ident = input.parse()?;
         let colon_token: Token![:] = input.parse()?;
 
-        // Check if we're parsing a nested type first
-        if input.peek(Ident) {
-            let type_name: Ident = input.parse()?;
-            if input.peek(Brace) {
-                let content;
-                let brace_token = syn::braced!(content in input);
-                let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
-                return Ok(StatField::Nested {
-                    name,
-                    _colon_token: colon_token,
-                    type_name,
-                    _brace_token: brace_token,
-                    nested_fields,
-                });
-            } else {
-                return Err(input.error("expected `{` after type name"));
-            }
-        }
-        
-        // Now check for direction operators
-        
-        // ReadFrom: <-
-        if input.peek(Token![<]) {
+        // Use a custom type parser that stops at direction operators
+        let field_type = parse_type_until_operator(input)?;
+
+        // Check for direction operators after parsing the type
+        if input.peek(Token![<]) && input.peek2(Token![-]) {
             let _lt_token: Token![<] = input.parse()?;
-            
-            // Check if next token is -
-            if input.peek(Token![-]) {
-                let _minus_token: Token![-] = input.parse()?;
-                
-                // It's read-from: <-
-                if input.peek(Token![$]) {
-                    let dollar_token: Token![$] = input.parse()?;
-                    return Ok(StatField::AutoPath {
-                        name,
-                        _colon_token: colon_token,
-                        direction: Direction::ReadFrom,
-                        _dollar_token: dollar_token,
-                        explicit_suffix: None,
-                    });
-                } else if input.peek(LitStr) {
-                    let path: LitStr = input.parse()?;
-                    return Ok(StatField::WithDirection {
-                        name,
-                        _colon_token: colon_token,
-                        direction: Direction::ReadFrom,
-                        path,
-                    });
-                } else {
-                    return Err(input.error("expected string literal or $ after `<-`"));
-                }
-            } else {
-                return Err(input.error("expected `-` after `<`"));
-            }
-        }
-        
-        // WriteTo: ->
-        else if input.peek(Token![-]) {
             let _minus_token: Token![-] = input.parse()?;
             
-            if input.peek(Token![>]) {
-                let _gt_token: Token![>] = input.parse()?;
-                
-                // It's write-to: ->
-                if input.peek(Token![$]) {
-                    let dollar_token: Token![$] = input.parse()?;
-                    return Ok(StatField::AutoPath {
-                        name,
-                        _colon_token: colon_token,
-                        direction: Direction::WriteTo,
-                        _dollar_token: dollar_token,
-                        explicit_suffix: None,
-                    });
-                } else if input.peek(LitStr) {
-                    let path: LitStr = input.parse()?;
-                    return Ok(StatField::WithDirection {
-                        name,
-                        _colon_token: colon_token,
-                        direction: Direction::WriteTo,
-                        path,
-                    });
-                } else {
-                    return Err(input.error("expected string literal or $ after `->`"));
-                }
+            // It's read-from: <-
+            if input.peek(Token![$]) {
+                let dollar_token: Token![$] = input.parse()?;
+                return Ok(StatField::AutoPath {
+                    vis,
+                    name,
+                    _colon_token: colon_token,
+                    field_type,
+                    direction: Direction::ReadFrom,
+                    _dollar_token: dollar_token,
+                    explicit_suffix: None,
+                });
+            } else if input.peek(LitStr) {
+                let path: LitStr = input.parse()?;
+                return Ok(StatField::WithDirection {
+                    vis,
+                    name,
+                    _colon_token: colon_token,
+                    field_type,
+                    direction: Direction::ReadFrom,
+                    path,
+                });
             } else {
-                return Err(input.error("expected `>` after `-`"));
+                return Err(input.error("expected string literal or $ after `<-`"));
             }
+        } else if input.peek(Token![-]) && input.peek2(Token![>]) {
+            let _minus_token: Token![-] = input.parse()?;
+            let _gt_token: Token![>] = input.parse()?;
+            
+            // It's write-to: ->
+            if input.peek(Token![$]) {
+                let dollar_token: Token![$] = input.parse()?;
+                return Ok(StatField::AutoPath {
+                    vis,
+                    name,
+                    _colon_token: colon_token,
+                    field_type,
+                    direction: Direction::WriteTo,
+                    _dollar_token: dollar_token,
+                    explicit_suffix: None,
+                });
+            } else if input.peek(LitStr) {
+                let path: LitStr = input.parse()?;
+                return Ok(StatField::WithDirection {
+                    vis,
+                    name,
+                    _colon_token: colon_token,
+                    field_type,
+                    direction: Direction::WriteTo,
+                    path,
+                });
+            } else {
+                return Err(input.error("expected string literal or $ after `->`"));
+            }
+        } else {
+            // Check if we're parsing a nested type
+            if let Type::Path(type_path) = &field_type {
+                if type_path.path.segments.len() == 1 {
+                    let type_name = &type_path.path.segments.first().unwrap().ident;
+                    if input.peek(Brace) {
+                        let content;
+                        let brace_token = syn::braced!(content in input);
+                        let nested_fields = content.parse_terminated(StatField::parse, Token![,])?;
+                        return Ok(StatField::Nested {
+                            vis,
+                            name,
+                            _colon_token: colon_token,
+                            type_name: type_name.clone(),
+                            _brace_token: brace_token,
+                            nested_fields,
+                        });
+                    }
+                }
+            }
+            
+            // Regular non-stat field
+            return Ok(StatField::NonStat {
+                vis,
+                name,
+                _colon_token: colon_token,
+                field_type,
+            });
         }
-
-        Err(input.error("expected one of `<- \"path\"`, `-> \"path\"`, or `TypeName { ... }`"))
     }
+}
+
+// Helper function to parse types by collecting tokens until direction operators or end of field
+fn parse_type_until_operator(input: ParseStream) -> syn::Result<Type> {
+    use proc_macro2::{TokenStream, TokenTree};
+    use quote::ToTokens;
+    
+    let mut tokens = TokenStream::new();
+    
+    // Collect tokens until we hit a direction operator or field separator
+    while !input.is_empty() {
+        // Stop at direction operators
+        if (input.peek(Token![<]) && input.peek2(Token![-])) ||
+           (input.peek(Token![-]) && input.peek2(Token![>])) {
+            break;
+        }
+        // Stop at comma (field separator) or closing brace
+        if input.peek(Token![,]) || input.peek(Brace) {
+            break;
+        }
+        
+        // Special handling for generics - collect everything between < and >
+        if input.peek(Token![<]) {
+            let lt: Token![<] = input.parse()?;
+            lt.to_tokens(&mut tokens);
+            
+            let mut bracket_depth = 1;
+            while bracket_depth > 0 && !input.is_empty() {
+                if input.peek(Token![<]) {
+                    bracket_depth += 1;
+                    let lt: Token![<] = input.parse()?;
+                    lt.to_tokens(&mut tokens);
+                } else if input.peek(Token![>]) {
+                    bracket_depth -= 1;
+                    let gt: Token![>] = input.parse()?;
+                    gt.to_tokens(&mut tokens);
+                } else {
+                    let token: TokenTree = input.parse()?;
+                    token.to_tokens(&mut tokens);
+                }
+            }
+        } else {
+            let token: TokenTree = input.parse()?;
+            token.to_tokens(&mut tokens);
+        }
+    }
+    
+    // Parse the collected tokens as a type
+    syn::parse2(tokens)
 }
 
 // ---------------------------------------------------------------------
@@ -293,20 +371,23 @@ fn expand_single_struct_def(
     // Generate field definitions
     let field_defs = fields.iter().map(|f| {
         match f {
-            ParsedField::ReadFrom { name, .. } => {
-                quote! { pub #name: f32 }
+            ParsedField::ReadFrom { vis, name, field_type, .. } => {
+                quote! { #vis #name: #field_type }
             },
-            ParsedField::WriteTo { name, .. } => {
-                quote! { pub #name: f32 }
+            ParsedField::WriteTo { vis, name, field_type, .. } => {
+                quote! { #vis #name: #field_type }
             },
-            ParsedField::Nested { name, type_name, .. } => {
-                quote! { pub #name: #type_name }
+            ParsedField::Nested { vis, name, type_name, .. } => {
+                quote! { #vis #name: #type_name }
             },
-            ParsedField::AutoReadFrom { name, .. } => {
-                quote! { pub #name: f32 }
+            ParsedField::AutoReadFrom { vis, name, field_type, .. } => {
+                quote! { #vis #name: #field_type }
             },
-            ParsedField::AutoWriteTo { name, .. } => {
-                quote! { pub #name: f32 }
+            ParsedField::AutoWriteTo { vis, name, field_type, .. } => {
+                quote! { #vis #name: #field_type }
+            },
+            ParsedField::NonStat { vis, name, field_type, .. } => {
+                quote! { #vis #name: #field_type }
             },
         }
     });
@@ -434,20 +515,24 @@ fn parse_fields_list_with_context(
     let mut results = Vec::new();
     for f in fields {
         let pf = match f {
-            StatField::WithDirection { name, path, direction, .. } => {
+            StatField::WithDirection { vis, name, field_type, path, direction, .. } => {
                 let path_str = path.value();
                 match direction {
                     Direction::ReadFrom => ParsedField::ReadFrom { 
+                        vis: vis.clone(),
                         name: name.clone(), 
+                        field_type: field_type.clone(),
                         path: path_str 
                     },
                     Direction::WriteTo => ParsedField::WriteTo { 
+                        vis: vis.clone(),
                         name: name.clone(), 
+                        field_type: field_type.clone(),
                         path: path_str 
                     },
                 }
             },
-            StatField::AutoPath { name, direction, explicit_suffix, .. } => {
+            StatField::AutoPath { vis, name, field_type, direction, explicit_suffix, .. } => {
                 let resolved = resolve_auto_path(
                     struct_name,
                     nested_path,
@@ -457,16 +542,20 @@ fn parse_fields_list_with_context(
                 
                 match direction {
                     Direction::ReadFrom => ParsedField::AutoReadFrom {
+                        vis: vis.clone(),
                         name: name.clone(),
+                        field_type: field_type.clone(),
                         resolved_path: resolved,
                     },
                     Direction::WriteTo => ParsedField::AutoWriteTo {
+                        vis: vis.clone(),
                         name: name.clone(),
+                        field_type: field_type.clone(),
                         resolved_path: resolved,
                     },
                 }
             },
-            StatField::Nested { name, type_name, nested_fields, .. } => {
+            StatField::Nested { vis, name, type_name, nested_fields, .. } => {
                 let mut new_nested_path = nested_path.to_vec();
                 new_nested_path.push(name.to_string());
                 
@@ -477,9 +566,17 @@ fn parse_fields_list_with_context(
                 )?;
                 
                 ParsedField::Nested {
+                    vis: vis.clone(),
                     name: name.clone(),
                     type_name: type_name.clone(),
                     fields: sub,
+                }
+            },
+            StatField::NonStat { vis, name, field_type, .. } => {
+                ParsedField::NonStat {
+                    vis: vis.clone(),
+                    name: name.clone(),
+                    field_type: field_type.clone(),
                 }
             },
         };
@@ -500,9 +597,10 @@ fn collect_update_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::ReadFrom { name, path } => {
+            ParsedField::ReadFrom { name, field_type, path, .. } => {
+                let update_code = generate_stat_read_code(name, field_type, path);
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#path);
+                    #self_expr.#update_code
                 });
             },
             ParsedField::WriteTo { .. } => {
@@ -512,18 +610,58 @@ fn collect_update_lines(
                 let nested_code = collect_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
-            ParsedField::AutoReadFrom { name, resolved_path } => {
+            ParsedField::AutoReadFrom { name, field_type, resolved_path, .. } => {
+                let update_code = generate_stat_read_code(name, field_type, resolved_path);
                 lines.push(quote! {
-                    #self_expr.#name = stats.get(#resolved_path);
+                    #self_expr.#update_code
                 });
             },
             ParsedField::AutoWriteTo { .. } => {
                 // AutoWriteTo fields aren't updated from stats
             },
+            ParsedField::NonStat { .. } => {
+                // Non-stat fields aren't updated from stats
+            },
         }
     }
 
     quote! { #(#lines)* }
+}
+
+// Helper function to generate the appropriate stat reading code based on type
+fn generate_stat_read_code(name: &Ident, field_type: &Type, path: &str) -> proc_macro2::TokenStream {
+    if is_option_f32(field_type) {
+        quote! {
+            #name = {
+                let val = stats.get(#path);
+                if val == 0.0 { None } else { Some(val) }
+            };
+        }
+    } else {
+        quote! {
+            #name = stats.get(#path);
+        }
+    }
+}
+
+// Helper function to check if a type is Option<f32>
+fn is_option_f32(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if args.args.len() == 1 {
+                        if let syn::GenericArgument::Type(Type::Path(inner_path)) = &args.args[0] {
+                            if let Some(inner_segment) = inner_path.path.segments.last() {
+                                return inner_segment.ident == "f32";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn collect_should_update_lines(
@@ -534,32 +672,57 @@ fn collect_should_update_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::ReadFrom { name, path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats.get(#path)
-                });
+            ParsedField::ReadFrom { name, field_type, path, .. } => {
+                let comparison_code = generate_stat_comparison_code(name, field_type, path, &self_expr);
+                lines.push(comparison_code);
             },
             ParsedField::WriteTo { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_should_update_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
-            ParsedField::AutoReadFrom { name, resolved_path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats.get(#resolved_path)
-                });
+            ParsedField::AutoReadFrom { name, field_type, resolved_path, .. } => {
+                let comparison_code = generate_stat_comparison_code(name, field_type, resolved_path, &self_expr);
+                lines.push(comparison_code);
             },
             ParsedField::AutoWriteTo { .. } => { /* skip */ },
+            ParsedField::NonStat { .. } => {
+                // Non-stat fields aren't updated from stats
+            },
         }
     }
 
-    // If no lines, return true
+    // If no lines, return false (nothing to update)
     if lines.is_empty() {
-        return quote! { true };
+        return quote! { false };
     }
 
-    // Combine with OR
-    quote! { #(#lines)||* }
+    // Combine with OR - properly join conditions
+    if lines.len() == 1 {
+        quote! { #(#lines)* }
+    } else {
+        // Properly construct the OR chain with parentheses around each expression
+        quote! { 
+            #( (#lines) )||*
+        }
+    }
+}
+
+// Helper function to generate comparison code for should_update
+fn generate_stat_comparison_code(name: &Ident, field_type: &Type, path: &str, self_expr: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    if is_option_f32(field_type) {
+        quote! {
+            {
+                let val = stats.get(#path);
+                let current_val = if val == 0.0 { None } else { Some(val) };
+                #self_expr.#name != current_val
+            }
+        }
+    } else {
+        quote! {
+            #self_expr.#name != stats.get(#path)
+        }
+    }
 }
 
 fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
@@ -591,16 +754,26 @@ fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
                     stats.get(#resolved_path) != 0.0
                 });
             },
+            ParsedField::NonStat { .. } => {
+                // Non-stat fields don't contribute to validity
+            },
         }
     }
     
-    // If no lines, return true
+    // If no lines, return true (no validity requirements)
     if lines.is_empty() {
         return quote! { true };
     }
     
-    // Combine with AND
-    quote! { #(#lines)||* }
+    // Combine with OR - properly join conditions
+    if lines.len() == 1 {
+        quote! { #(#lines)* }
+    } else {
+        // Properly construct the OR chain with parentheses around each expression
+        quote! { 
+            #( (#lines) )||*
+        }
+    }
 }
 
 fn collect_writeback_lines(
@@ -611,26 +784,40 @@ fn collect_writeback_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::WriteTo { name, path } => {
-                lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
-                });
+            ParsedField::WriteTo { name, field_type, path, .. } => {
+                let writeback_code = generate_stat_writeback_code(name, field_type, path, &self_expr);
+                lines.push(writeback_code);
             },
             ParsedField::ReadFrom { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
-            ParsedField::AutoWriteTo { name, resolved_path } => {
-                lines.push(quote! {
-                    let _ = stats_mutator.set(target_entity, #resolved_path, #self_expr.#name);
-                });
+            ParsedField::AutoWriteTo { name, field_type, resolved_path, .. } => {
+                let writeback_code = generate_stat_writeback_code(name, field_type, resolved_path, &self_expr);
+                lines.push(writeback_code);
             },
             ParsedField::AutoReadFrom { .. } => { /* skip */ },
+            ParsedField::NonStat { .. } => {
+                // Non-stat fields aren't written back
+            },
         }
     }
 
     quote! { #(#lines)* }
+}
+
+// Helper function to generate writeback code based on type
+fn generate_stat_writeback_code(name: &Ident, field_type: &Type, path: &str, self_expr: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    if is_option_f32(field_type) {
+        quote! {
+            let _ = stats_mutator.set(target_entity, #path, #self_expr.#name.unwrap_or(0.0));
+        }
+    } else {
+        quote! {
+            let _ = stats_mutator.set(target_entity, #path, #self_expr.#name);
+        }
+    }
 }
 
 fn collect_should_writeback_lines(
@@ -641,22 +828,23 @@ fn collect_should_writeback_lines(
 
     for pf in fields {
         match pf {
-            ParsedField::WriteTo { name, path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats_mutator.get(target_entity, #path)
-                });
+            ParsedField::WriteTo { name, field_type, path, .. } => {
+                let comparison_code = generate_writeback_comparison_code(name, field_type, path, &self_expr);
+                lines.push(comparison_code);
             },
             ParsedField::ReadFrom { .. } => { /* skip */ },
             ParsedField::Nested { name, fields, .. } => {
                 let nested_code = collect_should_writeback_lines(fields, quote!(#self_expr.#name));
                 lines.push(nested_code);
             },
-            ParsedField::AutoWriteTo { name, resolved_path } => {
-                lines.push(quote! {
-                    #self_expr.#name != stats_mutator.get(target_entity, #resolved_path)
-                });
+            ParsedField::AutoWriteTo { name, field_type, resolved_path, .. } => {
+                let comparison_code = generate_writeback_comparison_code(name, field_type, resolved_path, &self_expr);
+                lines.push(comparison_code);
             },
             ParsedField::AutoReadFrom { .. } => { /* skip */ },
+            ParsedField::NonStat { .. } => {
+                // Non-stat fields aren't written back
+            },
         }
     }
 
@@ -666,7 +854,27 @@ fn collect_should_writeback_lines(
     }
 
     // Combine with OR - if any writeback field has changed, we should write back
-    quote! { #(#lines)||* }
+    if lines.len() == 1 {
+        quote! { #(#lines)* }
+    } else {
+        // Properly construct the OR chain with parentheses around each expression
+        quote! { 
+            #( (#lines) )||*
+        }
+    }
+}
+
+// Helper function to generate writeback comparison code
+fn generate_writeback_comparison_code(name: &Ident, field_type: &Type, path: &str, self_expr: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    if is_option_f32(field_type) {
+        quote! {
+            #self_expr.#name.unwrap_or(0.0) != stats_mutator.get(target_entity, #path)
+        }
+    } else {
+        quote! {
+            #self_expr.#name != stats_mutator.get(target_entity, #path)
+        }
+    }
 }
 
 fn expand_trait_impls_for_no_variant(

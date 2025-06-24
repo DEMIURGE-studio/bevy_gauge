@@ -181,29 +181,60 @@ The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automa
 You can also use the `stat_component!` macro to more easily define your stat-derived components!
 ```rust
 stat_component!(pub struct Life {
-    max: <- "Life",           // Explicit path - reads from "Life" stat
-    current: <- $,            // Auto-generated path - reads from "$[Life.current]"
+    max: f32 <- "Life",           // Explicit path - reads from "Life" stat
+    current: f32 <- $,            // Auto-generated path - reads from "$[Life.current]"
 });
+
+// Example with Option<f32> fields - these work seamlessly in any position
+stat_component!(
+    #[derive(Clone, Debug)]
+    pub struct ConditionalStatModifier {
+        pub stat_name: String,                    // Non-stat field
+        pub amount_per_second: f32 <- $,          // f32 stat field
+        pub min_value: Option<f32> <- $,          // Option<f32> stat field (0 -> None)
+        pub max_value: Option<f32> <- $,          // Option<f32> stat field (0 -> None)
+        pub is_enabled: bool,                     // Non-stat field
+    }
+);
+
+// Example starting with Option<f32> fields - this now works correctly
+stat_component!(
+    #[derive(Debug, Clone)]
+    pub struct StatModifierOverTime {
+        pub modifier: ModifierSet,                // Non-stat field
+        pub duration: Option<f32> <- $,           // Option<f32> as first stat field
+        pub interval: Option<f32> <- $,           // Multiple Option<f32> fields
+        pub min_value: Option<f32> <- $,          // All work in any order
+        pub max_value: Option<f32> <- $,
+    }
+);
 
 // For more complex examples:
 stat_component!(pub struct Damage {
-    base: <- $,               // Auto-generated: "$[Damage.base]"
-    current: <-> $,           // Auto-generated: "$[Damage.current]" (bidirectional)
-    bonus: <- "BonusDamage",  // Explicit path to a different stat
+    base: f32 <- $,               // Auto-generated: "$[Damage.base]"
+    current: f32 <-> $,           // Auto-generated: "$[Damage.current]" (bidirectional)
+    bonus: f32 <- "BonusDamage",  // Explicit path to a different stat
 });
 
 // Nested structures work too:
 stat_component!(pub struct WeaponStats {
     damage: DamageRange {
-        min: <- $,            // Auto-generated: "$[WeaponStats.damage.min]"
-        max: <- $,            // Auto-generated: "$[WeaponStats.damage.max]"
+        min: f32 <- $,            // Auto-generated: "$[WeaponStats.damage.min]"
+        max: f32 <- $,            // Auto-generated: "$[WeaponStats.damage.max]"
     }
 });
 ```
 
+**Field Type Support:**
+The macro supports various field types:
+- `f32`: Standard floating-point stat values
+- `Option<f32>`: Optional stats where `0.0` values are converted to `None`, and `None` values write back as `0.0`
+- `String`, `bool`, and other types: Non-stat fields that maintain their values but aren't derived from stats
+- `ModifierSet` and other complex types: For advanced use cases
+
 The `$` syntax automatically generates stat paths based on your component's structure:
-- `field: <- $` becomes `field: <- "$[StructName.field]"`
-- For nested fields: `nested.field: <- $` becomes `"$[StructName.nested.field]"`
+- `field: f32 <- $` becomes `field: f32 <- "$[StructName.field]"`
+- For nested fields: `nested.field: f32 <- $` becomes `"$[StructName.nested.field]"`
 - You can mix explicit paths and auto-generated ones as needed
 
 TODO explain why this (2 sources of truth) can be done safely
