@@ -8,7 +8,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin)
-        .add_systems(Startup, (spawn_entities, apply_deferred).chain())
+        .add_systems(Startup, (spawn_entities, ApplyDeferred).chain())
         .add_systems(
             Update,
             (
@@ -44,7 +44,7 @@ fn spawn_entities(mut commands: Commands) {
         // No specific initialization needed for ChildBonus parts here unless it had its own independent base.
         stats! { "ChildBonus" => "Parent@Strength * 0.1" },
         Name::new("Child"),
-    )).set_parent(parent);
+    )).insert(ChildOf(parent));
 
     println!("Entities spawned. Parent has 50 Strength.");
 }
@@ -59,7 +59,7 @@ fn register_parent_source_for_child(
         stats_mutator.register_source(
             child_entity,
             "MyParent", 
-            parent.get(),
+            parent.parent(),
         );
     }
 }

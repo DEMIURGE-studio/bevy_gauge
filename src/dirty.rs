@@ -2,7 +2,7 @@
 
 
 use std::{cell::UnsafeCell, marker::PhantomData};
-use bevy::{ecs::{archetype::Archetype, component::{ComponentId, Components, StorageType, Tick}, query::{FilteredAccess, QueryFilter, WorldQuery}, storage::{ComponentSparseSet, Table, TableRow}, world::unsafe_world_cell::UnsafeWorldCell}, prelude::*, ptr::{ThinSlicePtr, UnsafeCellDeref}};
+use bevy::{ecs::{archetype::Archetype, component::{ComponentId, Components, StorageType, Tick}, query::{FilteredAccess, QueryFilter, WorldQuery}, storage::{ComponentSparseSet, Table, TableRow}, world::unsafe_world_cell::UnsafeWorldCell}, prelude::*, ptr::ThinSlicePtr};
 
 pub(super) union StorageSwitch<C: Component, T: Copy, S: Copy> {
     /// The table variant. Requires the component to be a table component.
@@ -43,21 +43,6 @@ impl<C: Component, T: Copy, S: Copy> StorageSwitch<C, T, S> {
                 #[cfg(not(debug_assertions))]
                 std::hint::unreachable_unchecked()
             }
-        }
-    }
-
-    /// Fetches the internal value from the variant that corresponds to the
-    /// component's [`StorageType`].
-    pub fn extract<R>(&self, table: impl FnOnce(T) -> R, sparse_set: impl FnOnce(S) -> R) -> R {
-        match C::STORAGE_TYPE {
-            StorageType::Table => table(
-                // SAFETY: C::STORAGE_TYPE == StorageType::Table
-                unsafe { self.table },
-            ),
-            StorageType::SparseSet => sparse_set(
-                // SAFETY: C::STORAGE_TYPE == StorageType::SparseSet
-                unsafe { self.sparse_set },
-            ),
         }
     }
 }

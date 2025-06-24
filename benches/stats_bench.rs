@@ -1,5 +1,7 @@
+use std::hint::black_box;
+
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use bevy_gauge::prelude::*;
 
 // Helper function to set up an app with a default Config, plugins, and a single entity

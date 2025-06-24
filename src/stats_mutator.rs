@@ -656,6 +656,7 @@ pub(crate) fn remove_stats(
     stats_mutator.remove_stat_entity(removed_entity);
 }
 
+#[cfg(test)]
 mod remove_stat_entity_tests {
     use bevy::prelude::*;
 

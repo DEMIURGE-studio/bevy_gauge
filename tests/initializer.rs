@@ -8,18 +8,6 @@ fn setup_app() -> App {
     app
 }
 
-fn setup_health_config() {
-    Konfig::reset_for_test(); // Ensure clean state
-    Konfig::register_stat_type("Life", "Complex");
-    Konfig::register_total_expression("Life", "base + bonus - reduction");
-}
-
-fn setup_damage_config() {
-    Konfig::reset_for_test(); // Ensure clean state
-    Konfig::register_stat_type("Damage", "Complex");
-    Konfig::register_total_expression("Damage", "base * (1.0 + increased) * more");
-}
-
 #[test]
 fn test_basic_stats_initialization() {
     let mut app = setup_app();
