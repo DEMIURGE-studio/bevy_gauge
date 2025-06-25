@@ -67,6 +67,9 @@ The `bevy_gauge::prelude::StatsMutator` is a Bevy `SystemParam` that provides th
 
 `Stats` components should not be modified except through the API provided by the `StatsMutator`.
 
+### StatsProxy Component
+The `bevy_gauge::prelude::StatsProxy` is an automatically managed component that tracks when an entity's `Stats` have been modified. This component enables efficient change detection without ownership conflicts, allowing systems to use `Changed<StatsProxy>` to process only entities whose stats have actually changed.
+
 ```rust
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
@@ -616,6 +619,39 @@ fn buff_expiry_system(
 
 Sometimes, you want Bevy components whose fields are directly derived from an entity's stats, and in some cases, you might want certain component fields to write back to the stats. `bevy_gauge` provides traits and a macro for this.
 
+### Change Detection with StatsProxy
+
+`bevy_gauge` includes a `StatsProxy` component that automatically tracks when an entity's `Stats` have been modified. This system:
+
+*   **Avoids Ownership Conflicts**: Unlike using `Changed<Stats>` directly in systems that also use `StatsMutator`, `StatsProxy` provides change detection without conflicting access patterns.
+*   **Automatic Updates**: The `update_stats_proxy_system` runs at the end of the `StatsMutation` schedule, detecting all stat changes and updating the `StatsProxy` component accordingly.
+*   **Seamless Integration**: Systems can use `Changed<StatsProxy>` to efficiently process only entities whose stats have actually changed.
+
+```rust
+use bevy::prelude::*;
+use bevy_gauge::prelude::*;
+
+// Example system that processes only entities with changed stats
+fn update_health_bars(
+    mut health_bar_query: Query<&mut HealthBar>,
+    stats_query: Query<&Stats>,
+    // Only process entities whose stats have changed
+    changed_entities: Query<Entity, (With<HealthBar>, Changed<StatsProxy>)>,
+) {
+    for entity in &changed_entities {
+        if let (Ok(mut health_bar), Ok(stats)) = (
+            health_bar_query.get_mut(entity),
+            stats_query.get(entity)
+        ) {
+            health_bar.current = stats.get("Life.current");
+            health_bar.max = stats.get("Life");
+        }
+    }
+}
+```
+
+The `StatsProxy` system is automatically included when you add the `bevy_gauge::plugin` to your app.
+
 ### The `StatDerived` Trait
 This trait is for components whose fields should be populated from an entity's `Stats`. It defines methods to:
 *   Create an instance from `Stats` (`from_stats`).
@@ -747,7 +783,13 @@ The `$` syntax generates stat paths based on the component structure:
 - `$` in nested `PlayerStats.health.max` becomes `"$[PlayerStats.health.max]"`
 - These paths are recognized by the StatPath parser and work seamlessly with the rest of the stat system
 
-`bevy_gauge` includes systems (`update_derived_stats` and `write_back_stats`) that run at different stages in the Bevy schedule to keep these components synchronized with the `Stats` component. You'll need to ensure the `bevy_gauge::plugin` is added to your app.
+`bevy_gauge` includes systems that run at different stages in the Bevy schedule to keep these components synchronized with the `Stats` component:
+
+*   **`update_stats_proxy_system`**: Runs in the `StatsMutation` schedule to track stat changes
+*   **Component update systems**: Use `Changed<StatsProxy>` to efficiently update only components whose underlying stats have changed
+*   **Write-back systems**: Handle `WriteBack` components in the `UpdateWriteBack` schedule
+
+You'll need to ensure the `bevy_gauge::plugin` is added to your app to enable all this functionality.
 
 This guide should cover the main aspects of `bevy_gauge`. Let me know if you'd like any section expanded or clarified!
 

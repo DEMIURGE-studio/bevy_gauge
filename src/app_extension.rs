@@ -40,7 +40,10 @@ pub trait StatsAppExtension {
 impl StatsAppExtension for App {
     fn add_stat_component<T: StatDerived + Component<Mutability = Mutable>>(&mut self) -> &mut Self {
         //self.add_systems(StatsMutation, add_stat_component_system::<T>);
-        self.add_systems(StatsMutation, update_stat_component_system::<T>.after(add_stat_component_system::<T>));
+        self.add_systems(StatsMutation, update_stat_component_system::<T>
+            .after(add_stat_component_system::<T>)
+            .before(update_stats_proxy_system)
+        );
         self
     }
 
@@ -72,7 +75,7 @@ pub fn plugin(app: &mut App) {
     app.init_schedule(StatsMutation)
         .world_mut()
         .resource_mut::<MainScheduleOrder>()
-        .insert_after(PreUpdate, StatsMutation);
+        .insert_after(First, StatsMutation);
 
     app.init_schedule(UpdateStatDerived)
         .world_mut()

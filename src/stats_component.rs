@@ -60,6 +60,7 @@ impl StatContext {
 /// Most interactions with an entity's stats are performed through the `StatsMutator` system parameter,
 /// which operates on this component.
 #[derive(Component, Clone, Debug, Default)]
+#[require(StatsProxy)]
 pub struct Stats {
     pub(crate) definitions: HashMap<String, StatType>,
     pub(crate) cached_stats: SyncContext,

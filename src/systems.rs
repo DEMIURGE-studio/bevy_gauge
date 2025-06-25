@@ -2,7 +2,7 @@ use bevy::{ecs::component::Mutable, prelude::*};
 use super::prelude::*;
 
 pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
-    stats_query: Query<Entity, (Dirty<Stats>, Without<T>)>,
+    stats_query: Query<Entity, (Changed<StatsProxy>, Without<T>)>,
     stats_mutator: StatsMutator,
     mut commands: Commands,
 ) {
@@ -17,7 +17,7 @@ pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
 }
 
 pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability = Mutable>>(
-    mut stats_query: Query<(Entity, &mut T), Dirty<Stats>>,
+    mut stats_query: Query<(Entity, &mut T), Changed<StatsProxy>>,
     stats_mutator: StatsMutator,
     mut commands: Commands,
 ) {
@@ -35,7 +35,7 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability
 }
 
 pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
-    stats_query: Query<(Entity, &T), Dirty<T>>,
+    stats_query: Query<(Entity, &T), Changed<T>>,
     mut stats_mutator: StatsMutator,
 ) {
     for (entity, write_back) in stats_query.iter() {

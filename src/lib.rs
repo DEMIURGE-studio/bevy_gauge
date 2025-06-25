@@ -97,13 +97,13 @@ use prelude::*;
 use bevy::prelude::*;
 
 pub mod app_extension;
-pub mod dirty;
 pub mod expressions;
 pub mod initializer;
 pub mod konfig;
 pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
+pub mod proxy;
 pub mod sources;
 pub mod stats_mutator;
 pub mod stat_addressing;
@@ -140,5 +140,6 @@ pub mod tags;
 pub fn plugin(app: &mut App) {
     app.add_observer(remove_stats)
     .add_observer(apply_stats_initializer)
-    .add_plugins(app_extension::plugin);
+    .add_plugins(app_extension::plugin)
+    .add_plugins(proxy::plugin);
 }

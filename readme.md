@@ -14,6 +14,7 @@ _(License: MIT OR Apache-2.0)_
 *   **Dependencies:** Stats can depend on other stats, even across different entities (Sources).
 *   **Tagging:** Apply tags (e.g., "Fire", "Physical", "Sword") to stats and modifiers for fine-grained control over effects.
 *   **Caching:** Automatic caching of evaluated stats and smart cache invalidation.
+*   **Change Detection:** `StatsProxy` component provides efficient change detection without ownership conflicts.
 *   **Derived Components:** Easily create Bevy components whose fields are derived from entity stats, with optional write-back functionality.
 
 ## Quick Start
@@ -176,7 +177,7 @@ impl WriteBack for Life {
     }
 }
 ```
-The `update_derived_stats` system (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `Life` component if `should_update` returns true..
+The component update systems (included in `bevy_gauge::plugin`) will automatically call `update_from_stats` on your `Life` component when its underlying stats change, detected via the `StatsProxy` system.
 
 You can also use the `stat_component!` macro to more easily define your stat-derived components!
 ```rust
@@ -238,6 +239,43 @@ The `$` syntax automatically generates stat paths based on your component's stru
 - You can mix explicit paths and auto-generated ones as needed
 
 TODO explain why this (2 sources of truth) can be done safely
+
+## Change Detection with StatsProxy
+
+`bevy_gauge` includes a `StatsProxy` component that automatically tracks when an entity's `Stats` have been modified. This provides efficient change detection without the ownership conflicts that would occur if you tried to use `Changed<Stats>` directly in systems that also use `StatsMutator`.
+
+### How It Works
+
+1. **Automatic Tracking**: The `update_stats_proxy_system` runs at the end of the `StatsMutation` schedule
+2. **Change Detection**: It uses `Changed<Stats>` to detect when stats have been modified
+3. **Proxy Updates**: Updates the `StatsProxy` component to trigger Bevy's change detection
+4. **Efficient Processing**: Your systems can use `Changed<StatsProxy>` to process only entities whose stats actually changed
+
+### Example Usage
+
+```rust
+use bevy::prelude::*;
+use bevy_gauge::prelude::*;
+
+// System that only processes entities with changed stats
+fn update_ui_health_bars(
+    mut health_bar_query: Query<&mut HealthBarUI>,
+    stats_query: Query<&Stats>,
+    // Only entities whose stats have changed
+    changed_entities: Query<Entity, (With<HealthBarUI>, Changed<StatsProxy>)>,
+) {
+    for entity in &changed_entities {
+        if let (Ok(mut health_bar), Ok(stats)) = (
+            health_bar_query.get_mut(entity),
+            stats_query.get(entity)
+        ) {
+            health_bar.update_from_stats(stats);
+        }
+    }
+}
+```
+
+The `StatsProxy` system is automatically included when you add `bevy_gauge::plugin` to your app.
 
 ## Dive Deeper
 For more advanced features like Sources, Tags, Stat Effects, and detailed explanations, please refer to the [User Guide](bevy_gauge.md).
