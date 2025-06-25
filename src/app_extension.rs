@@ -39,7 +39,7 @@ pub trait StatsAppExtension {
 
 impl StatsAppExtension for App {
     fn add_stat_component<T: StatDerived + Component<Mutability = Mutable>>(&mut self) -> &mut Self {
-        self.add_systems(StatsMutation, add_stat_component_system::<T>);
+        //self.add_systems(StatsMutation, add_stat_component_system::<T>);
         self.add_systems(StatsMutation, update_stat_component_system::<T>.after(add_stat_component_system::<T>));
         self
     }

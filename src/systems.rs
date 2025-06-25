@@ -28,9 +28,9 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability
         if stat_component.should_update(stats) {
             stat_component.update_from_stats(stats);
         }
-        if !T::is_valid(stats) {
-            commands.entity(entity).remove::<T>();
-        }
+        //if !T::is_valid(stats) {
+        //    commands.entity(entity).remove::<T>();
+        //}
     }
 }
 

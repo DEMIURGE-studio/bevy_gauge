@@ -57,5 +57,9 @@ pub(crate) fn apply_stats_initializer(
         initializer.modifiers.apply_to(&mut stats_mutator, entity);
         
         commands.entity(entity).remove::<StatsInitializer>();
+        commands.trigger_targets(StatsInitialized, entity);
     }
 }
+
+#[derive(Event)]
+pub struct StatsInitialized;
