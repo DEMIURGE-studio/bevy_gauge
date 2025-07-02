@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemParam, platform::collections::{HashMap, HashSet}, prelude::*};
+use bevy::{ecs::system::{SystemParam, SystemState}, platform::collections::{HashMap, HashSet}, prelude::*};
 use super::prelude::*;
 
 // TODO:  
@@ -587,6 +587,33 @@ impl StatsMutator<'_, '_> {
         }
         // The Stats component on target_entity itself will be removed by Bevy when the entity is despawned.
         // No need to manually clear target_entity.sources, target_entity.source_requirements, etc.
+    }
+
+
+    /// Provides temporary access to `StatsMutator` functionality from a `World` context.
+    /// 
+    /// This is useful for component hooks, observers, and other non-system contexts
+    /// that have `World` access but can't use `SystemParam`s directly.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `world` - Mutable reference to the Bevy `World`
+    /// * `f` - Closure that takes a `StatsMutator` and performs operations
+    /// 
+    /// # Example
+    /// 
+    /// ```ignore
+    /// StatsMutator::with_world(&mut world, |mut stats| {
+    ///     stats.set(entity, "Health.base", 100.0);
+    ///     stats.add_modifier(entity, "Damage.increased", 25.0);
+    /// });
+    /// ```
+    pub fn with_world<R>(world: &mut World, f: impl FnOnce(StatsMutator) -> R) -> R {
+        let mut system_state = SystemState::<StatsMutator>::new(world);
+        let stats_mutator = system_state.get_mut(world);
+        let result = f(stats_mutator);
+        system_state.apply(world);
+        result
     }
 }
 
