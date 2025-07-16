@@ -1,25 +1,9 @@
 use bevy::{ecs::component::Mutable, prelude::*};
 use super::prelude::*;
 
-pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
-    stats_query: Query<Entity, (Changed<StatsProxy>, Without<T>)>,
-    stats_mutator: StatsMutator,
-    mut commands: Commands,
-) {
-    for entity in stats_query.iter() {
-        let Ok(stats) = stats_mutator.get_stats(entity) else {
-            continue;
-        };
-        if T::is_valid(stats) {
-            commands.entity(entity).insert(T::from_stats(stats));
-        }
-    }
-}
-
 pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability = Mutable>>(
     mut stats_query: Query<(Entity, &mut T), Changed<StatsProxy>>,
     stats_mutator: StatsMutator,
-    mut commands: Commands,
 ) {
     for (entity, mut stat_component) in stats_query.iter_mut() {
         let Ok(stats) = stats_mutator.get_stats(entity) else {
@@ -28,9 +12,6 @@ pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability
         if stat_component.should_update(stats) {
             stat_component.update_from_stats(stats);
         }
-        //if !T::is_valid(stats) {
-        //    commands.entity(entity).remove::<T>();
-        //}
     }
 }
 

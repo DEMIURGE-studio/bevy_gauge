@@ -429,25 +429,16 @@ fn expand_trait_impls_for_variant(
     // Build implementation bodies
     let should_update_body = collect_should_update_lines(fields, quote!(self));
     let update_body = collect_update_lines(fields, quote!(self));
-    let is_valid_body = collect_is_valid_lines(fields);
     let wb_body = collect_writeback_lines(fields, quote!(self));
     let should_wb_body = collect_should_writeback_lines(fields, quote!(self));
 
     quote! {
         impl StatDerived for #struct_name_with_variant {
-            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let mut s = Self::default();
-                s.update_from_stats(stats);
-                s
-            }
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 #should_update_body
             }
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 #update_body
-            }
-            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                #is_valid_body
             }
         }
 
@@ -725,56 +716,7 @@ fn generate_stat_comparison_code(name: &Ident, field_type: &Type, path: &str, se
     }
 }
 
-fn collect_is_valid_lines(fields: &[ParsedField]) -> proc_macro2::TokenStream {
-    let mut lines = Vec::new();
-    
-    for pf in fields {
-        match pf {
-            ParsedField::ReadFrom { path, .. } => {
-                lines.push(quote! {
-                    stats.get(#path) != 0.0
-                });
-            },
-            ParsedField::WriteTo { path, .. } => {
-                lines.push(quote! {
-                    stats.get(#path) != 0.0
-                });
-            },
-            ParsedField::Nested { fields, .. } => {
-                let nested_code = collect_is_valid_lines(fields);
-                lines.push(nested_code);
-            },
-            ParsedField::AutoReadFrom { resolved_path, .. } => {
-                lines.push(quote! {
-                    stats.get(#resolved_path) != 0.0
-                });
-            },
-            ParsedField::AutoWriteTo { resolved_path, .. } => {
-                lines.push(quote! {
-                    stats.get(#resolved_path) != 0.0
-                });
-            },
-            ParsedField::NonStat { .. } => {
-                // Non-stat fields don't contribute to validity
-            },
-        }
-    }
-    
-    // If no lines, return true (no validity requirements)
-    if lines.is_empty() {
-        return quote! { true };
-    }
-    
-    // Combine with OR - properly join conditions
-    if lines.len() == 1 {
-        quote! { #(#lines)* }
-    } else {
-        // Properly construct the OR chain with parentheses around each expression
-        quote! { 
-            #( (#lines) )||*
-        }
-    }
-}
+
 
 fn collect_writeback_lines(
     fields: &[ParsedField],
@@ -888,23 +830,14 @@ fn expand_trait_impls_for_no_variant(
     let update_body = collect_update_lines(fields, quote!(self));
     let writeback_body = collect_writeback_lines(fields, quote!(self));
     let should_wb_body = collect_should_writeback_lines(fields, quote!(self));
-    let is_valid_body = collect_is_valid_lines(fields);
 
     quote! {
         impl #impl_generics StatDerived for #struct_ident #ty_generics #where_clause {
-            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let mut s = Self::default();
-                s.update_from_stats(stats);
-                s
-            }
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 #should_update_body
             }
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 #update_body
-            }
-            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                #is_valid_body
             }
         }
 

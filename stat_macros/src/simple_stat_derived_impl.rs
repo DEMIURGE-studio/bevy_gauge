@@ -10,22 +10,14 @@ pub fn derive_simple_stat_derived(input: proc_macro::TokenStream) -> proc_macro:
     
     let expanded = quote! {
         impl bevy_gauge::prelude::StatDerived for #name {
-            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let value = stats.get(#name_str);
-                return Self(value);
-            }
-            
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
-                true
+                let value = stats.get(#name_str);
+                value != self.0
             }
         
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 let value = stats.get(#name_str);
                 self.0 = value;
-            }
-
-            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats.get(#name_str) != 0.0
             }
         }
     };

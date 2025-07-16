@@ -9,9 +9,8 @@ use super::prelude::*;
 pub trait StatsAppExtension {
     /// Registers systems to manage a component `T` that implements `StatDerived`.
     ///
-    /// This typically includes:
-    /// - A system to add a `Stats` component to entities that have `T` but not `Stats`.
-    /// - A system to update the fields of `T` based on values from the `Stats` component.
+    /// This includes a system to update the fields of `T` based on values from the `Stats` component
+    /// when the `StatsProxy` changes. The component must already exist on the entity.
     ///
     /// # Type Parameters
     ///
@@ -39,9 +38,7 @@ pub trait StatsAppExtension {
 
 impl StatsAppExtension for App {
     fn add_stat_component<T: StatDerived + Component<Mutability = Mutable>>(&mut self) -> &mut Self {
-        //self.add_systems(StatsMutation, add_stat_component_system::<T>);
         self.add_systems(StatsMutation, update_stat_component_system::<T>
-            .after(add_stat_component_system::<T>)
             .before(update_stats_proxy_system)
         );
         self

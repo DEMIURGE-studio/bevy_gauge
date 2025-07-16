@@ -30,12 +30,6 @@ macro_rules! simple_generic_stat {
 macro_rules! simple_stat {
     ($struct_name:ident) => {
         impl bevy_gauge::prelude::StatDerived for $struct_name {
-            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let mut s = Self::default();
-                s.update_from_stats(stats);
-                s
-            }
-
             fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
                 stats
                     .get(stringify!($struct_name)) != self.0
@@ -44,11 +38,6 @@ macro_rules! simple_stat {
             fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
                 self.0 = stats
                     .get(stringify!($struct_name));
-            }
-
-            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats
-                    .get(stringify!($struct_name)) != 0.0
             }
         }
     };
