@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+-ALWAYS ALWAYS test after making changes
+-Test using the 'cargo test foo::test_' command, where foo is the module we are testing. If we are testing the entire project just run 'cargo test'
+-If a change is performance focused or might have a large effect on performance, verify that there is a benchmark in stats_bench.rs that covers the case. If not make it. Test the performance after changes.

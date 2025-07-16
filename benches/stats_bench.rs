@@ -1,413 +1,359 @@
-use bevy::prelude::*;
-use bevy_utils::HashMap;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 
-// Your new simplified stats + expression system:
-use bevy_gauge::prelude::{
-    Stats, StatType, StatContext, StatContextRefs, 
-    // If needed:
-    Expression
-};
+use bevy::{ecs::system::RunSystemOnce, prelude::*};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use bevy_gauge::prelude::*;
 
-pub fn build<'a>(
-    entity: Entity,
-    world: &'a World,
-    defs_query: &QueryState<&Stats>,
-    ctx_query: &QueryState<&StatContext>,
-) -> StatContextRefs<'a> {
-    let mut context_map = HashMap::new();
-
-    // If the entity itself has definitions, store them under the "This" slot
-    if let Ok(defs) = defs_query.get_manual(world, entity) {
-        context_map.insert("self", StatContextRefs::Definitions(defs));
-    }
-
-    // If the entity has a StatContext, build subcontexts for each known key
-    if let Ok(stat_context) = ctx_query.get_manual(world, entity) {
-        for (key, child_entity) in &stat_context.sources {
-            // Avoid infinite recursion if an entity references itself
-            if *child_entity == entity {
-                continue;
-            }
-            // Recursively build the child subcontext
-            let child_src = build(*child_entity, world, defs_query, ctx_query);
-
-            // Match the child key to one of our 3 slots
-            context_map.insert(key, child_src);
-        }
-    }
-
-    // Return a SubContext if we stored anything
-    StatContextRefs::SubContext(Box::new(context_map))
+// Helper function to set up an app with a default Config, plugins, and a single entity
+fn setup_app_for_bench() -> (App, Entity) {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy_gauge::plugin);
+    let entity = app.world_mut().spawn(Stats::new()).id();
+    (app, entity)
 }
 
-/// 1) A benchmark that tests a deep hierarchy of parent contexts, and
-/// **evaluates** `ChildLife` on E3 10,000 times.
-fn bench_deep_hierarchy_evaluation(c: &mut Criterion) {
-    let mut world = World::default();
+// Helper function to set up an app with multiple entities
+fn setup_app_with_entities_for_bench(count: usize) -> (App, Vec<Entity>) {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy_gauge::plugin);
+    let entities = (0..count)
+        .map(|_| app.world_mut().spawn(Stats::new()).id())
+        .collect::<Vec<_>>();
+    (app, entities)
+}
 
-    // (1) Spawn & setup: E0 -> E1 -> E2 -> E3
-    let e0 = world.spawn_empty().id();
-    let e1 = world.spawn_empty().id();
-    let e2 = world.spawn_empty().id();
-    let e3 = world.spawn_empty().id();
-
-    // (2) Insert Stats
-    {
-        let mut stats = Stats::new();
-        stats.set("AddedLife", StatType::Literal(100.0));
-        stats.set("IncreasedLife", StatType::Literal(50.0));
-        // Expression: "Total = AddedLife * IncreasedLife / 100.0"
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = AddedLife * IncreasedLife / 100.0"
-        ).unwrap());
-        stats.set("TotalLife", StatType::Expression(expr));
-        world.entity_mut(e0).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        // "Total = parent.TotalLife + 20"
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.TotalLife + 20"
-        ).unwrap());
-        stats.set("ChildLifeB", StatType::Expression(expr));
-        world.entity_mut(e1).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        // "Total = parent.ChildLifeB + 20"
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.ChildLifeB + 20"
-        ).unwrap());
-        stats.set("ChildLifeA", StatType::Expression(expr));
-        world.entity_mut(e2).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        // "Total = parent.ChildLifeA + 20"
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.ChildLifeA + 20"
-        ).unwrap());
-        stats.set("ChildLife", StatType::Expression(expr));
-        world.entity_mut(e3).insert(stats);
-    }
-
-    // (3) Insert StatContext for each
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e0);
-        world.entity_mut(e0).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e1);
-        ctx.insert("parent", e0);
-        world.entity_mut(e1).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e2);
-        ctx.insert("parent", e1);
-        world.entity_mut(e2).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e3);
-        ctx.insert("parent", e2);
-        world.entity_mut(e3).insert(ctx);
-    }
-
-    // (4) Build QueryStates to retrieve data
-    let mut stats_query = world.query::<&Stats>();
-    let ctx_query = world.query::<&StatContext>();
-
-    // Grab E3's stats for repeated evaluation
-    let e3_stats = stats_query.get(&world, e3).unwrap();
-    // Build ephemeral context once
-    let ctx_refs = build(e3, &world, &stats_query, &ctx_query);
-
-    // Evaluate "ChildLife" 10,000 times
-    let mut group = c.benchmark_group("deep_hierarchy_eval");
-    group.bench_function("evaluate E3.ChildLife x10000", |b| {
-        b.iter(|| {
-            for _ in 0..10_000 {
-                let val = e3_stats.get("ChildLife", &ctx_refs).unwrap();
-                black_box(val);
-            }
-        });
+// Helper to run a system that adds a modifier for setup.
+fn setup_stat_modifier_system(app: &mut App, entity: Entity, stat_name: &str, value: f32) {
+    let stat_name_owned = stat_name.to_string();
+    let system_id = app.world_mut().register_system(move |mut stats_mutator: StatsMutator| {
+        stats_mutator.add_modifier(entity, &stat_name_owned, value);
     });
+    let _ = app.world_mut().run_system(system_id);
+    app.update(); // Ensure modifier is processed if subsequent reads depend on it immediately
+}
+
+pub fn bench_stat_access(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stat_access");
+    
+    for value in [10.0, 100.0, 1000.0].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(value), value, |b, &value| {
+            let (mut app, entity) = setup_app_for_bench();
+            setup_stat_modifier_system(&mut app, entity, "Life.base", value); // Using .base for clarity
+            
+            b.iter(|| {
+                let entity_for_iter = entity; // Copy entity directly into the closure
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(entity_for_iter, "Life.base"));
+                });
+            });
+        });
+    }
     group.finish();
 }
 
-/// 2) A benchmark that tests the *cost of building* the ephemeral context
-/// 10,000 times for the same deep hierarchy.
-fn bench_deep_hierarchy_build(c: &mut Criterion) {
-    let mut world = World::default();
+pub fn bench_dependent_stats(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dependent_stats_intra_entity");
+    
+    for chain_length in [1, 5, 10, 20].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(chain_length), chain_length, |b, &chain_length| {
+            let (mut app, entity) = setup_app_for_bench();
+            
+            let final_stat_name = format!("Level{}", chain_length);
+            let el = entity; // Copy for closure
+            let cl = chain_length; // No dereference needed, already a value
 
-    // Reuse the same 4-entity chain
-    let e0 = world.spawn_empty().id();
-    let e1 = world.spawn_empty().id();
-    let e2 = world.spawn_empty().id();
-    let e3 = world.spawn_empty().id();
-
-    // Insert stats (same as above)
-    {
-        let mut stats = Stats::new();
-        stats.set("AddedLife", StatType::Literal(100.0));
-        stats.set("IncreasedLife", StatType::Literal(50.0));
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = AddedLife * IncreasedLife / 100.0"
-        ).unwrap());
-        stats.set("TotalLife", StatType::Expression(expr));
-        world.entity_mut(e0).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.TotalLife + 20"
-        ).unwrap());
-        stats.set("ChildLifeB", StatType::Expression(expr));
-        world.entity_mut(e1).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.ChildLifeB + 20"
-        ).unwrap());
-        stats.set("ChildLifeA", StatType::Expression(expr));
-        world.entity_mut(e2).insert(stats);
-    }
-    {
-        let mut stats = Stats::new();
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = parent.ChildLifeA + 20"
-        ).unwrap());
-        stats.set("ChildLife", StatType::Expression(expr));
-        world.entity_mut(e3).insert(stats);
-    }
-
-    // Insert StatContext (same pattern)
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e0);
-        world.entity_mut(e0).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e1);
-        ctx.insert("parent", e0);
-        world.entity_mut(e1).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e2);
-        ctx.insert("parent", e1);
-        world.entity_mut(e2).insert(ctx);
-    }
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e3);
-        ctx.insert("parent", e2);
-        world.entity_mut(e3).insert(ctx);
-    }
-
-    let stats_query = world.query::<&Stats>();
-    let ctx_query = world.query::<&StatContext>();
-
-    // Benchmark building ephemeral context 10,000 times
-    let mut group = c.benchmark_group("deep_hierarchy_build");
-    group.bench_function("build E3 context x10,000", |b| {
-        b.iter(|| {
-            for _ in 0..10_000 {
-                let ctx_refs = build(e3, &world, &stats_query, &ctx_query);
-                black_box(ctx_refs);
-            }
+            // Set up a dependency chain of the specified length
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Base", 10.0);
+                for i in 1..=cl {
+                    let prev_stat = if i == 1 { "Base".to_string() } else { format!("Level{}", i - 1) };
+                    let curr_stat = format!("Level{}", i);
+                    stats_mutator.add_modifier(el, &curr_stat, Expression::new(&format!("{} * 1.1", prev_stat)).unwrap());
+                }
+            });
+            app.update();
+            
+            b.iter(|| {
+                let el_for_iter = el; // Copy entity
+                let final_stat_name_for_iter = final_stat_name.clone(); // Clone String inside b.iter
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &final_stat_name_for_iter));
+                });
+            });
         });
-    });
+    }
     group.finish();
 }
 
-/// 3) A simple component that holds a single f32 for ECS iteration test.
-#[derive(Component)]
-pub struct SimpleValue(pub f32);
+pub fn bench_entity_dependencies(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dependent_stats_inter_entity");
+    
+    for chain_length in [1, 3, 5, 10].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(chain_length), chain_length, |b, &chain_length| {
+            let (mut app, entities) = setup_app_with_entities_for_bench(chain_length + 1);
+            let last_entity = entities[chain_length];
+            let cl = chain_length; // User fixed: No dereference needed
 
-/// Benchmarks iterating over 10,000 entities, each with a `SimpleValue`.
-fn bench_ecs_value_iteration(c: &mut Criterion) {
-    let mut world = World::default();
-
-    // Spawn 10,000 entities
-    for i in 0..10_000 {
-        world.spawn(SimpleValue(i as f32));
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(entities[0], "Power.base", 100.0);
+                for i in 1..=cl {
+                    stats_mutator.register_source(entities[i], "Source", entities[i-1]);
+                    stats_mutator.add_modifier(entities[i], "Power.base", Expression::new("Source@Power.base * 0.9").unwrap());
+                }
+            });
+            app.update();
+            
+            b.iter(|| {
+                let last_entity_for_iter = last_entity; // Copy entity
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(last_entity_for_iter, "Power.base"));
+                });
+            });
+        });
     }
-
-    let mut query = world.query::<&SimpleValue>();
-
-    let mut group = c.benchmark_group("ecs_value_iteration");
-    group.bench_function("iterate 10k entities", |b| {
-        b.iter(|| {
-            for val in query.iter(&world) {
-                black_box(val.0);
-            }
-        });
-    });
     group.finish();
 }
 
-/// 4) A benchmark that tests a simple context, and **evaluates** `TotalLife` 10,000 times.
-fn bench_simple_evaluation(c: &mut Criterion) {
-    let mut world = World::default();
+pub fn bench_tag_based_stats(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tag_based_stats_evaluation");
+    
+    for &tag_count in &[1, 3, 5, 10] {
+        group.bench_with_input(BenchmarkId::from_parameter(tag_count), &tag_count, |b, &tag_count| {
+            let (mut app, entity) = setup_app_for_bench();
+            
+            // Setup Config for Tagged "Damage" stat
+            Konfig::register_stat_type("Damage", "Tagged");
+            Konfig::register_total_expression("Damage", "base * (1.0 + increased) + added");
 
-    let e0 = world.spawn_empty().id();
+            let el = entity; // Copy for closure
+            let tc = tag_count; // Copy for closure
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Damage.base.0", 10.0); // Untagged base damage
+                for i in 0..tc {
+                    let tag = 1u32 << i; // Simple tag, e.g., 1, 2, 4, 8...
+                    stats_mutator.add_modifier(el, &format!("Damage.added.{}", tag), 5.0 + i as f32);
+                    stats_mutator.add_modifier(el, &format!("Damage.increased.{}", tag), 0.1 * (i as f32 + 1.0));
+                }
+            });
+            app.update();
 
-    {
-        let mut stats = Stats::new();
-        stats.set("AddedLife", StatType::Literal(100.0));
-        stats.set("IncreasedLife", StatType::Literal(50.0));
-        let expr = Expression(evalexpr::build_operator_tree(
-            "Total = AddedLife + IncreasedLife"
-        ).unwrap());
-        stats.set("TotalLife", StatType::Expression(expr));
-        world.entity_mut(e0).insert(stats);
+            let first_tag_path = format!("Damage.{}", 1u32 << 0); // Evaluate total damage for the first tag
+            
+            b.iter(|| {
+                let el_for_iter = el; // Copy entity
+                let first_tag_path_for_iter = first_tag_path.clone(); // Clone String inside b.iter
+                 let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &first_tag_path_for_iter));
+                });
+            });
+        });
     }
+    group.finish();
+}
 
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e0);
-        world.entity_mut(e0).insert(ctx);
+pub fn bench_mixed_dependencies(c: &mut Criterion) {
+    let mut group = c.benchmark_group("mixed_dependencies_evaluation");
+    
+    for &complexity in &[1, 3, 5, 10] {
+        group.bench_with_input(BenchmarkId::from_parameter(complexity), &complexity, |b, &complexity| {
+            let (mut app, entities) = setup_app_with_entities_for_bench(complexity + 1);
+            let last_entity = entities[complexity];
+            let compl = complexity; // copy
+
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(entities[0], "Power.base", 20.0);
+                for i in 1..=compl {
+                    stats_mutator.register_source(entities[i], "Source", entities[0]);
+                    stats_mutator.add_modifier(entities[i], "Multiplier.base", 1.0 + (i as f32 * 0.1));
+                    stats_mutator.add_modifier(entities[i], "Damage.base", Expression::new("Source@Power.base * Multiplier.base").unwrap());
+                    if i > 1 {
+                        stats_mutator.register_source(entities[i], "Prev", entities[i-1]);
+                        stats_mutator.add_modifier(
+                            entities[i],
+                            "ComplexDamage.base",
+                            Expression::new("(Source@Power.base * 0.5) + (Prev@Damage.base * 0.3) * Multiplier.base").unwrap()
+                        );
+                    }
+                }
+            });
+            app.update();
+            
+            let stat_to_eval = if complexity > 1 { "ComplexDamage.base".to_string() } else { "Damage.base".to_string() };
+            b.iter(|| {
+                let last_entity_for_iter = last_entity; // Copy entity
+                let stat_to_eval_for_iter = stat_to_eval.clone(); // Clone String inside b.iter
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(last_entity_for_iter, &stat_to_eval_for_iter));
+                });
+            });
+        });
     }
-
-    let mut stats_query = world.query::<&Stats>();
-    let ctx_query = world.query::<&StatContext>();
-    let e0_stats = stats_query.get(&world, e0).unwrap();
-    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
-
-    let mut group = c.benchmark_group("simple_eval");
-    group.bench_function("evaluate E0.TotalLife x10000", |b| {
-        b.iter(|| {
-            for _ in 0..10_000 {
-                let val = e0_stats.get("TotalLife", &ctx_refs).unwrap();
-                black_box(val);
-            }
-        });
-    });
     group.finish();
 }
 
-/// 5) Benchmarks inserting 1,000 key/value pairs into `Stats`.
-fn bench_definitions_insertion(c: &mut Criterion) {
-    // Pre-build a vector of 1,000 keys
-    let keys: Vec<String> = (0..1000)
-        .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
-        .collect();
+pub fn bench_stats_update_propagation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stats_update_propagation");
+    
+    for &entity_count in &[1, 10, 50, 100] { // Number of dependent entities
+        group.bench_with_input(BenchmarkId::from_parameter(entity_count), &entity_count, |b, &entity_count| {
+            let (mut app, entities) = setup_app_with_entities_for_bench(entity_count + 1);
+            
+            let central = entities[0];
+            let dependent_entities_ids = entities[1..].to_vec(); // Clone for setup system
 
-    let mut group = c.benchmark_group("stats_insertion");
-    group.bench_function("insert 1000 keys", |b| {
-        b.iter(|| {
-            let mut stats = Stats::new();
-            for (i, key) in keys.iter().enumerate() {
-                stats.set(key, StatType::Literal(i as f32));
-            }
-            black_box(stats);
+            // Setup: Central entity and dependents that rely on its "Aura.base"
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(central, "Aura.base", 10.0);
+                for (i, &entity_id) in dependent_entities_ids.iter().enumerate() {
+                    stats_mutator.register_source(entity_id, "CentralSource", central);
+                    let multiplier = 0.8 + ((i as f32 % 5.0) * 0.1); // Vary multiplier
+                    stats_mutator.add_modifier(entity_id, "Buff.value", Expression::new(&format!("CentralSource@Aura.base * {}", multiplier)).unwrap());
+                }
+            });
+            app.update();
+
+            // Pre-register the system that updates the central entity's stat
+            let update_system_id = app.world_mut().register_system(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(central, "Aura.base", 1.0); // Increment aura
+            });
+            app.update(); // process registration
+
+            let dependent_entities_for_eval = entities[1..].to_vec(); // Clone for benchmark loop
+
+            b.iter(|| {
+                // Run the system to update the central entity's aura
+                let _ = black_box(app.world_mut().run_system(update_system_id));
+                // add_modifier itself should propagate, an app.update() after this might not be strictly needed for stats
+                // but can be kept if we want to simulate a frame tick for other Bevy systems.
+                // For measuring just stat propagation, this app.update() could be omitted. Let's keep it for now.
+                app.update(); 
+
+                // Evaluate all dependent entities in one go to measure read-after-write performance
+                let deps_clone = dependent_entities_for_eval.clone();
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    for &dep_entity in &deps_clone {
+                        black_box(stats_mutator.get(dep_entity, "Buff.value"));
+                    }
+                });
+            });
         });
-    });
-    group.finish();
-}
-
-/// 6) Benchmarks removing 1,000 key/value pairs from `Stats`.
-fn bench_definitions_removal(c: &mut Criterion) {
-    let keys: Vec<String> = (0..1000)
-        .map(|i| format!("Supercalefragilisticexpalidocious{}", i))
-        .collect();
-
-    let mut group = c.benchmark_group("stats_removal");
-    group.bench_function("remove 1000 keys", |b| {
-        b.iter(|| {
-            // Insert 1,000 key/value pairs
-            let mut stats = Stats::new();
-            for (i, key) in keys.iter().enumerate() {
-                stats.set(key, StatType::Literal(i as f32));
-            }
-            // Now remove them
-            for key in &keys {
-                // Here we just call `remove()`. If you want to replicate the old
-                // "subtract" logic, you can do it differently.
-                let _ = stats.remove(key);
-            }
-            black_box(stats);
-        });
-    });
-    group.finish();
-}
-
-/// 8) Benchmarks a "single-step" calculation with a single formula referencing multiple stats.
-fn bench_single_step_calculation(c: &mut Criterion) {
-    let mut world = World::default();
-    let e0 = world.spawn_empty().id();
-
-    {
-        let mut stats = Stats::new();
-        stats.set("Step1", StatType::Literal(10.0));
-        stats.set("Step2", StatType::Literal(10.0));
-        stats.set("Step3", StatType::Literal(10.0));
-        stats.set("Step4", StatType::Literal(10.0));
-        stats.set("Step5", StatType::Literal(10.0));
-        stats.set("Step6", StatType::Literal(10.0));
-
-        // Single-step formula: multiply everything in one shot:
-        // "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6"
-        let expr_str = "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6";
-        let expr = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
-        stats.set("TotalVal", StatType::Expression(expr));
-
-        world.entity_mut(e0).insert(stats);
     }
+    group.finish();
+}
 
-    {
-        let mut ctx = StatContext::default();
-        ctx.insert("self", e0);
-        world.entity_mut(e0).insert(ctx);
+pub fn bench_complex_expression_evaluation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("complex_expression_evaluation");
+    
+    let expressions = [
+        "Base + Added",
+        "Base * (1.0 + Increased)", // Use 1.0 for f32 consistency
+        "Base * (1.0 + Increased) + Added",
+        "min(Base * (1.0 + Increased) + Added, Cap)",
+        "(Base * (1.0 + Increased) + Added) * (1.0 + More) - Taken"
+    ];
+    
+    for (i, expr_str_ref) in expressions.iter().enumerate() {
+        group.bench_with_input(BenchmarkId::from_parameter(i), expr_str_ref, |b, &expr_to_setup| {
+            let (mut app, entity) = setup_app_for_bench();
+            let el = entity; // copy
+            let expr_owned = expr_to_setup.to_string(); // own for system
+
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                stats_mutator.add_modifier(el, "Base", 100.0);
+                stats_mutator.add_modifier(el, "Added", 50.0);
+                stats_mutator.add_modifier(el, "Increased", 0.3);
+                stats_mutator.add_modifier(el, "More", 0.2);
+                stats_mutator.add_modifier(el, "Taken", 25.0);
+                stats_mutator.add_modifier(el, "Cap", 200.0);
+                stats_mutator.add_modifier(el, "Result", Expression::new(&expr_owned).unwrap());
+            });
+            app.update();
+            
+            b.iter(|| {
+                let el_for_iter = el; // Copy entity
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, "Result"));
+                });
+            });
+        });
     }
-
-    let mut stats_query = world.query::<&Stats>();
-    let ctx_query = world.query::<&StatContext>();
-    let e0_stats = stats_query.get(&world, e0).unwrap();
-    let ctx_refs = build(e0, &world, &stats_query, &ctx_query);
-
-    let mut group = c.benchmark_group("single_step_eval");
-    group.bench_function("calculate 10,000 single-step evals", |b| {
-        b.iter(|| {
-            for _ in 0..10_000 {
-                let val = e0_stats.get("TotalVal", &ctx_refs).unwrap();
-                black_box(val);
-            }
-        });
-    });
     group.finish();
 }
 
-fn compile_expressions(c: &mut Criterion) {
-    let mut group = c.benchmark_group("stat_compilation");
-    group.bench_function("Compile 1000 expressions", |b| {
-        b.iter(|| {
-            for _ in 0..1000 {
-                let expr_str = "Total = 10 * self.Step1 * self.Step2 * self.Step3 * self.Step4 * self.Step5 * self.Step6";
-                let _ = Expression(evalexpr::build_operator_tree(expr_str).unwrap());
-            }
+pub fn bench_many_modifiers_on_stat(c: &mut Criterion) {
+    let mut group = c.benchmark_group("many_modifiers_on_stat");
+    
+    for &modifier_count in &[1, 10, 50, 100] {
+        group.bench_with_input(BenchmarkId::from_parameter(modifier_count), &modifier_count, |b, &mc| {
+            let (mut app, entity) = setup_app_for_bench();
+            let el = entity; // copy
+            let mc_val = mc; // copy
+
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                for _ in 0..mc_val {
+                    // Assuming "Power.base" is modifiable or "Power.sum_part" if flat and summed.
+                    // If "Power" is default Flat, "Power.base" is just a name.
+                    // For Modifiable, add_modifier("Power", val) adds to base.
+                    // Let's use a Modifiable stat for this.
+                    stats_mutator.add_modifier(el, "Power", 1.0); 
+                }
+            });
+            // Ensure "Power" is Modifiable
+            Konfig::register_stat_type("Power", "Modifiable");
+            app.update();
+            
+            b.iter(|| {
+                let el_for_iter = el; // Copy entity
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, "Power")); // Evaluate the Modifiable stat "Power"
+                });
+            });
         });
-    });
+    }
     group.finish();
 }
 
-// Finally, group all benchmarks.
+pub fn bench_many_distinct_stats(c: &mut Criterion) {
+    let mut group = c.benchmark_group("many_distinct_stats");
+    
+    for &stat_count in &[10, 50, 100, 500] {
+        group.bench_with_input(BenchmarkId::from_parameter(stat_count), &stat_count, |b, &sc| {
+            let (mut app, entity) = setup_app_for_bench();
+            let el = entity; // copy
+            let sc_val = sc; // copy
+
+            let _ = app.world_mut().run_system_once(move |mut stats_mutator: StatsMutator| {
+                for i in 0..sc_val {
+                    stats_mutator.add_modifier(el, &format!("Stat{}.value", i), i as f32);
+                }
+            });
+            app.update();
+            
+            let target_stat_name = format!("Stat{}.value", sc / 2);
+            b.iter(|| {
+                let el_for_iter = el; // Copy entity
+                let target_stat_name_for_iter = target_stat_name.clone(); // Clone String inside b.iter
+                let _ = app.world_mut().run_system_once(move |stats_mutator: StatsMutator| {
+                    black_box(stats_mutator.get(el_for_iter, &target_stat_name_for_iter));
+                });
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
-    bench_deep_hierarchy_evaluation,
-    bench_deep_hierarchy_build,
-    bench_ecs_value_iteration,
-    bench_simple_evaluation,
-    bench_definitions_insertion,
-    bench_definitions_removal,
-    bench_single_step_calculation,
-    compile_expressions,
+    bench_stat_access,
+    bench_dependent_stats,
+    bench_entity_dependencies,
+    bench_tag_based_stats,
+    bench_mixed_dependencies,
+    bench_stats_update_propagation,
+    bench_complex_expression_evaluation,
+    bench_many_modifiers_on_stat,
+    bench_many_distinct_stats
 );
 criterion_main!(benches);

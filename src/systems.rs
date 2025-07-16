@@ -1,39 +1,27 @@
-use bevy::prelude::*;
+use bevy::{ecs::component::Mutable, prelude::*};
 use super::prelude::*;
 
-pub(crate) fn add_stat_component_system<T: StatDerived + Component>(
-    mut stats_query: Query<Entity, (Dirty<Stats>, Without<T>)>,
-    stat_accessor: StatAccessor,
-    mut commands: Commands,
-) {
-    for entity in stats_query.iter_mut() {
-        let stats = stat_accessor.build(entity);
-        if T::is_valid(&stats) {
-            commands.entity(entity).insert(T::from_stats(&stats));
-        }
-    }
-}
-
-pub(crate) fn update_stat_component_system<T: StatDerived + Component>(
-    mut stats_query: Query<(Entity, &mut T), Dirty<Stats>>,
-    stat_accessor: StatAccessor,
-    mut commands: Commands,
+pub(crate) fn update_stat_component_system<T: StatDerived + Component<Mutability = Mutable>>(
+    mut stats_query: Query<(Entity, &mut T), Changed<StatsProxy>>,
+    stats_mutator: StatsMutator,
 ) {
     for (entity, mut stat_component) in stats_query.iter_mut() {
-        let stats = stat_accessor.build(entity);
-        if stat_component.should_update(&stats) {
-            stat_component.update_from_stats(&stats);
-        }
-        if !T::is_valid(&stats) {
-            commands.entity(entity).remove::<T>();
+        let Ok(stats) = stats_mutator.get_stats(entity) else {
+            continue;
+        };
+        if stat_component.should_update(stats) {
+            stat_component.update_from_stats(stats);
         }
     }
 }
 
 pub(crate) fn update_writeback_value_system<T: WriteBack + Component>(
-    mut stats_query: Query<(&mut Stats, &T), Dirty<T>>,
+    stats_query: Query<(Entity, &T), Changed<T>>,
+    mut stats_mutator: StatsMutator,
 ) {
-    for (mut stat_component, writeback) in stats_query.iter_mut() {
-        writeback.write_back(&mut stat_component);
+    for (entity, write_back) in stats_query.iter() {
+        if write_back.should_write_back(entity, &stats_mutator) {
+            write_back.write_back(entity, &mut stats_mutator);
+        }
     }
 }

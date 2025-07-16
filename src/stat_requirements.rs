@@ -1,26 +1,13 @@
 use bevy::prelude::*;
-use serde::Deserialize;
 use crate::prelude::*;
-use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value as EvalValue};
-
-// ------------------------------------------------------------------
-//  Example comparison for "requirements"
-// ------------------------------------------------------------------
+use evalexpr::{DefaultNumericTypes, Node};
 
 #[derive(Debug, Clone)]
 pub struct StatRequirement(pub Node<DefaultNumericTypes>);
 
 impl StatRequirement {
-    pub fn met(&self, stats: &StatContextRefs) -> bool {
-        let mut context = HashMapContext::new();
-
-        // Gather variable references from the expression
-        for var in self.0.iter_variable_identifiers() {
-            // If the referenced stat is missing, we'll default to 0.0
-            let var_value = stats.get(var).unwrap_or(0.0);
-            let _ = context.set_value(var.into(), EvalValue::from_float(var_value as f64));
-        }
-        match self.0.eval_boolean_with_context(&context) {
+    pub fn met(&self, stats: &Stats) -> bool {
+        match self.0.eval_boolean_with_context(stats.get_context()) {
             Ok(result) => return result,
             Err(err) => println!("{:#?}", err),
         }
@@ -42,8 +29,7 @@ impl From<&str> for StatRequirement {
     }
 }
 
-#[derive(Component, Debug, Default, Clone, Deserialize)]
-#[require(StatContext)]
+#[derive(Component, Debug, Default, Clone)]
 pub struct StatRequirements(pub Vec<StatRequirement>);
 
 impl StatRequirements {
@@ -57,7 +43,7 @@ impl StatRequirements {
     }
 
     /// Returns true if all constraints hold.
-    pub fn met(&self, stats: &StatContextRefs) -> bool {
+    pub fn met(&self, stats: &Stats) -> bool {
         for req in self.0.iter() {
             if !req.met(stats) {
                 return false;
