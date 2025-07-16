@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
+use bevy_gauge::stat_types::ModType;
 
 // --- Components --- //
 
@@ -34,6 +35,9 @@ fn app_config() {
     Konfig::register_stat_type("Mana", "Complex");
     Konfig::register_stat_type("EnergyShield", "Complex");
     Konfig::set_total_expression_default("added * (1.0 + increased) * more");
+    
+    // Configure "more" as multiplicative so percentages work correctly
+    Konfig::register_relationship_type("more", ModType::Mul);
 }
 
 fn setup_player(mut commands: Commands) {
@@ -44,7 +48,8 @@ fn setup_player(mut commands: Commands) {
                 "Strength" => 25.0,
                 "Dexterity" => 18.0,
                 "Intelligence" => 33.0,
-                "Life.added" => [100.0, "(Strength / 10.0) * 5.0"], // Base life + Str bonus
+                "Life.added" => [100.0, "Strength / 2.0"], // Base life + Str bonus
+                "Life.more" => 0.4, // 40% more life
                 "Accuracy.added" => 50.0,     // Base accuracy before Dex bonus modifier
                 "Accuracy.increased" => "(Dexterity / 10.0) * 20.0",
                 "Mana.added" => [50.0, "(Intelligence / 10.0) * 5.0"],         // Base mana before Int bonus modifier
@@ -82,8 +87,8 @@ fn get_stats_system(
 
         println!("\nDerived Stats:");
         println!("  Max Life: {:.1}", life);
-        println!("    (From Str {}: Base 100 + ({}/10).floor()*5 = {:.1})", 
-            strength, strength, 100.0 + (strength/10.0).floor()*5.0);
+        println!("    (From Str {}: (Base 100 + ({} / 2)) * 1.4 = {:.1})", 
+            strength, strength, (100.0 + (strength / 2.0)) * 1.4);
 
         println!("  Melee Physical Damage Increase: {:.2}%", melee_phys_increase * 100.0);
         println!("    (From Str {}: ({}/10).floor()*2% = {:.2}%)", 

@@ -178,11 +178,13 @@ impl Stat for Modifiable {
                 match self.relationship {
                     ModType::Add => self.base += vals,
                     ModType::Mul => {
+                        // For multiplicative stats, convert percentage to multiplier (0.4 -> 1.4)
+                        let multiplier = vals + 1.0;
                         // If base is 0.0 from a previous Add context or uninitialized for Mul, treat this literal as the new base for multiplication
                         if self.base == 0.0 && self.mods.is_empty() { 
-                            self.base = vals;
+                            self.base = multiplier;
                         } else {
-                            self.base *= vals;
+                            self.base *= multiplier;
                         }
                     }
                 }
@@ -196,7 +198,11 @@ impl Stat for Modifiable {
             ModifierType::Literal(vals) => { 
                 match self.relationship {
                     ModType::Add => self.base -= vals,
-                    ModType::Mul => self.base /= vals,
+                    ModType::Mul => {
+                        // For multiplicative stats, convert percentage to multiplier (0.4 -> 1.4)
+                        let multiplier = vals + 1.0;
+                        self.base /= multiplier;
+                    }
                 }
             }
             ModifierType::Expression(expression) => {
@@ -217,7 +223,16 @@ impl Stat for Modifiable {
         
         let result = match self.relationship {
             ModType::Add => self.base + computed.iter().sum::<f32>(),
-            ModType::Mul => self.base * computed.iter().product::<f32>(),
+            ModType::Mul => {
+                // For multiplicative stats, add 1.0 to each modifier (converts percentages to multipliers)
+                // and start with 1.0 if there are no modifiers
+                let multiplier = if computed.is_empty() {
+                    1.0
+                } else {
+                    computed.iter().map(|v| v + 1.0).product::<f32>()
+                };
+                self.base * multiplier
+            },
         };
         result
     }
@@ -379,7 +394,7 @@ impl Tagged {
 
         let mod_type = Konfig::get_relationship_type(part);
 
-        let mut relevant_mod_values = Vec::new();
+        let mut relevant_mod_values = vec![0.0];
         for (mod_tag_key, modifiable_stat_for_tag) in &tagged_entry.0 {            
             // Check if a permissive modifier applies to a strict query
             // Permissive modifiers start as u32::MAX and have category bits cleared, then specific bits set
@@ -401,14 +416,13 @@ impl Tagged {
                 relevant_mod_values.push(mod_value);
             }
         }
-
-        if relevant_mod_values.is_empty() {
-            return if mod_type == ModType::Mul { 1.0 } else { 0.0 };
-        }
         
         let final_value = match mod_type {
             ModType::Add => relevant_mod_values.iter().sum(),
-            ModType::Mul => relevant_mod_values.iter().product(),
+            ModType::Mul => {
+                // For multiplicative stats, add 1.0 to each modifier (converts percentages to multipliers)
+                relevant_mod_values.iter().map(|v| v + 1.0).product()
+            },
         };
         final_value
     }
