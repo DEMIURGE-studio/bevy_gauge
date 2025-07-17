@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gauge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "bevy_gauge - a flexible stats system for Bevy"
 license = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # 1st party
-bevy_gauge_macros = "0.1.0"
+bevy_gauge_macros = "0.1.1"
 
 # Bevy 1st party
 bevy = { version = "0.16.1" }
