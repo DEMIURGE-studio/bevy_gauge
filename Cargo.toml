@@ -11,7 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # 1st party
-stat_macros = { path = "./stat_macros" }
+bevy_gauge_macros = { path = "../bevy_gauge_macros" }
 
 # Bevy 1st party
 bevy = { version = "0.16.1" }

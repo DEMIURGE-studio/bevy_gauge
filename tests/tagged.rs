@@ -4,7 +4,7 @@ use bevy_gauge::prelude::*;
 use serial_test::serial;
     
 // Define tag categories and values for proper tag system testing
-stat_macros::define_tags! {
+bevy_gauge_macros::define_tags! {
     DamageTags,
     damage_type {
         elemental { fire, cold, lightning },

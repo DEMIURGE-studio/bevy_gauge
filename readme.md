@@ -283,6 +283,12 @@ For more advanced features like Sources, Tags, Stat Effects, and detailed explan
 ## Contributing
 Contributions are welcome! Feel free to open an issue or submit a pull request.
 
+## Version Compatibility
+
+| bevy_gauge_macros | bevy_gauge | bevy   |
+|-------------------|------------|--------|
+| 0.1               | 0.1        | 0.16   |
+
 ## License
 `bevy_gauge` is dual-licensed under either
 *   MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
