@@ -120,7 +120,7 @@ impl<'a> StatPath<'a> {
             };
         }
 
-        // NEW: Handle $[...] auto-generated names
+        // Handle $[...] auto-generated names
         let all_segments: Vec<&'a str> = if path_to_parse.starts_with("$[") {
             if let Some(bracket_end) = path_to_parse.find(']') {
                 let name_part = &path_to_parse[..=bracket_end]; // "$[Damage.range.min]"

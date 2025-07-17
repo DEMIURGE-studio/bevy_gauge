@@ -1,6 +1,20 @@
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 use bevy_gauge::stat_types::ModType;
+use bevy_gauge_macros::define_tags;
+
+define_tags!{
+    DamageTags,
+    damage_type {
+        elemental { fire, cold, lightning },
+        physical,
+        chaos,
+    },
+    weapon_type {
+        melee { sword, axe },
+        ranged { bow, wand },
+    },
+}
 
 // --- Components --- //
 
@@ -15,7 +29,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin)
         .add_systems(Startup, setup_player)
-        .add_systems(Update, get_stats_system)
+        .add_systems(Startup, get_stats_system.after(setup_player))
         .run();
 }
 
@@ -38,6 +52,9 @@ fn app_config() {
     
     // Configure "more" as multiplicative so percentages work correctly
     Konfig::register_relationship_type("more", ModType::Mul);
+    
+    // Register tag set for Damage to resolve {MELEE|PHYSICAL} tags
+    Konfig::register_tag_set("Damage", Box::new(DamageTags));
 }
 
 fn setup_player(mut commands: Commands) {
@@ -45,17 +62,18 @@ fn setup_player(mut commands: Commands) {
         .spawn((
             Player,
             stats! {
-                "Strength" => 25.0,
+                "Strength" => 25.0, // Some arbitrary base values
                 "Dexterity" => 18.0,
                 "Intelligence" => 33.0,
-                "Life.added" => [100.0, "Strength / 2.0"], // Base life + Str bonus
-                "Life.more" => 0.4, // 40% more life
-                "Accuracy.added" => 50.0,     // Base accuracy before Dex bonus modifier
-                "Accuracy.increased" => "(Dexterity / 10.0) * 20.0",
-                "Mana.added" => [50.0, "(Intelligence / 10.0) * 5.0"],         // Base mana before Int bonus modifier
-                "Damage.increased.MELEE|PHYSICAL" => "(Strength / 10.0) * 0.02",
-                "Evasion.increased" => "(Dexterity / 10.0) * 0.02",
-                "EnergyShield.increased" => "(Intelligence / 10.0) * 0.02",
+                "Life.added" => [100.0, "Strength / 2.0"], // base + dynamic modifier
+                "Life.more" => 0.4, // "40% more life" multiplier. Multipliers are multiplicative
+                "Accuracy.added" => 50.0,
+                "Accuracy.increased" => "Dexterity / 2.0",
+                "Mana.added" => [50.0, "Intelligence / 5.0"], // base + dynamic modifier
+                "Damage.added.{MELEE|PHYSICAL}" => 50.0, // base melee physical damage
+                "Damage.increased.{MELEE|PHYSICAL}" => "Strength / 2.0 / 100.0", // bonus melee physical damage from strength
+                "Evasion.increased" => "Dexterity / 2.0 / 100.0",
+                "EnergyShield.increased" => "Intelligence / 5.0 / 100.0",
             },
             Name::new("Player"),
         ));
@@ -79,7 +97,7 @@ fn get_stats_system(
         println!("  Intelligence: {:.1}", intelligence);
 
         let life = player_stats.get("Life");
-        let melee_phys_increase = player_stats.get("Damage.increased.MELEE|PHYSICAL");
+        let axe_physical = player_stats.get(Konfig::process_path("Damage.{AXE|PHYSICAL}").as_str());
         let accuracy = player_stats.get("Accuracy");
         let evasion_increase = player_stats.get("Evasion.increased");
         let mana = player_stats.get("Mana");
@@ -87,27 +105,27 @@ fn get_stats_system(
 
         println!("\nDerived Stats:");
         println!("  Max Life: {:.1}", life);
-        println!("    (From Str {}: (Base 100 + ({} / 2)) * 1.4 = {:.1})", 
+        println!("    (From Str {}: (Base 100 + {} / 2) * (1 + 0.4) = {:.1})", 
             strength, strength, (100.0 + (strength / 2.0)) * 1.4);
 
-        println!("  Melee Physical Damage Increase: {:.2}%", melee_phys_increase * 100.0);
-        println!("    (From Str {}: ({}/10).floor()*2% = {:.2}%)", 
-            strength, strength, (strength/10.0).floor()*2.0);
+        println!("  Axe Physical Damage: {:.2}", axe_physical);
+        println!("    (From Str {}: 50 * (1 + {} / 2 / 100) = {:.2})", 
+            strength, strength, 50.0 * (1.0 + (strength / 2.0 / 100.0)));
 
         println!("  Accuracy Rating: {:.1}", accuracy);
-        println!("    (From Dex {}: Base 50 + ({}/10).floor()*20 = {:.1})", 
-            dexterity, dexterity, 50.0 + (dexterity/10.0).floor()*20.0);
+        println!("    (From Dex {}: 50 * (1 + {} / 2) = {:.1})", 
+            dexterity, dexterity, 50.0 * (1.0 + (dexterity / 2.0)));
 
         println!("  Evasion Increase: {:.2}%", evasion_increase * 100.0);
-        println!("    (From Dex {}: ({}/10).floor()*2% = {:.2}%)", 
-            dexterity, dexterity, (dexterity/10.0).floor()*2.0);
+        println!("    (From Dex {}: {} / 2 / 100 = {:.2}%)", 
+            dexterity, dexterity, (dexterity / 2.0 / 100.0) * 100.0);
 
         println!("  Max Mana: {:.1}", mana);
-        println!("    (From Int {}: Base 50 + ({}/10).floor()*5 = {:.1})", 
-            intelligence, intelligence, 50.0 + (intelligence/10.0).floor()*5.0);
+        println!("    (From Int {}: 50 + {} / 5 = {:.1})", 
+            intelligence, intelligence, 50.0 + (intelligence / 5.0));
 
         println!("  Energy Shield Increase: {:.2}%", es_increase * 100.0);
-        println!("    (From Int {}: ({}/10).floor()*2% = {:.2}%)", 
-            intelligence, intelligence, (intelligence/10.0).floor()*2.0);
+        println!("    (From Int {}: {} / 5 / 100 = {:.2}%)", 
+            intelligence, intelligence, (intelligence / 5.0 / 100.0) * 100.0);
     }
 } 

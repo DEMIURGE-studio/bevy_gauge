@@ -63,27 +63,27 @@ impl Stat for StatType {
     fn add_modifier(&mut self, path: &StatPath, modifier: ModifierType) {
         match self {
             StatType::Flat(flat) => flat.add_modifier(path, modifier),
-            StatType::Modifiable(simple) => simple.add_modifier(path, modifier),
-            StatType::Complex(modifiable) => modifiable.add_modifier(path, modifier),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.add_modifier(path, modifier),
+            StatType::Modifiable(modifiable) => modifiable.add_modifier(path, modifier),
+            StatType::Complex(complex) => complex.add_modifier(path, modifier),
+            StatType::Tagged(tagged) => tagged.add_modifier(path, modifier),
         }
     }
 
     fn remove_modifier(&mut self, path: &StatPath, modifier: &ModifierType) {
         match self {
             StatType::Flat(flat) => flat.remove_modifier(path, modifier),
-            StatType::Modifiable(simple) => simple.remove_modifier(path, modifier),
-            StatType::Complex(modifiable) => modifiable.remove_modifier(path, modifier),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.remove_modifier(path, modifier),
+            StatType::Modifiable(modifiable) => modifiable.remove_modifier(path, modifier),
+            StatType::Complex(complex) => complex.remove_modifier(path, modifier),
+            StatType::Tagged(tagged) => tagged.remove_modifier(path, modifier),
         }
     }
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         match self {
             StatType::Flat(flat) => flat.0,
-            StatType::Modifiable(simple) => simple.evaluate(path, stats),
-            StatType::Complex(modifiable) => modifiable.evaluate(path, stats),
-            StatType::Tagged(complex_modifiable) => complex_modifiable.evaluate(path, stats),
+            StatType::Modifiable(modifiable) => modifiable.evaluate(path, stats),
+            StatType::Complex(complex) => complex.evaluate(path, stats),
+            StatType::Tagged(tagged) => tagged.evaluate(path, stats),
         }
     }
 
@@ -477,7 +477,7 @@ impl Stat for Tagged {
     
     fn evaluate(&self, path: &StatPath, stats: &Stats) -> f32 {
         if let (Some(part_name), Some(tag_val)) = (&path.part, path.tag) {
-            // Track this query for future invalidation, but don't cache the result
+            // Track this query for future invalidation
             let query_key = (part_name.to_string(), tag_val);
             self.query_tracker.insert(query_key, ());
             
