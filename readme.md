@@ -212,4 +212,4 @@ at your option.
 
 ## TODO 
 - Implement string interning
-- Automatic stat tag string resolution (currently works in `stats!` macro but not in `stats.get()` calls) 
+- Automatic stat tag string resolution (currently works in `stats!` macro but not in `stats.get()` calls)
