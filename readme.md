@@ -160,14 +160,18 @@ stat_component!(
         current: f32 -> $,            // Writes Health.current value to "$[Health.current]" stat
     }
 );
+```
 
+```rust
 // Write-back support for mutable state
 impl WriteBack for Health {
     fn write_back(&self, target_entity: Entity, stats_mutator: &mut StatsMutator) {
         let _ = stats_mutator.set(target_entity, "$[Health.current]", self.current);
     }
 }
+```
 
+```rust
 stat_component!(
     #[derive(Clone, Debug)]
     pub struct PlayerStats {
