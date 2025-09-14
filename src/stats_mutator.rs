@@ -676,10 +676,10 @@ impl StatUpdate {
 /// This ensures that an entity's dependencies are properly cleaned up within the stat system
 /// when it ceases to exist.
 pub(crate) fn remove_stats(
-    trigger: Trigger<OnRemove, Stats>,
+    trigger: On<Remove, Stats>,
     mut stats_mutator: StatsMutator,
 ) {
-    let removed_entity = trigger.target();
+    let removed_entity = trigger.entity;
     stats_mutator.remove_stat_entity(removed_entity);
 }
 

@@ -17,10 +17,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # 1st party
-bevy_gauge_macros = "0.1.1"
+bevy_gauge_macros = { path = "../bevy_gauge_macros" }
 
 # Bevy 1st party
-bevy = { version = "0.16.1" }
+bevy = "=0.17.0-rc.1"
 
 # Serialization
 evalexpr = "12.0.2"
