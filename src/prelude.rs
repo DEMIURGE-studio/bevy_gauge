@@ -4,6 +4,8 @@ pub use super::initializer::*;
 pub use super::konfig::*;
 pub use super::modifier_set::*;
 pub use super::proxy::*;
+pub use super::schedule::*;
+pub use crate::sources::*;
 pub use super::stats_mutator::*;
 pub use super::stat_addressing::*;
 pub use super::stat_derived::*;

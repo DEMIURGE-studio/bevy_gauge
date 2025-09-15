@@ -97,6 +97,8 @@ use prelude::*;
 use bevy::prelude::*;
 
 pub mod app_extension;
+pub mod schedule;
+pub mod sources;
 pub mod expressions;
 pub mod initializer;
 pub mod konfig;
@@ -104,7 +106,6 @@ pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
 pub mod proxy;
-pub mod sources;
 pub mod stats_mutator;
 pub mod stat_addressing;
 pub mod stat_derived;
@@ -139,7 +140,12 @@ pub mod tags;
 /// ```
 pub fn plugin(app: &mut App) {
     app.add_observer(remove_stats)
-    .add_observer(apply_stats_initializer)
-    .add_plugins(app_extension::plugin)
-    .add_plugins(proxy::plugin);
+    .add_observer(apply_stats_initializer);
+
+    // Initialize custom schedules
+    crate::schedule::plugin(app);
+
+    // Add extension/plugin layers
+    app.add_plugins(schedule::plugin)
+       .add_plugins(proxy::plugin);
 }

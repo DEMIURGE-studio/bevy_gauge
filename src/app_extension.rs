@@ -1,5 +1,6 @@
 use bevy::{ecs::component::Mutable, prelude::*};
 use super::prelude::*;
+use crate::schedule::{StatsMutation, UpdateWriteBack};
 
 /// An extension trait for `bevy::prelude::App` to simplify the setup of components
 /// that derive their values from the stat system or write their values back to it.
@@ -34,6 +35,7 @@ pub trait StatsAppExtension {
     ///
     /// * `T`: The component type that implements both `StatDerived` and `WriteBack`.
     fn add_complex_component<T: StatDerived + WriteBack + Component<Mutability = Mutable>>(&mut self) -> &mut Self;
+
 }
 
 impl StatsAppExtension for App {
@@ -54,54 +56,9 @@ impl StatsAppExtension for App {
         self.add_writeback_component::<T>();
         self
     }
+
 }
 
-use bevy::{app::MainScheduleOrder, ecs::schedule::ScheduleLabel};
+// schedules moved to crate::schedule
 
-/// Plugin function for the app extension module.
-/// Sets up custom schedules used by the stat system for managing derived components and write-back mechanisms.
-///
-/// This ensures that stat calculations, updates to `StatDerived` components, and `WriteBack` operations
-/// occur in a controlled order relative to Bevy's main update cycle.
-/// Specifically, it inserts:
-/// - `StatsMutation`: After `PreUpdate`.
-/// - `UpdateStatDerived`: After `StatsMutation`.
-/// - `UpdateWriteBack`: After `UpdateStatDerived`.
-pub fn plugin(app: &mut App) {
-    
-    app.init_schedule(StatsMutation)
-        .world_mut()
-        .resource_mut::<MainScheduleOrder>()
-        .insert_after(First, StatsMutation);
-
-    app.init_schedule(UpdateStatDerived)
-        .world_mut()
-        .resource_mut::<MainScheduleOrder>()
-        .insert_after(StatsMutation, UpdateStatDerived);
-
-    app.init_schedule(UpdateWriteBack)
-        .world_mut()
-        .resource_mut::<MainScheduleOrder>()
-        .insert_after(UpdateStatDerived, UpdateWriteBack);
-}
-
-/// Custom Bevy schedule label for systems that perform mutations on `Stats` components.
-///
-/// This schedule runs after `PreUpdate` and before `UpdateStatDerived`.
-/// It's intended for systems that directly add/remove modifiers or change stat values.
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StatsMutation;
-
-/// Custom Bevy schedule label for systems that update components implementing `StatDerived`.
-///
-/// This schedule runs after `StatsMutation` and before `UpdateWriteBack` (and `Update`).
-/// Systems in this schedule read from `Stats` components and update the fields of `StatDerived` components.
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UpdateStatDerived;
-
-/// Custom Bevy schedule label for systems that write values from `WriteBack` components back to `Stats` components.
-///
-/// This schedule runs after `UpdateStatDerived` and before `Update` (if `UpdateWriteBack` itself is placed before `Update`).
-/// Systems here detect changes in `WriteBack` components and update the underlying stats.
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UpdateWriteBack;
+// relationship systems moved to crate::sources

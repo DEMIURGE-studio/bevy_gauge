@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::prelude::Stats;
+use crate::{prelude::Stats, schedule::StatsMutation};
 
 /// A marker component that tracks when an entity's Stats have been modified.
 /// This component is automatically added/updated when stats change, triggering
@@ -22,5 +22,5 @@ pub fn update_stats_proxy_system(
 /// Plugin function to register the StatsProxy system and event.
 /// This should be called during app setup to enable the proxy functionality.
 pub fn plugin(app: &mut App) {
-    app.add_systems(crate::app_extension::StatsMutation, update_stats_proxy_system);
+    app.add_systems(StatsMutation, update_stats_proxy_system);
 }

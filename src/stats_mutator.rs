@@ -293,6 +293,59 @@ impl StatsMutator<'_, '_> {
         }
     }
 
+    /// Unregisters a previously registered source alias from a target entity.
+    ///
+    /// This removes dependency links from the old source entity to the target's dependent stats,
+    /// clears cached source-derived variables on the target, and triggers updates on affected stats.
+    pub fn unregister_source(&mut self, target_entity: Entity, alias: &str) {
+        // Fast path: ensure target exists
+        if !self.query.contains(target_entity) {
+            return;
+        }
+
+        // Read current mappings and requirements
+        let (old_source_opt, requirements_opt) = if let Ok(target_stats_ro) = self.query.get(target_entity) {
+            let old = target_stats_ro.sources.get(alias).copied();
+            let reqs = target_stats_ro.source_requirements.get(alias).cloned();
+            (old, reqs)
+        } else {
+            return;
+        };
+
+        let Some(old_source) = old_source_opt else { return; };
+        let requirements: Vec<SourceRequirement> = requirements_opt.unwrap_or_default();
+
+        // 1) Remove dependency edges from the old source to the target
+        if let Ok(mut old_source_stats) = self.query.get_mut(old_source) {
+            for req in &requirements {
+                let dep = DependentType::EntityStat {
+                    entity: target_entity,
+                    path: req.local_dependent.clone(),
+                    source_alias: alias.to_string(),
+                };
+                old_source_stats.remove_dependent(&req.path_on_source, dep);
+            }
+        }
+
+        // 2) Remove cached source variables on the target and collect updates
+        let mut paths_to_update: Vec<String> = Vec::new();
+        if let Ok(mut target_stats_mut) = self.query.get_mut(target_entity) {
+            // Drop mapping
+            target_stats_mut.sources.remove(alias);
+
+            for req in &requirements {
+                // Key equals the variable string used in expressions, e.g. "Strength@Parent"
+                target_stats_mut.remove_cached(&req.path_in_expression);
+                paths_to_update.push(req.local_dependent.clone());
+            }
+        }
+
+        // 3) Trigger updates for affected local stats
+        for path in paths_to_update {
+            self.update_stat(target_entity, &path);
+        }
+    }
+
     fn collect_source_updates(
         &mut self,
         target_entity: Entity,
@@ -688,6 +741,7 @@ mod remove_stat_entity_tests {
     use bevy::prelude::*;
 
     use super::super::prelude::*;
+    use serial_test::serial;
 
     #[derive(Debug, Clone, Eq, PartialEq, Hash, SystemSet)]
     enum TestPhase {
@@ -837,9 +891,11 @@ mod remove_stat_entity_tests {
     }
 
     #[test]
+    #[serial]
     fn test_remove_stat_entity_full_cleanup() {
         let mut app = App::new();
 
+        Konfig::reset_for_test();
         Konfig::register_stat_type(STAT_A_POWER, "Modifiable");
         Konfig::register_stat_type(STAT_A_BUFFED_POWER, "Modifiable");
         Konfig::register_stat_type(STAT_B_STRENGTH, "Modifiable");
