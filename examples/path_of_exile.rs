@@ -83,9 +83,9 @@ fn setup_player(mut commands: Commands) {
 }
 
 fn get_stats_system(
-    player_query: Query<&Stats, With<Player>>,
+    q_player: Query<&Stats, With<Player>>,
 ) {
-    if let Ok(player_stats) = player_query.single() {
+    if let Ok(player_stats) = q_player.single() {
         // Access stats directly
         let strength = player_stats.get("Strength");
         let dexterity = player_stats.get("Dexterity");

@@ -54,9 +54,9 @@ fn spawn_entities(mut commands: Commands) {
 // --- Systems --- //
 
 fn read_stats_system(
-    child_query: Query<&Stats, With<ChildOf>>,
+    q_child_of: Query<&Stats, With<ChildOf>>,
 ) {
-    for child in child_query.iter() {
+    for child in q_child_of.iter() {
         let child_bonus = child.get("ChildBonus");
         println!("ChildBonus: {}", child_bonus);
     }
