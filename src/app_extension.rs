@@ -56,9 +56,4 @@ impl StatsAppExtension for App {
         self.add_writeback_component::<T>();
         self
     }
-
 }
-
-// schedules moved to crate::schedule
-
-// relationship systems moved to crate::sources
