@@ -119,9 +119,9 @@ fn spawn_player(mut commands: Commands) {
 ```rust
 fn apply_buff_system(
     mut stats_mutator: StatsMutator,
-    player_query: Query<Entity, Added<Stats>>, 
+    q_player: Query<Entity, Added<Stats>>, 
 ) {
-    if let Ok(player_entity) = player_query.single() {
+    if let Ok(player_entity) = q_player.single() {
         // Add modifiers
         stats_mutator.add_modifier(player_entity, "Strength", 5.0);
         stats_mutator.add_modifier(player_entity, "Damage.added.{SWORD|PHYSICAL}", 15.0);
@@ -131,9 +131,9 @@ fn apply_buff_system(
 }
 
 fn display_stats_system(
-    player_query: Query<&Stats, With<Player>>,
+    q_player: Query<&Stats, With<Player>>,
 ) {
-    if let Ok(stats) = player_query.single() {
+    if let Ok(stats) = q_player.single() {
         // Get stats with string-based tags
         let strength = stats.get("Strength");
         let life = stats.get("Life");

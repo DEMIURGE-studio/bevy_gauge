@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
+use bevy_gauge::sources::StatsAppSourcesExt;
 
 // --- Setup --- //
 
@@ -8,11 +9,12 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy_gauge::plugin)
+        // Automatically register ChildOf as a stat source
+        .register_stat_relationship_as::<ChildOf>("Parent")
         .add_systems(Startup, (spawn_entities, ApplyDeferred).chain())
         .add_systems(
             Update,
             (
-                register_parent_source_for_child,
                 read_stats_system,
             )
                 .chain(),
@@ -42,7 +44,7 @@ fn spawn_entities(mut commands: Commands) {
         Stats::new(), // Explicitly add Stats
         // ChildBonus is calculated based on Parent's Strength.
         // No specific initialization needed for ChildBonus parts here unless it had its own independent base.
-        stats! { "ChildBonus" => "Parent@Strength * 0.1" },
+        stats! { "ChildBonus" => "Strength@Parent * 0.1" },
         Name::new("Child"),
     )).insert(ChildOf(parent));
 
@@ -51,23 +53,10 @@ fn spawn_entities(mut commands: Commands) {
 
 // --- Systems --- //
 
-fn register_parent_source_for_child(
-    mut stats_mutator: StatsMutator,
-    child_query: Query<(Entity, &ChildOf), Changed<ChildOf>>,
-) {
-    for (child_entity, parent) in child_query.iter() {
-        stats_mutator.register_source(
-            child_entity,
-            "MyParent", 
-            parent.parent(),
-        );
-    }
-}
-
 fn read_stats_system(
-    child_query: Query<&Stats, With<ChildOf>>,
+    q_child_of: Query<&Stats, With<ChildOf>>,
 ) {
-    for child in child_query.iter() {
+    for child in q_child_of.iter() {
         let child_bonus = child.get("ChildBonus");
         println!("ChildBonus: {}", child_bonus);
     }
