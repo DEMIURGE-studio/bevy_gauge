@@ -102,6 +102,7 @@ pub mod sources;
 pub mod expressions;
 pub mod initializer;
 pub mod konfig;
+pub mod lazy_resolver;
 pub mod macros;
 pub mod modifier_set;
 pub mod prelude;
