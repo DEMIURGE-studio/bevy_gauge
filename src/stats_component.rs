@@ -244,7 +244,6 @@ impl Stats {
         self.set_cached(key, value);
     }
 
-    // Made public, now uses StatContext wrapper
     /// Evaluates a given mathematical expression string using a provided context and this entity's cached stat values.
     ///
     /// The expression can reference variables that should be present in either the `base_context_opt` or

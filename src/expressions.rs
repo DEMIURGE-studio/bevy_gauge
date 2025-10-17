@@ -1,4 +1,4 @@
-use evalexpr::{DefaultNumericTypes, HashMapContext, Node, Value};
+use evalexpr::{Context, ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Node, Value};
 use crate::prelude::*;
 
 /// Represents a mathematical expression that can be evaluated to calculate a stat value.
@@ -13,6 +13,16 @@ use crate::prelude::*;
 pub struct Expression {
     pub(crate) definition: String,
     pub(crate) compiled: Node<DefaultNumericTypes>,
+    pub(crate) cached_stat_paths: Vec<CachedStatPath>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedStatPath {
+    pub original: String,
+    pub name: String,
+    pub part: Option<String>,
+    pub tag: Option<u32>,
+    pub target: Option<String>,
 }
 
 impl Expression {
@@ -33,19 +43,59 @@ impl Expression {
                 expression: expression.to_string(),
                 details: err.to_string(),
             })?;
-            
+        
+        // Build a cache of parsed stat paths for variable identifiers.
+        let mut cached_stat_paths = Vec::new();
+        for var_name in compiled.iter_variable_identifiers() {
+            let path = StatPath::parse(var_name);
+            cached_stat_paths.push(CachedStatPath {
+                original: var_name.to_string(),
+                name: path.name().to_string(),
+                part: path.part().map(|s| s.to_string()),
+                tag: path.tag(),
+                target: path.target().map(|s| s.to_string()),
+            });
+        }
+
         Ok(Self {
             definition: expression.to_string(),
             compiled,
+            cached_stat_paths,
         })
     }
 
-    pub(crate) fn evaluate(&self, context: &HashMapContext) -> f32 {
-        self.compiled
-            .eval_with_context(context)
-            .unwrap_or(Value::Float(0.0))
-            .as_number()
-            .unwrap_or(0.0) as f32
+    /// Returns the cached, pre-parsed stat paths for this expression's identifiers.
+    pub fn stat_paths(&self) -> &[CachedStatPath] {
+        &self.cached_stat_paths
+    }
+
+    pub fn evaluate(&self, context: &HashMapContext) -> f32 {
+        self.try_evaluate(context).unwrap_or(0.0)
+    }
+
+    /// Fallible evaluation that uses the compiled expression without reparsing.
+    ///
+    /// - Clones the provided context
+    /// - Ensures all identifiers referenced by this expression exist in the context, defaulting to 0.0
+    /// - Returns a `StatResult<f32>` with detailed `StatError` on failure
+    pub(crate) fn try_evaluate(&self, base_context: &HashMapContext) -> StatResult<f32> {
+        let mut context = base_context.clone();
+
+        // Ensure all variables referenced by this expression are present in the context
+        for var_name in self.compiled.iter_variable_identifiers() {
+            if context.get_value(var_name).is_none() {
+                context
+                    .set_value(var_name.to_string(), Value::Float(0.0))
+                    .map_err(|e| StatError::Internal { details: format!("Failed to set default value for missing variable '{}': {}", var_name, e) })?;
+            }
+        }
+
+        let eval_value = self
+            .compiled
+            .eval_with_context(&context)
+            .map_err(|e| StatError::ExpressionError { expression: self.definition.clone(), details: e.to_string() })?;
+
+        Ok(eval_value.as_number().unwrap_or(0.0) as f32)
     }
 }
 
@@ -82,19 +132,13 @@ impl From<Expression> for ModifierType {
 
 impl From<&str> for ModifierType {
     fn from(value: &str) -> Self {
-        Self::Expression(Expression {
-            definition: value.to_string(),
-            compiled: evalexpr::build_operator_tree(value).unwrap(),
-        })
+        Self::Expression(Expression::new(value).unwrap())
     }
 }
 
 impl From<String> for ModifierType {
     fn from(value: String) -> Self {
-        Self::Expression(Expression {
-            definition: value.clone(),
-            compiled: evalexpr::build_operator_tree(&value).unwrap(),
-        })
+        Self::Expression(Expression::new(&value).unwrap())
     }
 }
 

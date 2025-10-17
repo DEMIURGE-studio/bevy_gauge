@@ -215,10 +215,7 @@ impl Stat for Modifiable {
 
     fn evaluate(&self, _path: &StatPath, stats: &Stats) -> f32 {
         let computed: Vec<f32> = self.mods.iter()
-            .map(|expr| {
-                // Use Stats::evaluate_expression which handles missing variables properly
-                stats.evaluate_expression(&expr.definition, None).unwrap_or(0.0)
-            })
+            .map(|expr| expr.evaluate(stats.get_context()))
             .collect();
         
         let result = match self.relationship {
@@ -316,23 +313,16 @@ impl Stat for Complex {
                     .map_err(|e| StatError::Internal{details: format!("Failed to set part '{}' in Complex eval context: {}", part_name, e)})
                     .unwrap();
             }
-            
-            let main_cache_context = stats.get_context();
-            for (var_key, var_val) in main_cache_context.iter_variables() {
-                if expression_context.get_value(&var_key).is_none() {
-                    expression_context.set_value(var_key.clone().into(), var_val.clone())
-                        .map_err(|e| StatError::Internal{details: format!("Failed to merge var '{}' in Complex eval context: {}", var_key, e)})
-                        .unwrap();
+
+            // Use Expression::try_evaluate to merge cached vars and default missing ones
+            let total = self.total.evaluate(&{
+                let mut merged = stats.get_context().clone();
+                // Overlay the part values into the merged context
+                for (var_key, var_val) in expression_context.iter_variables() {
+                    merged.set_value(var_key.into(), var_val.clone()).unwrap();
                 }
-            }
-            
-            let total_expr_str = self.total.definition.as_str();
-            let total = self.total.compiled
-                .eval_with_context(&expression_context)
-                .map_err(|e| StatError::ExpressionError { expression: total_expr_str.to_string(), details: e.to_string() })
-                .unwrap()
-                .as_number()
-                .unwrap_or(0.0) as f32;
+                merged
+            });
 
             stats.set_cached(&path.full_path, total);
             return total;
