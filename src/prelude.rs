@@ -16,6 +16,7 @@ pub(crate) use super::stat_types::*;
 pub use super::stats_component::*;
 pub(crate) use super::systems::*;
 pub use super::tags::*;
+pub use super::instant::*;
 pub use bevy_gauge_macros::Named;
 pub use bevy_gauge_macros::SimpleStatDerived;
 pub use bevy_gauge_macros::stat_component;
