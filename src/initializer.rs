@@ -56,7 +56,7 @@ pub(crate) fn apply_stats_initializer(
     if let Ok(initializer) = query_initializer.get(entity) {
         initializer.modifiers.apply_to(&mut stats_mutator, entity);
         
-        commands.entity(entity).remove::<StatsInitializer>();
+        commands.entity(entity).try_remove::<StatsInitializer>();
         commands.trigger(StatsInitialized(entity));
     }
 }

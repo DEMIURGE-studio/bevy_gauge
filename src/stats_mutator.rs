@@ -1,4 +1,4 @@
-use bevy::{ecs::system::{SystemParam, SystemState}, platform::collections::{HashMap, HashSet}, prelude::*};
+use bevy::{ecs::system::{SystemParam, SystemState, QueryLens}, platform::collections::{HashMap, HashSet}, prelude::*};
 use super::prelude::*;
 
 // TODO:  
@@ -84,6 +84,29 @@ impl StatsMutator<'_, '_> {
         };
 
         Ok(stats)
+    }
+
+    /// Provides read-only access to a `Query<&Stats>` for the duration of the provided closure.
+    ///
+    /// This avoids lifetime issues that arise from trying to return a reference tied to a
+    /// temporary lens. Use this to perform arbitrary read-only query operations on `Stats`.
+    pub fn with_stats_query<R>(&mut self, f: impl FnOnce(Query<'_, '_, &'static Stats>) -> R) -> R {
+        let mut lens = self.query.transmute_lens::<&'static Stats>();
+        let q = lens.query();
+        f(q)
+    }
+
+    /// Returns a `QueryLens<&Stats>` which can be used to construct a `Query<&Stats>`.
+    ///
+    /// Example:
+    ///
+    /// ```ignore
+    /// let mut lens = stats_mutator.stats_query_lens();
+    /// let query = lens.query();
+    /// for stats in &query { /* ... */ }
+    /// ```
+    pub fn stats_query_lens(&mut self) -> QueryLens<'_, &'static Stats> {
+        self.query.transmute_lens::<&'static Stats>()
     }
 
     /// Adds a modifier to a stat on the target entity.

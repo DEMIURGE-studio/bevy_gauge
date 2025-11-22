@@ -22,6 +22,8 @@ pub use bevy_gauge_macros::SimpleStatDerived;
 pub use bevy_gauge_macros::stat_component;
 pub use bevy_gauge_macros::mod_set;
 pub use bevy_gauge_macros::stats;
+pub use bevy_gauge_macros::instant;
+pub use bevy_gauge_macros::define_tags;
 pub use crate::simple_generic_stat;
 pub use crate::simple_stat;
 pub use crate::requires;
