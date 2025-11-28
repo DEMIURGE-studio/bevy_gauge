@@ -1,0 +1,22 @@
+[package]
+name = "bevy_gauge_macros"
+version = "0.1.1"
+edition = "2021"
+description = "Procedural macros for bevy_gauge - a flexible stats system for Bevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DEMIURGE-studio/bevy_gauge_macros"
+homepage = "https://github.com/DEMIURGE-studio/bevy_gauge_macros"
+documentation = "https://docs.rs/bevy_gauge_macros"
+keywords = ["bevy", "gamedev", "stats", "macros"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0.39", features = ["full", "extra-traits", "parsing"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+derive-alias = "0.1.0"
+heck = "0.5.0"

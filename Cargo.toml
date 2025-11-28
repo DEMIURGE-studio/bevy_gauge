@@ -13,11 +13,16 @@ keywords = ["bevy", "gamedev", "stats"]
 name = "bevy_gauge"
 path = "src/lib.rs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+members = [
+  ".",
+  "macros",
+]
+resolver = "3"
 
 [dependencies]
 # 1st party
-bevy_gauge_macros = { path = "../bevy_gauge_macros" }
+bevy_gauge_macros = { path = "./macros" }
 
 # Bevy 1st party
 bevy = { version = "0.17", default-features = false, features = ["bevy_log"] }
