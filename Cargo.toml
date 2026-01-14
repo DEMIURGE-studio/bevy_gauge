@@ -22,7 +22,7 @@ resolver = "3"
 
 [dependencies]
 # 1st party
-bevy_gauge_macros = { path = "./macros" }
+bevy_gauge_macros = { version = "0.1.1", path = "./macros" }
 
 # Bevy 1st party
 bevy = { version = "0.18", default-features = false, features = ["bevy_log"] }
