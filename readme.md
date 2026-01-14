@@ -210,8 +210,8 @@ Contributions are welcome! Feel free to open an issue or submit a pull request.
 
 | bevy_gauge_macros | bevy_gauge | bevy |
 | ----------------- | ---------- | ---- |
-| 0.1.1             | 0.3.0      | 0.18 |
-| 0.1.1             | 0.2.2      | 0.17 |
+| 0.3.0             | 0.3.0      | 0.18 |
+| 0.2.0             | 0.2.2      | 0.17 |
 | 0.1.1             | 0.1.1      | 0.16 |
 
 _Note: This crate is in active development. APIs may change between versions._
