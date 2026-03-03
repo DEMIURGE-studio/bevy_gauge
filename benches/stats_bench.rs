@@ -3,7 +3,7 @@ use std::hint::black_box;
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use bevy_attributes::prelude::*;
+use bevy_gauge::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,12 +51,10 @@ pub fn bench_stat_access(c: &mut Criterion) {
                     .unwrap();
                 app.update();
 
+                let interner = Interner::global();
                 b.iter(|| {
                     let attrs = app.world().get::<Attributes>(entity).unwrap();
-                    black_box(attrs.get_by_name(
-                        "Life.base",
-                        app.world().resource::<Interner>(),
-                    ));
+                    black_box(attrs.get_by_name("Life.base", &interner));
                 });
             },
         );
@@ -524,12 +522,11 @@ pub fn bench_cached_vs_evaluate(c: &mut Criterion) {
         .unwrap();
     app.update();
 
+    let interner = Interner::global();
     group.bench_function("cached_read", |b| {
         b.iter(|| {
             let attrs = app.world().get::<Attributes>(entity).unwrap();
-            black_box(
-                attrs.get_by_name("Result", app.world().resource::<Interner>()),
-            );
+            black_box(attrs.get_by_name("Result", &interner));
         });
     });
 
@@ -609,13 +606,13 @@ pub fn bench_evaluate_paths(c: &mut Criterion) {
         .unwrap();
     app.update();
 
-    let result_id = app.world().resource::<Interner>().get("Result").unwrap();
+    let interner = Interner::global();
+    let result_id = interner.get("Result").unwrap();
 
     group.bench_function("cached_read_by_name", |b| {
         b.iter(|| {
-            let interner = app.world().resource::<Interner>();
             let attrs = app.world().get::<Attributes>(entity).unwrap();
-            black_box(attrs.get_by_name("Result", interner));
+            black_box(attrs.get_by_name("Result", &interner));
         });
     });
 
@@ -770,11 +767,11 @@ pub fn bench_propagation_read_cached(c: &mut Criterion) {
                     .unwrap();
                 app.update();
 
+                let interner = Interner::global();
                 b.iter(|| {
-                    let interner = app.world().resource::<Interner>();
                     for &dep in &deps {
                         let attrs = app.world().get::<Attributes>(dep).unwrap();
-                        black_box(attrs.get_by_name("Buff.value", interner));
+                        black_box(attrs.get_by_name("Buff.value", &interner));
                     }
                 });
             },
@@ -812,11 +809,7 @@ pub fn bench_propagation_read_evaluate(c: &mut Criterion) {
                     .unwrap();
                 app.update();
 
-                let buff_id = app
-                    .world()
-                    .resource::<Interner>()
-                    .get("Buff.value")
-                    .unwrap();
+                let buff_id = Interner::global().get("Buff.value").unwrap();
 
                 b.iter(|| {
                     let deps_inner = deps.clone();
