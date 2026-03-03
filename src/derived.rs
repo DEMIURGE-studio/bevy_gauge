@@ -16,6 +16,7 @@
 //! ```
 
 use bevy::ecs::component::Mutable;
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
@@ -94,7 +95,7 @@ pub trait AttributeDerived: Component<Mutability = Mutable> {
 ///         (self.attack_power_override - current).abs() > f32::EPSILON
 ///     }
 ///
-///     fn write_back(&self, entity: Entity, attributes: &mut AttributesMut) {
+///     fn write_back<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>) {
 ///         attributes.set(entity, "AttackPower.Override", self.attack_power_override);
 ///     }
 /// }
@@ -104,7 +105,7 @@ pub trait WriteBack: Component {
     fn should_write_back(&self, attrs: &Attributes) -> bool;
 
     /// Write this component's values into the attribute system.
-    fn write_back(&self, entity: Entity, attributes: &mut AttributesMut);
+    fn write_back<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>);
 }
 
 // ---------------------------------------------------------------------------
@@ -124,19 +125,16 @@ pub fn update_attribute_derived<T: AttributeDerived>(
     }
 }
 
-/// Generic system that writes back all entities with a `WriteBack` component.
+/// Generic system that writes back all entities with a changed `WriteBack` component.
 ///
-/// Only runs for entities whose [`Attributes`] changed since last tick.
-/// Reads attributes through [`AttributesMut`] with scoped borrows to avoid
-/// a query conflict between `&Attributes` and `AttributesMut`'s internal
-/// `Query<&mut Attributes>`.
+/// Only runs for entities whose `T` component changed since last tick.
+/// The `should_write_back` guard prevents unnecessary attribute writes when the
+/// component was mutably accessed but its values didn't actually change.
 pub fn update_write_back<T: WriteBack>(
-    query: Query<Entity, (With<T>, Changed<Attributes>)>,
-    q_wb: Query<&T>,
+    q_wb: Query<(Entity, &T), Changed<T>>,
     mut attributes: AttributesMut,
 ) {
-    for entity in &query {
-        let Ok(wb) = q_wb.get(entity) else { continue };
+    for (entity, wb) in &q_wb {
         let should = {
             let Some(attrs) = attributes.get_attributes(entity) else {
                 continue;

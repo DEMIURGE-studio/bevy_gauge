@@ -1,3 +1,4 @@
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 
 use crate::attributes_mut::AttributesMut;
@@ -108,7 +109,7 @@ impl ModifierSet {
     /// Literal values are added as flat modifiers. Expression strings are
     /// compiled and added as expression modifiers (compilation errors are
     /// silently ignored — use `try_apply` for error handling).
-    pub fn apply(&self, entity: Entity, attributes: &mut AttributesMut) {
+    pub fn apply<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>) {
         for entry in &self.entries {
             match &entry.value {
                 ModifierValue::Literal(val) => {
@@ -126,10 +127,10 @@ impl ModifierSet {
     }
 
     /// Apply all modifiers, returning errors for any expression compilation failures.
-    pub fn try_apply(
+    pub fn try_apply<F: QueryFilter>(
         &self,
         entity: Entity,
-        attributes: &mut AttributesMut,
+        attributes: &mut AttributesMut<'_, '_, F>,
     ) -> Result<(), crate::expr::CompileError> {
         for entry in &self.entries {
             match &entry.value {
@@ -153,7 +154,7 @@ impl ModifierSet {
     /// This is the inverse of [`apply`](Self::apply). Literal values are removed
     /// as flat modifiers. Expression strings are recompiled and removed as
     /// expression modifiers (compilation errors are silently ignored).
-    pub fn remove(&self, entity: Entity, attributes: &mut AttributesMut) {
+    pub fn remove<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>) {
         let interner = crate::attribute_id::Interner::global();
         for entry in &self.entries {
             match &entry.value {
@@ -176,10 +177,10 @@ impl ModifierSet {
     }
 
     /// Remove all modifiers, returning errors for any expression compilation failures.
-    pub fn try_remove(
+    pub fn try_remove<F: QueryFilter>(
         &self,
         entity: Entity,
-        attributes: &mut AttributesMut,
+        attributes: &mut AttributesMut<'_, '_, F>,
     ) -> Result<(), crate::expr::CompileError> {
         let interner = crate::attribute_id::Interner::global();
         for entry in &self.entries {
@@ -200,6 +201,11 @@ impl ModifierSet {
             }
         }
         Ok(())
+    }
+
+    /// Append all entries from another modifier set into this one.
+    pub fn combine(&mut self, other: &ModifierSet) {
+        self.entries.extend(other.entries.iter().cloned());
     }
 
     /// Number of entries in this set.

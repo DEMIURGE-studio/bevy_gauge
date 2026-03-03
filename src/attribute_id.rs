@@ -22,13 +22,6 @@ pub(crate) fn global_rodeo() -> &'static Arc<ThreadedRodeo> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AttributeId(pub(crate) Spur);
 
-impl AttributeId {
-    /// Create a AttributeId from a raw Spur. Primarily for internal/test use.
-    pub(crate) fn from_spur(spur: Spur) -> Self {
-        Self(spur)
-    }
-}
-
 /// String interner for attribute names.
 ///
 /// All attribute name strings are interned here, converting them to lightweight

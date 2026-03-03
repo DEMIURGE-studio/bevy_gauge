@@ -42,11 +42,12 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     define_tags_impl::define_tags(input)
 }
 
-/// Generate a Bevy component whose fields are bound to attributes.
+/// Derive macro that generates [`AttributeDerived`] and/or [`WriteBack`]
+/// implementations for a Bevy component, binding its fields to attributes.
 ///
-/// Fields marked with `<-` are read from attributes ([`AttributeDerived`]).
-/// Fields marked with `->` are written back to attributes ([`WriteBack`]).
-/// Fields without an arrow are plain struct fields.
+/// Fields annotated with `#[read]` are read from attributes ([`AttributeDerived`]).
+/// Fields annotated with `#[write]` are written back to attributes ([`WriteBack`]).
+/// Fields without an annotation are plain struct fields.
 ///
 /// The macro also emits `inventory::submit!` calls so that the component
 /// is automatically registered with [`AttributesPlugin`] — no manual
@@ -55,25 +56,29 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// # Syntax
 ///
 /// ```ignore
-/// attribute_component! {
-///     #[derive(Debug)]
-///     pub struct Life {
-///         pub max: f32 <- "Life",         // read from "Life" attribute
-///         pub current: f32 -> $,          // write back to "Life.current"
-///         pub label: String,              // plain field, not attribute-bound
-///     }
+/// #[derive(Component, Default, AttributeComponent, Debug)]
+/// pub struct Life {
+///     #[read("Life")]
+///     pub max: f32,              // read from "Life" attribute
+///     #[write]
+///     pub current: f32,          // write back to "Life.current" (auto-path)
+///     pub label: String,         // plain field, not attribute-bound
 /// }
 /// ```
 ///
 /// ## Path resolution
 ///
-/// - `"AttributePath"` — explicit attribute path string
-/// - `$` — auto-path: `"StructName.field_name"` (e.g. `"Life.current"`)
+/// - `#[read("path")]` / `#[write("path")]` — explicit attribute path string
+/// - `#[read]` / `#[write]` (no argument) — auto-path: `"StructName.field_name"`
 ///
 /// [`AttributeDerived`]: bevy_gauge::derived::AttributeDerived
 /// [`WriteBack`]: bevy_gauge::derived::WriteBack
 /// [`AttributesPlugin`]: bevy_gauge::plugin::AttributesPlugin
-#[proc_macro]
-pub fn attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    attribute_component_impl::attribute_component(input)
+#[proc_macro_derive(AttributeComponent, attributes(read, write))]
+pub fn derive_attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match attribute_component_impl::derive(input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }

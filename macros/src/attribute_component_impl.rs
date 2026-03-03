@@ -1,138 +1,17 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Attribute, Ident, LitStr, Token, Type, Visibility, braced};
+use syn::{DeriveInput, Fields, Ident, LitStr, Type};
 
-// ---------------------------------------------------------------------------
-// Parsing structures
-// ---------------------------------------------------------------------------
-
-/// The full macro input.
-struct AttributeComponentInput {
-    attrs: Vec<Attribute>,
-    vis: Visibility,
-    _struct_token: Token![struct],
-    name: Ident,
-    _brace_token: syn::token::Brace,
-    fields: Punctuated<AttributeField, Token![,]>,
-}
-
-/// Direction arrow parsed from the DSL.
 #[derive(Clone, Copy)]
 enum Direction {
-    ReadFrom,  // <-
-    WriteTo,   // ->
+    ReadFrom,
+    WriteTo,
 }
 
-/// A single field in the attribute_component DSL.
-enum AttributeField {
-    /// `name: Type <- "path"` or `name: Type -> "path"`
-    Bound {
-        vis: Visibility,
-        name: Ident,
-        _colon: Token![:],
-        ty: Type,
-        direction: Direction,
-        path: AttributePath,
-    },
-    /// `name: Type` — no direction arrow, plain field.
-    Plain {
-        vis: Visibility,
-        name: Ident,
-        _colon: Token![:],
-        ty: Type,
-    },
-}
-
-/// The attribute path — either an explicit string or `$` (auto-generated).
 enum AttributePath {
-    Explicit(LitStr),
-    Auto, // $
+    Explicit(String),
+    Auto,
 }
-
-// ---------------------------------------------------------------------------
-// Parse implementations
-// ---------------------------------------------------------------------------
-
-impl Parse for AttributeComponentInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let attrs = input.call(Attribute::parse_outer)?;
-        let vis: Visibility = input.parse()?;
-        let struct_token: Token![struct] = input.parse()?;
-        let name: Ident = input.parse()?;
-        let content;
-        let brace_token = braced!(content in input);
-        let fields = content.parse_terminated(AttributeField::parse, Token![,])?;
-
-        Ok(Self {
-            attrs,
-            vis,
-            _struct_token: struct_token,
-            name,
-            _brace_token: brace_token,
-            fields,
-        })
-    }
-}
-
-impl Parse for AttributeField {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let vis: Visibility = input.parse()?;
-        let name: Ident = input.parse()?;
-        let colon: Token![:] = input.parse()?;
-        let ty: Type = input.parse()?;
-
-        // Try to parse a direction arrow
-        if input.peek(Token![<]) && input.peek2(Token![-]) {
-            // <- (read from attributes)
-            let _lt: Token![<] = input.parse()?;
-            let _minus: Token![-] = input.parse()?;
-            let path = parse_attribute_path(input)?;
-            Ok(AttributeField::Bound {
-                vis,
-                name,
-                _colon: colon,
-                ty,
-                direction: Direction::ReadFrom,
-                path,
-            })
-        } else if input.peek(Token![->]) {
-            // -> (write to attributes)
-            let _arrow: Token![->] = input.parse()?;
-            let path = parse_attribute_path(input)?;
-            Ok(AttributeField::Bound {
-                vis,
-                name,
-                _colon: colon,
-                ty,
-                direction: Direction::WriteTo,
-                path,
-            })
-        } else {
-            Ok(AttributeField::Plain {
-                vis,
-                name,
-                _colon: colon,
-                ty,
-            })
-        }
-    }
-}
-
-fn parse_attribute_path(input: ParseStream) -> syn::Result<AttributePath> {
-    if input.peek(Token![$]) {
-        let _: Token![$] = input.parse()?;
-        Ok(AttributePath::Auto)
-    } else {
-        let lit: LitStr = input.parse()?;
-        Ok(AttributePath::Explicit(lit))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Code generation
-// ---------------------------------------------------------------------------
 
 struct BoundField {
     name: Ident,
@@ -142,44 +21,52 @@ struct BoundField {
     path: String,
 }
 
-pub fn attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as AttributeComponentInput);
-    match expand(input) {
-        Ok(ts) => ts.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
-}
-
-fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
-    let struct_name = &input.name;
-    let struct_vis = &input.vis;
-    let struct_attrs = &input.attrs;
+pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
+    let struct_name = &input.ident;
     let struct_name_str = struct_name.to_string();
 
-    // Separate bound and plain fields, collect struct field definitions
-    let mut field_defs = Vec::new();
+    let fields = match &input.data {
+        syn::Data::Struct(data) => &data.fields,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "AttributeComponent can only be derived on structs",
+            ))
+        }
+    };
+
+    let Fields::Named(named) = fields else {
+        return Err(syn::Error::new_spanned(
+            fields,
+            "AttributeComponent requires named fields",
+        ));
+    };
+
     let mut bound_fields: Vec<BoundField> = Vec::new();
 
-    for field in &input.fields {
-        match field {
-            AttributeField::Bound { vis, name, ty, direction, path, .. } => {
-                field_defs.push(quote! { #vis #name: #ty });
+    for field in &named.named {
+        let field_name = field.ident.as_ref().unwrap();
 
-                let resolved_path = match path {
-                    AttributePath::Explicit(lit) => lit.value(),
-                    AttributePath::Auto => format!("{}.{}", struct_name_str, name),
-                };
+        for attr in &field.attrs {
+            let (direction, path) = if attr.path().is_ident("read") {
+                (Direction::ReadFrom, parse_optional_path(attr)?)
+            } else if attr.path().is_ident("write") {
+                (Direction::WriteTo, parse_optional_path(attr)?)
+            } else {
+                continue;
+            };
 
-                bound_fields.push(BoundField {
-                    name: name.clone(),
-                    ty: ty.clone(),
-                    direction: *direction,
-                    path: resolved_path,
-                });
-            }
-            AttributeField::Plain { vis, name, ty, .. } => {
-                field_defs.push(quote! { #vis #name: #ty });
-            }
+            let resolved_path = match path {
+                AttributePath::Explicit(lit) => lit,
+                AttributePath::Auto => format!("{}.{}", struct_name_str, field_name),
+            };
+
+            bound_fields.push(BoundField {
+                name: field_name.clone(),
+                ty: field.ty.clone(),
+                direction,
+                path: resolved_path,
+            });
         }
     }
 
@@ -196,16 +83,6 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
     let has_reads = !read_fields.is_empty();
     let has_writes = !write_fields.is_empty();
 
-    // --- Struct definition ---
-    let struct_def = quote! {
-        #(#struct_attrs)*
-        #[derive(::bevy::prelude::Component, Default)]
-        #struct_vis struct #struct_name {
-            #(#field_defs),*
-        }
-    };
-
-    // --- AttributeDerived impl ---
     let attribute_derived_impl = if has_reads {
         let should_update_checks: Vec<TokenStream> = read_fields.iter().map(|f| {
             let name = &f.name;
@@ -250,7 +127,6 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
         TokenStream::new()
     };
 
-    // --- WriteBack impl ---
     let write_back_impl = if has_writes {
         let should_writeback_checks: Vec<TokenStream> = write_fields.iter().map(|f| {
             let name = &f.name;
@@ -283,10 +159,10 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
                     false
                 }
 
-                fn write_back(
+                fn write_back<F: ::bevy::ecs::query::QueryFilter>(
                     &self,
                     entity: ::bevy::prelude::Entity,
-                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut,
+                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut<'_, '_, F>,
                 ) {
                     #(#writeback_assignments)*
                 }
@@ -296,7 +172,6 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
         TokenStream::new()
     };
 
-    // --- Inventory registration ---
     let inventory_submits = {
         let mut registrations = Vec::new();
 
@@ -330,9 +205,22 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
     };
 
     Ok(quote! {
-        #struct_def
         #attribute_derived_impl
         #write_back_impl
         #inventory_submits
     })
+}
+
+fn parse_optional_path(attr: &syn::Attribute) -> syn::Result<AttributePath> {
+    match &attr.meta {
+        syn::Meta::Path(_) => Ok(AttributePath::Auto),
+        syn::Meta::List(list) => {
+            let lit: LitStr = syn::parse2(list.tokens.clone())?;
+            Ok(AttributePath::Explicit(lit.value()))
+        }
+        syn::Meta::NameValue(_) => Err(syn::Error::new_spanned(
+            attr,
+            "expected `#[read]` or `#[read(\"path\")]`",
+        )),
+    }
 }

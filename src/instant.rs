@@ -22,6 +22,7 @@
 //! apply_instant(&instant, &roles, defender, &mut attributes);
 //! ```
 
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 
 use crate::attribute_id::{global_rodeo, AttributeId};
@@ -142,11 +143,11 @@ pub type RoleMap<'a> = &'a [(&'a str, Entity)];
 /// Roles are registered as temporary source aliases on `target_entity` so
 /// that expressions like `"Strength@attacker"` resolve correctly. Aliases
 /// are cleaned up after evaluation.
-pub fn evaluate_instant(
+pub fn evaluate_instant<F: QueryFilter>(
     instant: &InstantModifierSet,
     roles: RoleMap,
     target_entity: Entity,
-    attributes: &mut AttributesMut,
+    attributes: &mut AttributesMut<'_, '_, F>,
 ) -> Vec<EvaluatedInstantEntry> {
     // Register temporary source aliases for each role
     for &(role_name, role_entity) in roles {
@@ -194,10 +195,10 @@ pub fn evaluate_instant(
 }
 
 /// Apply previously evaluated instant operations to a specific entity.
-pub fn apply_evaluated_instant(
+pub fn apply_evaluated_instant<F: QueryFilter>(
     evaluated: &[EvaluatedInstantEntry],
     target_entity: Entity,
-    attributes: &mut AttributesMut,
+    attributes: &mut AttributesMut<'_, '_, F>,
 ) {
     for entry in evaluated {
         match entry.op {
@@ -220,11 +221,11 @@ pub fn apply_evaluated_instant(
 ///
 /// This is a convenience wrapper around [`evaluate_instant`] +
 /// [`apply_evaluated_instant`].
-pub fn apply_instant(
+pub fn apply_instant<F: QueryFilter>(
     instant: &InstantModifierSet,
     roles: RoleMap,
     target_entity: Entity,
-    attributes: &mut AttributesMut,
+    attributes: &mut AttributesMut<'_, '_, F>,
 ) {
     let evaluated = evaluate_instant(instant, roles, target_entity, attributes);
     apply_evaluated_instant(&evaluated, target_entity, attributes);
@@ -276,10 +277,13 @@ pub fn evaluate_expr_with_roles_ctx(
         .unwrap_or_default();
 
     for (alias_id, attribute_id, cache_key) in expr.source_cache_keys() {
-        let value = role_map
+        let source_entity = role_map
             .iter()
             .find(|(id, _)| *id == alias_id)
-            .and_then(|(_, &e)| q_attrs.get(e).ok())
+            .copied()
+            .map(|(_, e)| e);
+        let value = source_entity
+            .and_then(|e| q_attrs.get(e).ok())
             .map(|attrs| attrs.get(attribute_id))
             .unwrap_or(0.0);
         ctx.set(cache_key, value);

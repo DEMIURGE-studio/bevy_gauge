@@ -378,7 +378,7 @@ for two-phase evaluation if you need the concrete values before applying.
 
 ## Attribute requirements — `AttributeRequirements`
 
-Boolean expressions over attributes that gate attributee-machine transitions, equipment
+Boolean expressions over attributes that gate state-machine transitions, equipment
 prerequisites, ability conditions, etc.
 
 ```rust
@@ -409,28 +409,28 @@ compiled to bytecode on the first `met()` call when the `Interner` is available.
 
 ## Derived components
 
-### `attribute_component!` — the easy way
+### `#[derive(AttributeComponent)]` — the easy way
 
-The `attribute_component!` proc macro generates a Bevy component with automatic
-`AttributeDerived` and/or `WriteBack` implementations:
+The `AttributeComponent` derive macro generates automatic `AttributeDerived`
+and/or `WriteBack` implementations for your component:
 
 ```rust
-attribute_component! {
-    #[derive(Debug)]
-    pub struct Life {
-        pub max: f32 <- "Life",       // read from attribute "Life"
-        pub current: f32 -> $,        // write back to "Life.current"
-    }
+#[derive(Component, Default, Debug, AttributeComponent)]
+pub struct Life {
+    #[read("Life")]
+    pub max: f32,              // read from attribute "Life"
+    #[write]
+    pub current: f32,          // write back to "Life.current"
 }
 ```
 
-- `<-` reads from attributes (`AttributeDerived`)
-- `->` writes back to attributes (`WriteBack`)
-- `$` auto-generates the path from `StructName.field_name`
+- `#[read]` / `#[read("path")]` reads from attributes (`AttributeDerived`)
+- `#[write]` / `#[write("path")]` writes back to attributes (`WriteBack`)
+- No argument auto-generates the path from `StructName.field_name`
 - Explicit string paths are also supported
-- Fields without an arrow are plain struct fields
+- Fields without an annotation are plain struct fields
 
-Components created with `attribute_component!` are **automatically registered** via
+Components with `#[derive(AttributeComponent)]` are **automatically registered** via
 the `inventory` crate — no manual `app.register_*()` calls needed.
 
 ### `AttributeDerived` — manual implementation

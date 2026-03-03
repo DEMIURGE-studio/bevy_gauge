@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -19,13 +20,13 @@ use crate::tags::{TagMask, TagResolver};
 ///
 /// Reading attributes does NOT require this — use `&Attributes` directly.
 #[derive(SystemParam)]
-pub struct AttributesMut<'w, 's> {
-    query: Query<'w, 's, &'static mut Attributes>,
+pub struct AttributesMut<'w, 's, F: QueryFilter + 'static = ()> {
+    query: Query<'w, 's, &'static mut Attributes, F>,
     graph: ResMut<'w, DependencyGraph>,
     tag_resolver: Res<'w, TagResolver>,
 }
 
-impl AttributesMut<'_, '_> {
+impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// Get a clone of the global [`Interner`].
     ///
     /// Cheap (Arc clone). Useful when you need to pass an `&Interner` to APIs

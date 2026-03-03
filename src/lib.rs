@@ -16,6 +16,10 @@ pub mod plugin;
 #[doc(hidden)]
 pub mod macros;
 
+// Re-export proc macros at crate root for reliable resolution in dependents
+pub use bevy_gauge_macros::AttributeComponent;
+pub use bevy_gauge_macros::define_tags;
+
 pub mod prelude {
     pub use crate::attribute_id::{AttributeId, Interner};
     pub use crate::expr::{Expr, Op, CompileError};
@@ -44,6 +48,6 @@ pub mod prelude {
     pub use crate::requires;
     pub use crate::register_derived;
     pub use crate::register_write_back;
-    pub use bevy_gauge_macros::attribute_component;
+    pub use bevy_gauge_macros::AttributeComponent;
     pub use bevy_gauge_macros::define_tags;
 }

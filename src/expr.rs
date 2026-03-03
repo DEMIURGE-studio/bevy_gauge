@@ -193,16 +193,14 @@ enum Token {
     Eof,
 }
 
-struct Tokenizer<'a> {
-    input: &'a str,
+struct Tokenizer {
     chars: Vec<char>,
     pos: usize,
 }
 
-impl<'a> Tokenizer<'a> {
-    fn new(input: &'a str) -> Self {
+impl Tokenizer {
+    fn new(input: &str) -> Self {
         Self {
-            input,
             chars: input.chars().collect(),
             pos: 0,
         }
