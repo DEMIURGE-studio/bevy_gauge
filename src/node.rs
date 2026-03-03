@@ -91,12 +91,8 @@ impl AttributeNode {
 
     /// Evaluate this node: evaluate **all** modifiers (ignoring tags), then reduce.
     pub fn evaluate(&self, context: &AttributeContext) -> f32 {
-        let values: Vec<f32> = self
-            .modifiers
-            .iter()
-            .map(|tm| tm.modifier.evaluate(context))
-            .collect();
-        self.reduce_values(&values)
+        let iter = self.modifiers.iter().map(|tm| tm.modifier.evaluate(context));
+        self.reduce_iter(iter)
     }
 
     /// Evaluate only modifiers whose tags match the given query, then reduce.
@@ -104,28 +100,26 @@ impl AttributeNode {
     /// A modifier matches if its tag is NONE (global) or its tag bits are a
     /// subset of `query`. See [`TagMask::matches_query`].
     pub fn evaluate_tagged(&self, context: &AttributeContext, query: TagMask) -> f32 {
-        let values: Vec<f32> = self
+        let iter = self
             .modifiers
             .iter()
             .filter(|tm| tm.tag.matches_query(query))
-            .map(|tm| tm.modifier.evaluate(context))
-            .collect();
-        self.reduce_values(&values)
+            .map(|tm| tm.modifier.evaluate(context));
+        self.reduce_iter(iter)
     }
 
-    /// Apply the reduce function to a slice of evaluated modifier values.
-    fn reduce_values(&self, values: &[f32]) -> f32 {
-        if values.is_empty() {
-            return match &self.reduce {
-                ReduceFn::Product => 1.0,
-                _ => 0.0,
-            };
-        }
-
+    /// Reduce an iterator of evaluated modifier values using this node's reduce function.
+    ///
+    /// Sum and Product fold directly without allocating. Custom still requires
+    /// collecting into a Vec because its function signature takes `&[f32]`.
+    fn reduce_iter(&self, iter: impl Iterator<Item = f32>) -> f32 {
         match &self.reduce {
-            ReduceFn::Sum => values.iter().sum(),
-            ReduceFn::Product => values.iter().map(|v| 1.0 + v).product(),
-            ReduceFn::Custom(f) => f(values),
+            ReduceFn::Sum => iter.sum(),
+            ReduceFn::Product => iter.map(|v| 1.0 + v).product(),
+            ReduceFn::Custom(f) => {
+                let values: Vec<f32> = iter.collect();
+                if values.is_empty() { 0.0 } else { f(&values) }
+            }
         }
     }
 }

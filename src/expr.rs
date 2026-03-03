@@ -807,18 +807,17 @@ impl Expr {
         &self.dependencies
     }
 
-    /// Get the source cache entries: (alias, attribute, cache_key) triples.
+    /// Iterate over source cache entries: (alias, attribute, cache_key) triples.
     ///
     /// Used by `AttributesMut` to know which composite keys to populate
     /// in the local context when a source alias is set/changed.
-    pub fn source_cache_keys(&self) -> Vec<(AttributeId, AttributeId, AttributeId)> {
+    pub fn source_cache_keys(&self) -> impl Iterator<Item = (AttributeId, AttributeId, AttributeId)> + '_ {
         self.ops
             .iter()
             .filter_map(|op| match op {
                 Op::LoadSource { alias, attribute, cache_key } => Some((*alias, *attribute, *cache_key)),
                 _ => None,
             })
-            .collect()
     }
 
     /// Get the source string this expression was compiled from.

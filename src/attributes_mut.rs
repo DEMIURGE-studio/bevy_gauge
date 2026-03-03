@@ -786,7 +786,6 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                     node.modifiers.iter().filter_map(|tm| match &tm.modifier {
                         Modifier::Expr(expr) => Some(
                             expr.source_cache_keys()
-                                .into_iter()
                                 .filter(|(a, _, _)| *a == alias_id)
                                 .map(|(_, _, ck)| ck)
                         ),
@@ -823,12 +822,18 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                 self.cache_source_values(node.entity, node.attribute);
             }
 
-            if let Ok(mut attrs) = self.query.get_mut(node.entity) {
-                attrs.evaluate_and_cache(node.attribute);
-            }
+            let changed = if let Ok(mut attrs) = self.query.get_mut(node.entity) {
+                let old = attrs.context.get(node.attribute);
+                let new = attrs.evaluate_and_cache(node.attribute);
+                (old - new).abs() > f32::EPSILON
+            } else {
+                false
+            };
 
-            for &dep in self.graph.dependents(node) {
-                stack.push((dep, node.entity));
+            if changed {
+                for &dep in self.graph.dependents(node) {
+                    stack.push((dep, node.entity));
+                }
             }
         }
     }
