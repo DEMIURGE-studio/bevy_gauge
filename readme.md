@@ -1,230 +1,570 @@
-# bevy_gauge
+# bevy_attributes
 
-`bevy_gauge` is a flexible stat and modifier system for the [Bevy game engine](https://bevyengine.org/), designed to manage complex character statistics, buffs, debuffs, and equipment effects with ease.
+An attribute system for [Bevy](https://bevyengine.org/) with expression-based modifiers, tagged filtering, cross-entity dependencies, and automatic propagation.
 
-[![crates.io](https://img.shields.io/crates/v/bevy_gauge.svg)](https://crates.io/crates/bevy_gauge)
-[![docs.rs](https://docs.rs/bevy_gauge/badge.svg)](https://docs.rs/bevy_gauge)
-_(License: MIT OR Apache-2.0)_
+Built for games that need attribute systems beyond simple key-value stores — RPGs with
+derived attributes, ARPGs with PoE-style damage pipelines, or any game where attributes
+depend on other attributes (possibly on other entities) and need to stay in sync.
 
-## Core Features
-
-- **Dynamic Stats:** Define stats like Life, Mana, Strength, etc.
-- **Modifiers:** Add flat bonuses, percentage increases, or complex calculations via expressions.
-- **Expression Engine:** Use mathematical expressions to define how stats are calculated (e.g., `base * (1 + increased) * more`).
-- **Dependencies:** Stats can depend on other stats, even across different entities (Sources).
-- **Tagging:** Apply tags (e.g., "Fire", "Physical", "Sword") to stats and modifiers for fine-grained control over effects.
-- **Caching:** Automatic caching of evaluated stats and smart cache invalidation.
-- **Change Detection:** `StatsProxy` component provides change detection without ownership conflicts.
-- **Derived Components:** Easily create Bevy components whose fields are derived from entity stats, with optional write-back functionality.
-
-## Quick Start
-
-### 1. Add to your `Cargo.toml`
-
-```toml
-[dependencies]
-bevy_gauge = "0.1" # Replace with the latest version
-```
-
-### 2. Add the Plugin and Define Tags
+## Quick start
 
 ```rust
 use bevy::prelude::*;
-use bevy_gauge::prelude::*;
-use bevy_gauge::stat_types::ModType;
-use bevy_gauge_macros::define_tags;
-
-// Define your game's tag system using the macro
-define_tags!{
-    DamageTags,
-    damage_type {
-        elemental { fire, cold, lightning },
-        physical,
-        chaos,
-    },
-    weapon_type {
-        melee { sword, axe },
-        ranged { bow, wand },
-    },
-}
+use bevy_attributes::prelude::*;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(bevy_gauge::plugin) // Essential plugin
-        .add_systems(Startup, (setup_game_config, spawn_player).chain())
-        .add_systems(Update, (apply_buff_system, display_stats_system))
+        .add_plugins(AttributesPlugin)
+        .add_systems(Startup, setup)
         .run();
 }
 
-// Define your game's stat configuration
-fn setup_game_config() {
-    // Core attributes (modifiable)
-    Konfig::register_stat_type("Strength", "Modifiable");
-    Konfig::register_stat_type("Dexterity", "Modifiable");
-    Konfig::register_stat_type("Intelligence", "Modifiable");
-
-    // Complex stats (calculated from expressions)
-    Konfig::register_stat_type("Life", "Complex");
-    Konfig::register_stat_type("Mana", "Complex");
-    Konfig::register_stat_type("Accuracy", "Complex");
-    Konfig::register_stat_type("Evasion", "Complex");
-
-    // Tagged stats (filterable by tags)
-    Konfig::register_stat_type("Damage", "Tagged");
-
-    // Set default formula for complex stats (PoE-style)
-    Konfig::set_total_expression_default("added * (1.0 + increased) * more");
-
-    // Configure "more" modifiers as multiplicative
-    Konfig::register_relationship_type("more", ModType::Mul);
-
-    // Register tag resolver for damage calculations
-    Konfig::register_tag_set("Damage", Box::new(DamageTags));
-}
-
-#[derive(Component)]
-struct Player;
-```
-
-### 3. Spawning an Entity with Stats
-
-```rust
-fn spawn_player(mut commands: Commands) {
+fn setup(mut commands: Commands) {
     commands.spawn((
-        Player,
-        stats! {
-            // Core Attributes
-            "Strength" => 25.0,
-            "Dexterity" => 18.0,
-            "Intelligence" => 33.0,
-
-            // Complex Stats (PoE-style formulas)
-            "Life.added" => [100.0, "Strength / 2.0"], // Base + strength bonus
-            "Life.more" => 0.4, // 40% more life multiplier
-            "Mana.added" => [50.0, "Intelligence / 5.0"], // Base + intelligence bonus
-            "Accuracy.added" => 50.0,
-            "Accuracy.increased" => "Dexterity / 2.0", // Dexterity increases accuracy
-
-            // Tagged Stats (string-based tags)
-            "Damage.added.{MELEE|PHYSICAL}" => 50.0,
-            "Damage.increased.{MELEE|PHYSICAL}" => "Strength / 2.0 / 100.0",
-
-            // Percentage bonuses
-            "Evasion.increased" => "Dexterity / 2.0 / 100.0",
-            "EnergyShield.increased" => "Intelligence / 5.0 / 100.0",
+        attributes! {
+            "Strength"  => 20.0,
+            "Vitality"  => 15.0,
+            "MaxHealth"  => "Vitality * 10.0 + 50.0",
         },
     ));
 }
 ```
 
-### 4. Modifying Stats & Querying
+## Core concepts
+
+### Attributes component
+
+Every entity that participates in the attribute system gets an `Attributes` component.
+It stores the attribute nodes and their cached evaluated values:
 
 ```rust
-fn apply_buff_system(
-    mut stats_mutator: StatsMutator,
-    q_player: Query<Entity, Added<Stats>>,
-) {
-    if let Ok(player_entity) = q_player.single() {
-        // Add modifiers
-        stats_mutator.add_modifier(player_entity, "Strength", 5.0);
-        stats_mutator.add_modifier(player_entity, "Damage.added.{SWORD|PHYSICAL}", 15.0);
-        stats_mutator.add_modifier(player_entity, "Damage.increased.{FIRE|MELEE}", 0.2);
-        stats_mutator.add_modifier(player_entity, "Damage.more.{PHYSICAL}", 0.5);
-    }
-}
+commands.spawn(Attributes::new());
+```
 
-fn display_stats_system(
-    q_player: Query<&Stats, With<Player>>,
-) {
-    if let Ok(stats) = q_player.single() {
-        // Get stats with string-based tags
-        let strength = stats.get("Strength");
-        let life = stats.get("Life");
-        let axe_physical_damage = stats.get("Damage.{AXE|PHYSICAL}");
-        let fire_sword_damage = stats.get("Damage.{FIRE|SWORD}");
+### Reading attributes
 
-        // Cross-entity dependencies
-        let weapon_damage = stats.get("Damage.added@weapon");
+Reading only requires `&Attributes` — no special system param needed:
 
-        println!("Str: {:.1}, Life: {:.1}", strength, life);
-        println!("Axe Physical: {:.2}, Fire Sword: {:.2}", axe_physical_damage, fire_sword_damage);
+```rust
+fn print_health(query: Query<&Attributes>, interner: Res<Interner>) {
+    for attrs in &query {
+        let hp = attrs.get_by_name("MaxHealth", &interner);
+        println!("Health: {hp}");
     }
 }
 ```
 
-### 5. Stat Derived Components
+### Writing attributes — `AttributesMut`
 
-Create Bevy components whose fields are automatically updated from stats:
+All writes go through the `AttributesMut` system parameter. This ensures
+dependency edges are maintained and changes propagate automatically:
 
 ```rust
-stat_component!(
+fn buff_strength(mut attributes: AttributesMut, entity: Entity) {
+    attributes.add_modifier(entity, "Strength", 10.0);
+}
+```
+
+`AttributesMut` is a `SystemParam` that bundles mutable access to the ECS query,
+the interner, the dependency graph, and the tag resolver.
+
+## Defining attributes
+
+### Flat attributes
+
+The simplest form — a attribute with a numeric value. Modifiers are summed:
+
+```rust
+attributes.flat_attribute(entity, "Armor", 50.0);
+attributes.add_modifier(entity, "Armor", 25.0); // now 75
+```
+
+Or at spawn time using the `attributes!` macro:
+
+```rust
+commands.spawn((
+    attributes! {
+        "Strength"  => 50.0,
+        "Dexterity" => 30.0,
+    },
+));
+```
+
+### Expression modifiers
+
+Modifiers can be dynamic expressions that reference other attributes. When a
+referenced attribute changes, dependents re-evaluate automatically:
+
+```rust
+// MaxHealth = Vitality * 10
+attributes.add_expr_modifier(entity, "MaxHealth", "Vitality * 10.0")?;
+
+// Dodge rating scales with dexterity
+attributes.add_expr_modifier(entity, "DodgeChance", "Dexterity / 200.0")?;
+```
+
+The expression language supports:
+
+| Feature | Syntax |
+|---|---|
+| Arithmetic | `+`, `-`, `*`, `/`, unary `-` |
+| Parentheses | `(expr)` |
+| Attribute references | `AttributeName`, `Attribute.Name` |
+| Cross-entity refs | `AttributeName@Alias` |
+| Tag queries | `Attribute{TAG\|TAG}` |
+| Functions | `max(a, b)`, `min(a, b)`, `abs(x)`, `clamp(x, lo, hi)` |
+
+Expressions compile to a compact bytecode VM (stack-based, no heap allocation at
+eval time).
+
+### Reduce functions
+
+Each attribute node has a **reduce function** that controls how its modifiers combine:
+
+| ReduceFn | Behavior | Use case |
+|---|---|---|
+| `Sum` (default) | `mod1 + mod2 + ...` | Flat / added values, % increases |
+| `Product` | `(1+mod1) * (1+mod2) * ...` | Multiplicative "more" / "less" |
+| `Custom(fn)` | User-defined `fn(&[f32]) -> f32` | Anything else |
+
+```rust
+attributes.add_modifier_with_reduce(
+    entity, "DamageMultiplier", 0.2, ReduceFn::Product,
+); // 1.2x
+attributes.add_modifier_with_reduce(
+    entity, "DamageMultiplier", 0.3, ReduceFn::Product,
+); // 1.2 * 1.3 = 1.56x
+```
+
+### Complex attributes
+
+A **complex attribute** is composed of named parts combined by an expression.
+Each part is a separate attribute node that receives modifiers independently:
+
+```rust
+// PoE-style: base * (1 + increased) * more
+attributes.complex_attribute(
+    entity,
+    "Damage",
+    &[
+        ("base",      ReduceFn::Sum),
+        ("increased", ReduceFn::Sum),
+        ("more",      ReduceFn::Product),
+    ],
+    "base * (1 + increased) * more",
+)?;
+
+// Add modifiers to individual parts
+attributes.add_modifier(entity, "Damage.base", 100.0);
+attributes.add_modifier(entity, "Damage.increased", 0.5);  // +50%
+attributes.add_modifier(entity, "Damage.more", 0.2);        // 20% more → 1.2x
+
+// Damage = 100 * 1.5 * 1.2 = 180
+let total = attributes.evaluate(entity, "Damage");
+```
+
+Part names in the expression are short (`base`, `increased`). They are
+automatically qualified to `Damage.base`, `Damage.increased`, etc.
+
+## Tags and filtered evaluation
+
+Tags let you attach metadata to modifiers and then query attributes with a filter.
+This powers systems like PoE-style damage where the same attribute (`Damage.Added`)
+has modifiers for different damage types and delivery methods.
+
+### Defining tags
+
+Tags are single bits in a `u64` bitmask. Register names in the `TagResolver`
+so expressions can use `{TAG}` syntax:
+
+```rust
+const PHYSICAL: TagMask = TagMask::bit(0);
+const FIRE:     TagMask = TagMask::bit(1);
+const MELEE:    TagMask = TagMask::bit(2);
+
+fn register_tags(mut resolver: ResMut<TagResolver>) {
+    resolver.register("PHYSICAL", PHYSICAL);
+    resolver.register("FIRE", FIRE);
+    resolver.register("MELEE", MELEE);
+}
+```
+
+### Tagged modifiers
+
+Attach tags to modifiers. Untagged modifiers (`TagMask::NONE`) are **global** —
+they participate in every query:
+
+```rust
+// 25 physical melee damage
+attributes.add_modifier_tagged(entity, "Damage.Added", 25.0, PHYSICAL | MELEE);
+// 10 fire melee damage
+attributes.add_modifier_tagged(entity, "Damage.Added", 10.0, FIRE | MELEE);
+// +5 generic melee damage (applies to ALL melee queries)
+attributes.add_modifier_tagged(entity, "Damage.Added", 5.0, MELEE);
+```
+
+### Tag matching rule
+
+A modifier participates in a query when **all** of its tag bits are present in
+the query (the modifier's tags are a subset of the query):
+
+```
+Modifier [FIRE]         + Query [FIRE|MELEE] → matches (FIRE ⊆ FIRE|MELEE)
+Modifier [FIRE|RANGED]  + Query [FIRE|MELEE] → no match (MELEE bit missing)
+Modifier [NONE]         + Query [anything]   → always matches (global)
+```
+
+### Tagged evaluation
+
+```rust
+// Only modifiers whose tags ⊆ PHYSICAL|MELEE
+let phys = attributes.evaluate_tagged(entity, "Damage.Added", PHYSICAL | MELEE);
+```
+
+### Tagged attributes (lazy materialization)
+
+A **tagged attribute** combines parts with per-tag-combo expressions — and you
+never have to enumerate combos up front. The system materializes expressions
+lazily on first `evaluate_tagged` call:
+
+```rust
+attributes.tagged_attribute(
+    entity,
+    "Damage",
+    &[("Added", ReduceFn::Sum), ("Increased", ReduceFn::Sum)],
+    "Added * (1 + Increased)",
+)?;
+
+// Add tagged modifiers to the parts
+attributes.add_modifier_tagged(entity, "Damage.Added", 25.0, PHYSICAL | MELEE);
+attributes.add_modifier_tagged(entity, "Damage.Added", 10.0, FIRE | MELEE);
+
+// Query any combo — expression auto-generates on first use
+let phys = attributes.evaluate_tagged(entity, "Damage", PHYSICAL | MELEE);
+let fire = attributes.evaluate_tagged(entity, "Damage", FIRE | MELEE);
+```
+
+When `evaluate_tagged(entity, "Damage", PHYSICAL | MELEE)` is called for the
+first time, the system:
+
+1. Decomposes `PHYSICAL | MELEE` into registered tag names
+2. Qualifies the template: `"Damage.Added{PHYSICAL|MELEE} * (1 + Damage.Increased{PHYSICAL|MELEE})"`
+3. Compiles, registers dependencies, and caches the result
+4. Subsequent calls for the same combo are a no-op
+
+## Dependencies between attributes
+
+When a modifier is an expression referencing another attribute, the dependency graph
+automatically tracks the relationship. Changes propagate recursively:
+
+```rust
+attributes.add_modifier(entity, "Vitality", 20.0);
+attributes.add_expr_modifier(entity, "MaxHealth", "Vitality * 10.0")?;
+attributes.add_expr_modifier(entity, "HealthRegen", "MaxHealth * 0.01")?;
+
+// Changing Vitality propagates: Vitality → MaxHealth → HealthRegen
+attributes.add_modifier(entity, "Vitality", 5.0); // all three update
+```
+
+The dependency graph is global (a `DependencyGraph` resource) and supports:
+- **Local dependencies**: attribute A on the same entity depends on attribute B
+- **Cross-entity dependencies**: attribute A on entity X depends on attribute B on entity Y
+- **Tag query dependencies**: an expression reads a tag-filtered value
+
+Cycles are detected at propagation time and short-circuited.
+
+## Cross-entity dependencies
+
+Attributes on one entity can reference attributes on another through **source aliases**.
+This is how equipment, auras, buffs from other entities, etc. are modeled:
+
+```rust
+// The sword's damage scales with its wielder's Strength
+attributes.add_expr_modifier_tagged(
+    sword, "Damage.Increased", "Strength@Wielder / 200.0", PHYSICAL,
+)?;
+
+// Point the "Wielder" alias at the warrior entity
+attributes.register_source(sword, "Wielder", warrior);
+
+// Sword's Damage.Increased now reads warrior's Strength.
+// Changing warrior's Strength auto-propagates to the sword.
+```
+
+### Swapping sources
+
+Re-pointing an alias automatically rewires all dependency edges and
+re-evaluates affected attributes:
+
+```rust
+// Hand the sword to the mage — one call, everything updates
+attributes.register_source(sword, "Wielder", mage);
+```
+
+### Expression syntax
+
+Cross-entity references use `@Alias` syntax: `"Strength@Wielder"`,
+`"Intelligence@Parent"`, etc.
+
+## Batch operations — `attributes!` and `mod_set!`
+
+### `attributes!` — spawn-time initialization
+
+Creates an `AttributeInitializer` component. When spawned alongside `Attributes`,
+modifiers are automatically applied via an observer:
+
+```rust
+commands.spawn((
+    Attributes::new(),
+    attributes! {
+        "Strength"     => 50.0,
+        "Intelligence" => 10.0,
+        "MaxHealth"    => "Strength * 2.0 + 100.0",
+        "Damage.Added" [FIRE | MELEE] => 10.0,   // tagged
+    },
+));
+```
+
+Values can be `f32` literals (become flat modifiers) or string literals
+(compiled as expression modifiers at apply time).
+
+### `mod_set!` — runtime buffs/debuffs
+
+Creates a `ModifierSet` that can be applied to any entity:
+
+```rust
+let fire_enchant = mod_set! {
+    "Damage.Added" [FIRE | MELEE] => 20.0,
+    "Damage.Increased" [FIRE]     => 0.15,
+};
+fire_enchant.apply(sword, &mut attributes);
+```
+
+## One-shot mutations — `InstantModifierSet`
+
+`InstantModifierSet` applies attribute changes **once** without leaving persistent
+modifiers on the attribute nodes. Used for ability effects, damage application,
+and attributeus effect manipulation.
+
+### `instant!` macro
+
+```rust
+let effects = instant! {
+    "Scorch" += 1.0,                       // add to current value
+    "Doom" += "-Doom@target",              // expression with role reference
+    "ProjectileLife" -= 1.0,               // subtract from current value
+    "Health" = "Strength@attacker * 0.5",  // overwrite value
+};
+```
+
+Operators: `=` (set), `+=` (add), `-=` (subtract). Values can be `f32`
+literals or expression strings.
+
+### Role-based evaluation
+
+Expressions can reference attributes on **role entities** via `@role` syntax.
+Roles are temporary source aliases registered for the duration of evaluation:
+
+```rust
+let roles: &[(&str, Entity)] = &[
+    ("attacker", attacker_entity),
+    ("defender", defender_entity),
+];
+
+apply_instant(&effects, roles, defender_entity, &mut attributes);
+```
+
+The `evaluate_instant` / `apply_evaluated_instant` functions are also available
+for two-phase evaluation if you need the concrete values before applying.
+
+## Attribute requirements — `AttributeRequirements`
+
+Boolean expressions over attributes that gate attributee-machine transitions, equipment
+prerequisites, ability conditions, etc.
+
+```rust
+// As a component:
+commands.spawn(requires! { "ProjectileLife <= 0" });
+
+// Multiple requirements (all must be satisfied):
+commands.spawn(requires! { "Strength >= 10", "Level >= 5" });
+```
+
+Check requirements in a system:
+
+```rust
+fn check_requirements(
+    mut query: Query<&mut AttributeRequirements>,
+    attrs_query: Query<&Attributes>,
+    interner: Res<Interner>,
+) {
+    // ...
+    if requirements.met(&attrs, &interner) {
+        // all requirements satisfied
+    }
+}
+```
+
+Requirements are compiled lazily — source strings are stored at spawn time and
+compiled to bytecode on the first `met()` call when the `Interner` is available.
+
+## Derived components
+
+### `attribute_component!` — the easy way
+
+The `attribute_component!` proc macro generates a Bevy component with automatic
+`AttributeDerived` and/or `WriteBack` implementations:
+
+```rust
+attribute_component! {
     #[derive(Debug)]
-    pub struct Health {
-        max: f32 <- "Life",           // Derived from Life stat
-        current: f32 -> $,            // Writes Health.current value to "$[Health.current]" stat
-    }
-);
-```
-
-```rust
-// Write-back support for mutable state
-impl WriteBack for Health {
-    fn write_back(&self, target_entity: Entity, stats_mutator: &mut StatsMutator) {
-        let _ = stats_mutator.set(target_entity, "$[Health.current]", self.current);
+    pub struct Life {
+        pub max: f32 <- "Life",       // read from attribute "Life"
+        pub current: f32 -> $,        // write back to "Life.current"
     }
 }
 ```
 
+- `<-` reads from attributes (`AttributeDerived`)
+- `->` writes back to attributes (`WriteBack`)
+- `$` auto-generates the path from `StructName.field_name`
+- Explicit string paths are also supported
+- Fields without an arrow are plain struct fields
+
+Components created with `attribute_component!` are **automatically registered** via
+the `inventory` crate — no manual `app.register_*()` calls needed.
+
+### `AttributeDerived` — manual implementation
+
+A component whose fields are updated from attribute values whenever `Attributes`
+changes. Implement the trait and register it:
+
 ```rust
-stat_component!(
-    #[derive(Clone, Debug)]
-    pub struct PlayerStats {
-        damage: f32 <- "Damage.{PHYSICAL}",
-        accuracy: f32 <- "Accuracy",
-        life: f32 <- "Life",
+#[derive(Component, Default)]
+struct PlayerHealth {
+    current: f32,
+    max: f32,
+}
 
-        // Non-stat fields maintain their values independently
-        pub name: String,
-        pub level: u32,
-
-        // Optional stats (0.0 becomes None)
-        bonus: Option<f32> <- "BonusStat",
+impl AttributeDerived for PlayerHealth {
+    fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool {
+        let max = attrs.get_by_name("MaxHealth", interner);
+        (self.max - max).abs() > f32::EPSILON
     }
-);
+
+    fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner) {
+        self.max = attrs.get_by_name("MaxHealth", interner);
+    }
+}
 ```
 
-Components update automatically when their underlying stats change.
+Register with the `inventory` auto-registration macro (runs at link time, no
+manual app setup needed):
 
-## Change Detection with StatsProxy
+```rust
+register_derived!(PlayerHealth);
+```
 
-`bevy_gauge` includes a `StatsProxy` component that automatically tracks when an entity's `Stats` have been modified. This provides efficient change detection without the ownership conflicts that would occur if you tried to use `Changed<Stats>` directly in systems that also use `StatsMutator`. This is mostly used internally, but it is there if you need it.
+Or register manually in your plugin if you prefer:
 
-For more examples, see the `examples/` directory in the repository.
+```rust
+app.register_attribute_derived::<PlayerHealth>();
+```
 
-## Contributing
+The update system runs in `PostUpdate` (in the `AttributeDerivedSet`) and only
+processes entities whose `Attributes` changed since the last tick.
 
-Contributions are welcome! Feel free to open an issue or submit a pull request.
+### `WriteBack` — write to attributes
 
-## Version Compatibility
+A component whose fields are written back into the attribute system when
+`Attributes` changes. Useful for input-driven attributes:
 
-| bevy_gauge_macros | bevy_gauge | bevy |
-| ----------------- | ---------- | ---- |
-| 0.3.0             | 0.3.0      | 0.18 |
-| 0.2.0             | 0.2.2      | 0.17 |
-| 0.1.1             | 0.1.1      | 0.16 |
+```rust
+impl WriteBack for CombatInput {
+    fn should_write_back(&self, attrs: &Attributes, interner: &Interner) -> bool {
+        let current = attrs.get_by_name("AttackPower", interner);
+        (self.attack_power - current).abs() > f32::EPSILON
+    }
 
-_Note: This crate is in active development. APIs may change between versions._
+    fn write_back(&self, entity: Entity, attributes: &mut AttributesMut) {
+        attributes.set(entity, "AttackPower", self.attack_power);
+    }
+}
+
+register_write_back!(CombatInput);
+```
+
+Write-back systems run in `PostUpdate` before `AttributeDerived` systems, so
+written values are available for derived reads in the same frame.
+
+## API reference
+
+### `AttributesMut` methods
+
+| Method | Description |
+|---|---|
+| `add_modifier(entity, attribute, value)` | Add an untagged flat or expr modifier |
+| `add_modifier_tagged(entity, attribute, value, tag)` | Add a tagged modifier |
+| `add_expr_modifier(entity, attribute, expr_str)` | Add an expression modifier |
+| `add_expr_modifier_tagged(entity, attribute, expr_str, tag)` | Add a tagged expression modifier |
+| `add_modifier_with_reduce(entity, attribute, value, reduce)` | Add modifier with custom reduce fn |
+| `remove_modifier(entity, attribute, modifier)` | Remove a modifier by value |
+| `set(entity, attribute, value)` | Shorthand for adding a flat modifier |
+| `set_base(entity, attribute, value)` | Replace all untagged flat modifiers with a single value |
+| `get_attributes(entity)` | Read-only access to an entity's `Attributes` |
+| `flat_attribute(entity, name, value)` | Create a simple flat attribute |
+| `complex_attribute(entity, name, parts, expr)` | Create a multi-part attribute with expression |
+| `tagged_attribute(entity, name, parts, expr)` | Create a lazily-materialized tagged attribute |
+| `evaluate(entity, attribute)` | Force re-evaluate and return value |
+| `evaluate_tagged(entity, attribute, tag)` | Evaluate with tag filter |
+| `register_source(entity, alias, source)` | Link a cross-entity source alias |
+| `unregister_source(entity, alias)` | Remove a source alias |
+
+### Reading
+
+| Method | On | Description |
+|---|---|---|
+| `get(id)` | `&Attributes` | Read cached value by `AttributeId` |
+| `get_by_name(name, interner)` | `&Attributes` | Read by string name |
+| `get_tagged(id, mask)` | `&Attributes` | Read cached tag-filtered value |
+| `get_tagged_by_name(name, mask, interner)` | `&Attributes` | Read tag-filtered by name |
+
+### Macros
+
+| Macro | Description |
+|---|---|
+| `attributes! { ... }` | Spawn-time attribute initialization (creates `AttributeInitializer`) |
+| `mod_set! { ... }` | Create a `ModifierSet` for runtime application |
+| `instant! { ... }` | Create an `InstantModifierSet` for one-shot mutations |
+| `requires! { ... }` | Create a `AttributeRequirements` component |
+| `attribute_component! { ... }` | Generate a component with `AttributeDerived`/`WriteBack` impls |
+| `register_derived!(T)` | Auto-register a `AttributeDerived` component via `inventory` |
+| `register_write_back!(T)` | Auto-register a `WriteBack` component via `inventory` |
+
+## Architecture notes
+
+- **String interning**: attribute names are interned via `lasso` into `AttributeId` (`u32`).
+  Lookups are integer comparisons, not string hashes.
+- **Bytecode VM**: expressions compile to a stack-based bytecode with a 16-slot
+  fixed stack. No heap allocation during evaluation.
+- **No unsafe**: the crate contains no `unsafe` code.
+- **Dependency propagation**: recursive DFS with cycle detection. Cross-entity
+  source values are cached locally before evaluation.
+- **Tag queries**: materialized as synthetic attribute nodes in the dependency graph.
+  Once created, they propagate like any other attribute.
+
+## Examples
+
+Run the PoE-style tagged damage example:
+
+```
+cargo run --example rpg_combat
+```
+
+This demonstrates tagged attributes, cross-entity references, source swapping,
+tag query specificity, and batch modifiers.
 
 ## License
 
-`bevy_gauge` is dual-licensed under either
-
-- MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-  at your option.
-
-## TODO
-
-- Implement string interning
-- Automatic stat tag string resolution (currently works in `stats!` macro but not in `stats.get()` calls)
+MIT OR Apache-2.0

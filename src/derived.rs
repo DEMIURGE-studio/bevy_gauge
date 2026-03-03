@@ -1,0 +1,263 @@
+//! Derived component support — automatically sync Bevy components with attributes.
+//!
+//! # Overview
+//!
+//! [`AttributeDerived`] components are **read-from** — their fields are updated
+//! from attribute values every frame (when changed).
+//!
+//! [`WriteBack`] components are **write-to** — their fields are written
+//! back to the attribute system every frame (when changed).
+//!
+//! Register derived components via the [`AttributesAppExt`] extension trait:
+//!
+//! ```ignore
+//! app.register_attribute_derived::<PlayerHealth>()
+//!     .register_write_back::<PlayerInput>();
+//! ```
+
+use bevy::ecs::component::Mutable;
+use bevy::prelude::*;
+
+use crate::attributes::Attributes;
+use crate::attributes_mut::AttributesMut;
+use crate::attribute_id::Interner;
+
+// ---------------------------------------------------------------------------
+// System sets
+// ---------------------------------------------------------------------------
+
+/// System set for systems that write [`WriteBack`] component values into attributes.
+/// Runs in `PostUpdate`, before [`AttributeDerivedSet`].
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WriteBackSet;
+
+/// System set for systems that update [`AttributeDerived`] components from attributes.
+/// Runs in `PostUpdate`, after [`WriteBackSet`].
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AttributeDerivedSet;
+
+// ---------------------------------------------------------------------------
+// Traits
+// ---------------------------------------------------------------------------
+
+/// A component whose fields are populated from attribute values.
+///
+/// Implement this trait (manually or via a future `attribute_component!` macro)
+/// to have a component automatically updated when its source attributes change.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Component, Default)]
+/// struct PlayerHealth {
+///     current: f32,
+///     max: f32,
+/// }
+///
+/// impl AttributeDerived for PlayerHealth {
+///     fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool {
+///         let max = attrs.get_by_name("Health.Max", interner);
+///         let current = attrs.get_by_name("Health.Current", interner);
+///         (self.max - max).abs() > f32::EPSILON
+///             || (self.current - current).abs() > f32::EPSILON
+///     }
+///
+///     fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner) {
+///         self.max = attrs.get_by_name("Health.Max", interner);
+///         self.current = attrs.get_by_name("Health.Current", interner);
+///     }
+/// }
+/// ```
+pub trait AttributeDerived: Component<Mutability = Mutable> {
+    /// Check whether this component's fields are out of date relative to attributes.
+    fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool;
+
+    /// Update this component's fields from attribute values.
+    fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner);
+}
+
+/// A component whose fields are written back into the attribute system.
+///
+/// Implement this for components that are authoritative over certain attribute
+/// values — e.g., an input component that controls a attribute directly.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Component)]
+/// struct CombatInput {
+///     attack_power_override: f32,
+/// }
+///
+/// impl WriteBack for CombatInput {
+///     fn should_write_back(&self, attrs: &Attributes, interner: &Interner) -> bool {
+///         let current = attrs.get_by_name("AttackPower.Override", interner);
+///         (self.attack_power_override - current).abs() > f32::EPSILON
+///     }
+///
+///     fn write_back(&self, entity: Entity, attributes: &mut AttributesMut) {
+///         attributes.set(entity, "AttackPower.Override", self.attack_power_override);
+///     }
+/// }
+/// ```
+pub trait WriteBack: Component {
+    /// Check whether this component has values that differ from current attributes.
+    fn should_write_back(&self, attrs: &Attributes, interner: &Interner) -> bool;
+
+    /// Write this component's values into the attribute system.
+    fn write_back(&self, entity: Entity, attributes: &mut AttributesMut);
+}
+
+// ---------------------------------------------------------------------------
+// Generic systems
+// ---------------------------------------------------------------------------
+
+/// Generic system that updates all entities with a `AttributeDerived` component.
+///
+/// Only runs for entities whose [`Attributes`] changed since last tick.
+pub fn update_attribute_derived<T: AttributeDerived>(
+    mut query: Query<(&mut T, &Attributes), Changed<Attributes>>,
+    interner: Res<Interner>,
+) {
+    for (mut derived, attrs) in &mut query {
+        if derived.should_update(attrs, &interner) {
+            derived.update_from_attributes(attrs, &interner);
+        }
+    }
+}
+
+/// Generic system that writes back all entities with a `WriteBack` component.
+///
+/// Only runs for entities whose [`Attributes`] changed since last tick.
+/// Reads attributes through [`AttributesMut`] with scoped borrows to avoid
+/// a query conflict between `&Attributes` and `AttributesMut`'s internal
+/// `Query<&mut Attributes>`.
+pub fn update_write_back<T: WriteBack>(
+    query: Query<Entity, (With<T>, Changed<Attributes>)>,
+    q_wb: Query<&T>,
+    interner: Res<Interner>,
+    mut attributes: AttributesMut,
+) {
+    for entity in &query {
+        let Ok(wb) = q_wb.get(entity) else { continue };
+        let should = {
+            let Some(attrs) = attributes.get_attributes(entity) else {
+                continue;
+            };
+            wb.should_write_back(attrs, &interner)
+        };
+        if should {
+            wb.write_back(entity, &mut attributes);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// App extension trait
+// ---------------------------------------------------------------------------
+
+/// Extension trait for registering derived attribute components with the Bevy app.
+pub trait AttributesAppExt {
+    /// Register a [`AttributeDerived`] component.
+    ///
+    /// Adds a system to [`PostUpdate`] (in the [`AttributeDerivedSet`]) that
+    /// updates all entities with this component from their attribute values.
+    fn register_attribute_derived<T: AttributeDerived>(&mut self) -> &mut Self;
+
+    /// Register a [`WriteBack`] component.
+    ///
+    /// Adds a system to [`PostUpdate`] (in the [`WriteBackSet`]) that
+    /// writes this component's values back into the attribute system.
+    fn register_write_back<T: WriteBack>(&mut self) -> &mut Self;
+}
+
+impl AttributesAppExt for App {
+    fn register_attribute_derived<T: AttributeDerived>(&mut self) -> &mut Self {
+        self.add_systems(
+            PostUpdate,
+            update_attribute_derived::<T>.in_set(AttributeDerivedSet),
+        )
+    }
+
+    fn register_write_back<T: WriteBack>(&mut self) -> &mut Self {
+        self.add_systems(
+            PostUpdate,
+            update_write_back::<T>.in_set(WriteBackSet),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inventory-based auto-registration
+// ---------------------------------------------------------------------------
+
+/// A registration entry for the [`inventory`] crate.
+///
+/// Each entry carries a function pointer that registers systems with the
+/// Bevy [`App`]. Entries are submitted at link time (via `inventory::submit!`)
+/// and collected in [`AttributesPlugin::build`](crate::plugin::AttributesPlugin).
+///
+/// The [`attribute_component!`] macro emits these automatically. For manual
+/// implementations, use the [`register_derived!`] or [`register_write_back!`]
+/// convenience macros:
+///
+/// ```ignore
+/// register_derived!(MyCustomDerived);
+/// register_write_back!(MyCustomWriteBack);
+/// ```
+pub struct AttributeRegistration {
+    pub register_fn: fn(&mut App),
+}
+
+inventory::collect!(AttributeRegistration);
+
+/// Register a [`AttributeDerived`] component via the `inventory` auto-registration
+/// system. Place this at module scope.
+///
+/// ```ignore
+/// register_derived!(PlayerHealth);
+/// ```
+#[macro_export]
+macro_rules! register_derived {
+    ($ty:ty) => {
+        $crate::_register_attribute!(attribute_derived, $ty);
+    };
+}
+
+/// Register a [`WriteBack`] component via the `inventory` auto-registration
+/// system. Place this at module scope.
+///
+/// ```ignore
+/// register_write_back!(PlayerInput);
+/// ```
+#[macro_export]
+macro_rules! register_write_back {
+    ($ty:ty) => {
+        $crate::_register_attribute!(write_back, $ty);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _register_attribute {
+    (attribute_derived, $ty:ty) => {
+        ::inventory::submit! {
+            $crate::derived::AttributeRegistration {
+                register_fn: |app| {
+                    use $crate::derived::AttributesAppExt;
+                    app.register_attribute_derived::<$ty>();
+                }
+            }
+        }
+    };
+    (write_back, $ty:ty) => {
+        ::inventory::submit! {
+            $crate::derived::AttributeRegistration {
+                register_fn: |app| {
+                    use $crate::derived::AttributesAppExt;
+                    app.register_write_back::<$ty>();
+                }
+            }
+        }
+    };
+}

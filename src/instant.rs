@@ -1,164 +1,276 @@
+//! One-shot attribute mutations — Set, Add, or Subtract a value once without
+//! leaving a persistent modifier on the attribute node.
+//!
+//! [`InstantModifierSet`] is a portable collection of [`InstantEntry`] ops
+//! that can be attached as a component (e.g., on ability effect entities) and
+//! applied when triggered.
+//!
+//! # Role-based evaluation
+//!
+//! Expression values can reference attributes on **role entities** via the `@role`
+//! syntax (e.g., `"Strength@attacker * 0.5"`). Roles are temporary source
+//! aliases registered on the target entity for the duration of evaluation.
+//!
+//! # Example
+//!
+//! ```ignore
+//! let instant = instant! {
+//!     "Scorch" += 1.0,
+//!     "Doom" += "-Doom@target",
+//!     "ProjectileLife" -= 1.0,
+//! };
+//! apply_instant(&instant, &roles, defender, &mut attributes);
+//! ```
+
 use bevy::prelude::*;
-use evalexpr::{ContextWithMutableVariables, Value};
 
-use crate::prelude::{Expression, ModifierType, StatPath, Stats, StatsMutator};
+use crate::attributes_mut::AttributesMut;
+use crate::modifier_set::ModifierValue;
 
-/// A compiled collection of one-shot operations to apply directly to stats.
-///
-/// This is a data container; evaluation and application are performed elsewhere.
-#[derive(Component, Clone, Debug, Default)]
-pub struct InstantModifierSet(pub(crate) Vec<InstantEntry>);
+// ---------------------------------------------------------------------------
+// Core types
+// ---------------------------------------------------------------------------
 
+/// The operation to perform on a attribute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstantOp {
+    /// Overwrite the attribute's value.
+    Set,
+    /// Add to the attribute's current value.
+    Add,
+    /// Subtract from the attribute's current value.
+    Sub,
+}
+
+/// A single entry in an [`InstantModifierSet`].
 #[derive(Clone, Debug)]
 pub struct InstantEntry {
-    pub path: String,
+    /// The attribute path (e.g., `"Damage.base"`, `"Scorch"`).
+    pub attribute: String,
+    /// Which operation to perform.
     pub op: InstantOp,
-    pub value: ModifierType,
+    /// The value — either a literal f32 or an expression source string that
+    /// is compiled at apply time.
+    pub value: ModifierValue,
 }
 
-#[derive(Clone, Debug)]
-pub enum InstantOp { Set, Add, Sub }
+/// A portable collection of one-shot attribute operations.
+///
+/// Unlike [`ModifierSet`](crate::modifier_set::ModifierSet), which adds
+/// persistent modifiers to attribute nodes, `InstantModifierSet` applies its
+/// operations once and does not leave any modifiers behind.
+///
+/// Build one with the [`instant!`](crate::instant!) macro or the builder
+/// methods, then apply it via [`apply_instant`].
+#[derive(Component, Clone, Debug, Default)]
+pub struct InstantModifierSet {
+    pub(crate) entries: Vec<InstantEntry>,
+}
 
 impl InstantModifierSet {
-    pub fn add_set<V: Into<ModifierType>>(&mut self, path: &str, value: V) {
-        self.0.push(InstantEntry { path: path.to_string(), op: InstantOp::Set, value: value.into() });
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn add_add<V: Into<ModifierType>>(&mut self, path: &str, value: V) {
-        self.0.push(InstantEntry { path: path.to_string(), op: InstantOp::Add, value: value.into() });
+    /// Add a **Set** operation (overwrites the attribute value).
+    pub fn add_set(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+        self.entries.push(InstantEntry {
+            attribute: attribute.to_string(),
+            op: InstantOp::Set,
+            value: value.into(),
+        });
     }
 
-    pub fn add_sub<V: Into<ModifierType>>(&mut self, path: &str, value: V) {
-        self.0.push(InstantEntry { path: path.to_string(), op: InstantOp::Sub, value: value.into() });
+    /// Add an **Add** operation (adds to the current attribute value).
+    pub fn add_add(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+        self.entries.push(InstantEntry {
+            attribute: attribute.to_string(),
+            op: InstantOp::Add,
+            value: value.into(),
+        });
+    }
+
+    /// Add a **Sub** operation (subtracts from the current attribute value).
+    pub fn add_sub(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+        self.entries.push(InstantEntry {
+            attribute: attribute.to_string(),
+            op: InstantOp::Sub,
+            value: value.into(),
+        });
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
-// ------- Role-based expression evaluation helpers -------
+// ---------------------------------------------------------------------------
+// Evaluated entries
+// ---------------------------------------------------------------------------
 
-pub type RoleMap<'a> = &'a [(&'a str, Entity)];
-
-fn resolve_identifier_value(
-    identifier: &str,
-    roles: RoleMap,
-    q_stats: &Query<&Stats>,
-    default_role: &str,
-) -> f32 {
-    let path = StatPath::parse(identifier);
-    let role_key = path.target().unwrap_or(default_role);
-    let stat_name = path.name();
-
-    let Some((_, entity)) = roles.iter().find(|(k, _)| *k == role_key) else { return 0.0 };
-    q_stats.get(*entity).unwrap().get(stat_name)
-}
-
-/// Evaluate with role-based stats and optional extra constants supplied via context.
-/// Use the context for pipeline-stage values like \"initialHit\".
-pub fn evaluate_expression_with_roles_ctx(
-    expr: &Expression,
-    roles: RoleMap,
-    q_stats: &Query<&Stats>,
-    default_role: &str,
-    context: Option<&[(&str, f32)]>,
-) -> f32 {
-    let mut ctx = evalexpr::HashMapContext::new();
-
-    // Populate identifiers from stats
-    for var in expr.compiled.iter_identifiers() {
-        let value = resolve_identifier_value(var, roles, q_stats, default_role) as f64;
-        let _ = ctx.set_value(var.to_string(), Value::Float(value));
-    }
-
-    // Overlay explicit context last (takes precedence if keys collide)
-    if let Some(pairs) = context {
-        for (k, v) in pairs {
-            let _ = ctx.set_value((*k).to_string(), Value::Float(*v as f64));
-        }
-    }
-
-    expr.evaluate(&ctx)
-}
-
-/// Back-compat helper without extra context.
-pub fn evaluate_expression_with_roles(
-    expr: &Expression,
-    roles: RoleMap,
-    q_stats: &Query<&Stats>,
-    default_role: &str,
-) -> f32 {
-    evaluate_expression_with_roles_ctx(expr, roles, q_stats, default_role, None)
-}
-
-// ------- Instant evaluation and application -------
-
+/// An [`InstantEntry`] after expression evaluation — holds a concrete f32.
 #[derive(Clone, Debug)]
 pub struct EvaluatedInstantEntry {
-    pub path: String,
+    pub attribute: String,
     pub op: InstantOp,
     pub value: f32,
 }
 
-/// Evaluate an `Instant` into concrete numeric operations using a role-aware context.
-/// Returns a snapshot of entries that can be applied without further evaluation.
-pub fn evaluate_instant_values(
+// ---------------------------------------------------------------------------
+// Role map
+// ---------------------------------------------------------------------------
+
+/// A slice of `(role_name, entity)` pairs used during role-based evaluation.
+///
+/// Example: `&[("attacker", attacker_entity), ("defender", defender_entity)]`
+pub type RoleMap<'a> = &'a [(&'a str, Entity)];
+
+// ---------------------------------------------------------------------------
+// Evaluation & application
+// ---------------------------------------------------------------------------
+
+/// Evaluate all entries in an [`InstantModifierSet`] into concrete f32 values.
+///
+/// Roles are registered as temporary source aliases on `target_entity` so
+/// that expressions like `"Strength@attacker"` resolve correctly. Aliases
+/// are cleaned up after evaluation.
+pub fn evaluate_instant(
     instant: &InstantModifierSet,
     roles: RoleMap,
-    sm: &mut StatsMutator,
-    default_role: &str,
+    target_entity: Entity,
+    attributes: &mut AttributesMut,
 ) -> Vec<EvaluatedInstantEntry> {
-    let mut out: Vec<EvaluatedInstantEntry> = Vec::with_capacity(instant.0.len());
+    // Register temporary source aliases for each role
+    for &(role_name, role_entity) in roles {
+        attributes.register_source(target_entity, role_name, role_entity);
+    }
 
-    for entry in instant.0.iter() {
+    let mut out = Vec::with_capacity(instant.entries.len());
+
+    for entry in &instant.entries {
         let value = match &entry.value {
-            ModifierType::Literal(v) => *v,
-            ModifierType::Expression(expr) => {
-                sm.with_stats_query(|q_stats| {
-                    evaluate_expression_with_roles(expr, roles, &q_stats, default_role)
-                })
+            ModifierValue::Literal(v) => *v,
+            ModifierValue::ExprSource(src) => {
+                let expr = crate::expr::Expr::compile_with_tags(
+                    src,
+                    attributes.interner(),
+                    Some(attributes.tag_resolver()),
+                );
+                match expr {
+                    Ok(compiled) => {
+                        // Evaluate against the target entity's context
+                        match attributes.get_attributes(target_entity) {
+                            Some(attrs) => compiled.evaluate(&attrs.context),
+                            None => 0.0,
+                        }
+                    }
+                    Err(_) => 0.0,
+                }
             }
         };
 
         out.push(EvaluatedInstantEntry {
-            path: entry.path.clone(),
+            attribute: entry.attribute.clone(),
             op: entry.op.clone(),
             value,
         });
     }
 
+    // Clean up temporary aliases
+    for &(role_name, _) in roles {
+        attributes.unregister_source(target_entity, role_name);
+    }
+
     out
 }
 
-/// Apply previously evaluated instant operations to a specific entity via `StatsMutator`.
-/// Set overwrites the stat at `path`; Add/Sub read the current value and then set the new value.
-pub fn apply_evaluated_instant_to_entity(
+/// Apply previously evaluated instant operations to a specific entity.
+pub fn apply_evaluated_instant(
     evaluated: &[EvaluatedInstantEntry],
-    sm: &mut crate::prelude::StatsMutator,
     target_entity: Entity,
+    attributes: &mut AttributesMut,
 ) {
-    for op in evaluated.iter() {
-        match op.op {
+    for entry in evaluated {
+        match entry.op {
             InstantOp::Set => {
-                sm.set(target_entity, &op.path, op.value);
+                attributes.set_base(target_entity, &entry.attribute, entry.value);
             }
             InstantOp::Add => {
-                let current = sm.get(target_entity, &op.path);
-                sm.set(target_entity, &op.path, current + op.value);
+                let current = attributes.evaluate(target_entity, &entry.attribute);
+                attributes.set_base(target_entity, &entry.attribute, current + entry.value);
             }
             InstantOp::Sub => {
-                let current = sm.get(target_entity, &op.path);
-                sm.set(target_entity, &op.path, current - op.value);
+                let current = attributes.evaluate(target_entity, &entry.attribute);
+                attributes.set_base(target_entity, &entry.attribute, current - entry.value);
             }
         }
     }
 }
 
-/// Convenience helper to evaluate and immediately apply an `Instant` for a single target entity.
+/// Evaluate and immediately apply an [`InstantModifierSet`] to a target entity.
+///
+/// This is a convenience wrapper around [`evaluate_instant`] +
+/// [`apply_evaluated_instant`].
 pub fn apply_instant(
     instant: &InstantModifierSet,
     roles: RoleMap,
-    default_role: &str,
-    sm: &mut crate::prelude::StatsMutator,
     target_entity: Entity,
+    attributes: &mut AttributesMut,
 ) {
-    let evaluated = evaluate_instant_values(instant, roles, sm, default_role);
-    apply_evaluated_instant_to_entity(&evaluated, sm, target_entity);
+    let evaluated = evaluate_instant(instant, roles, target_entity, attributes);
+    apply_evaluated_instant(&evaluated, target_entity, attributes);
+}
+
+// ---------------------------------------------------------------------------
+// instant! macro
+// ---------------------------------------------------------------------------
+
+/// Create an [`InstantModifierSet`] from a declarative list of operations.
+///
+/// # Syntax
+///
+/// ```ignore
+/// instant! {
+///     "AttributeName" = value,    // Set
+///     "AttributeName" += value,   // Add
+///     "AttributeName" -= value,   // Sub
+/// }
+/// ```
+///
+/// - **`value`** can be an `f32` literal or a string expression
+///   (e.g., `"-Doom@target"`).
+///
+/// # Example
+///
+/// ```ignore
+/// let effects = instant! {
+///     "Scorch" += 1.0,
+///     "Doom" += "-Doom@target",
+///     "ProjectileLife" -= 1.0,
+///     "Health" = "Strength@attacker * 0.5",
+/// };
+/// ```
+#[macro_export]
+macro_rules! instant {
+    { $( $attribute:literal $op:tt $value:expr ),* $(,)? } => {{
+        let mut _set = $crate::instant::InstantModifierSet::new();
+        $(
+            $crate::instant!(@entry _set, $attribute, $op, $value);
+        )*
+        _set
+    }};
+
+    (@entry $set:ident, $attribute:literal, +=, $value:expr) => {
+        $set.add_add($attribute, $value);
+    };
+    (@entry $set:ident, $attribute:literal, -=, $value:expr) => {
+        $set.add_sub($attribute, $value);
+    };
+    (@entry $set:ident, $attribute:literal, =, $value:expr) => {
+        $set.add_set($attribute, $value);
+    };
 }

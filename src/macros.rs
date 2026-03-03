@@ -1,57 +1,99 @@
+/// Create an [`AttributeInitializer`](crate::modifier_set::AttributeInitializer) component
+/// from a set of attribute definitions.
+///
+/// Spawn this alongside [`Attributes`](crate::attributes::Attributes) to
+/// have the modifiers automatically applied on spawn.
+///
+/// # Syntax
+///
+/// ```ignore
+/// attributes! {
+///     "AttributeName" => value,                         // untagged
+///     "AttributeName" [TAG_EXPR] => value,              // tagged
+/// }
+/// ```
+///
+/// - **`value`** can be an `f32` literal (becomes a flat modifier) or a
+///   `&str` / string literal (becomes an expression modifier compiled at
+///   apply time).
+/// - **`TAG_EXPR`** is any Rust expression that evaluates to a [`TagMask`].
+///   Typically `FIRE | MELEE` or `DamageTags::PHYSICAL`.
+///
+/// # Example
+///
+/// ```ignore
+/// use bevy_attributes::prelude::*;
+///
+/// const FIRE: TagMask = TagMask::bit(0);
+/// const MELEE: TagMask = TagMask::bit(2);
+///
+/// commands.spawn((
+///     Attributes::new(),
+///     attributes! {
+///         "Strength" => 50.0,
+///         "Damage.Added" [FIRE | MELEE] => 10.0,
+///         "Health" => "Strength * 2.0",
+///     },
+/// ));
+/// ```
 #[macro_export]
-macro_rules! simple_generic_stat {
-    ($struct_name:ident, $ty:ty) => {
-        impl StatDerived for $struct_name<$ty> {
-            fn from_stats(stats: &bevy_gauge::prelude::Stats) -> Self {
-                let mut s = Self::default();
-                s.update_from_stats(stats);
-                s
-            }
-
-            fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">")) != self.0
-            }
-
-            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
-                self.0 = stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">"));
-            }
-
-            fn is_valid(stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats
-                    .get(concat!(stringify!($struct_name), "<", stringify!($ty), ">")) != 0.0
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! simple_stat {
-    ($struct_name:ident) => {
-        impl bevy_gauge::prelude::StatDerived for $struct_name {
-            fn should_update(&self, stats: &bevy_gauge::prelude::Stats) -> bool {
-                stats
-                    .get(stringify!($struct_name)) != self.0
-            }
-
-            fn update_from_stats(&mut self, stats: &bevy_gauge::prelude::Stats) {
-                self.0 = stats
-                    .get(stringify!($struct_name));
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! requires {
-    ( $( $key:expr ),* $(,)? ) => {{
-        // Ensure that you bring the required traits into scope.
-        use bevy_gauge::prelude::*;
-        let mut vals = Vec::new();
+macro_rules! attributes {
+    { $( $attribute:literal $( [ $tag:expr ] )? => $value:expr ),* $(,)? } => {{
+        let mut _set = $crate::modifier_set::ModifierSet::new();
         $(
-            vals.push($key.into());
+            $crate::attributes!(@entry _set, $attribute $(, $tag )?, $value);
         )*
-        StatRequirements(vals)
+        $crate::modifier_set::AttributeInitializer::new(_set)
     }};
+
+    // Internal: entry with tag
+    (@entry $set:ident, $attribute:literal, $tag:expr, $value:expr) => {
+        $set.add_tagged($attribute, $value, $tag);
+    };
+
+    // Internal: entry without tag
+    (@entry $set:ident, $attribute:literal, $value:expr) => {
+        $set.add($attribute, $value);
+    };
+}
+
+/// Create a [`ModifierSet`](crate::modifier_set::ModifierSet) from a set
+/// of attribute definitions.
+///
+/// Unlike [`attributes!`], this returns a bare `ModifierSet` instead of an
+/// `AttributeInitializer` component. Useful for applying modifiers to existing
+/// entities or building sets dynamically.
+///
+/// # Syntax
+///
+/// Same as [`attributes!`].
+///
+/// # Example
+///
+/// ```ignore
+/// let buff = mod_set! {
+///     "Damage.Increased" => 0.25,
+///     "AttackSpeed" => 0.1,
+/// };
+/// buff.apply(entity, &mut attributes);
+/// ```
+#[macro_export]
+macro_rules! mod_set {
+    { $( $attribute:literal $( [ $tag:expr ] )? => $value:expr ),* $(,)? } => {{
+        let mut _set = $crate::modifier_set::ModifierSet::new();
+        $(
+            $crate::mod_set!(@entry _set, $attribute $(, $tag )?, $value);
+        )*
+        _set
+    }};
+
+    // Internal: entry with tag
+    (@entry $set:ident, $attribute:literal, $tag:expr, $value:expr) => {
+        $set.add_tagged($attribute, $value, $tag);
+    };
+
+    // Internal: entry without tag
+    (@entry $set:ident, $attribute:literal, $value:expr) => {
+        $set.add($attribute, $value);
+    };
 }
