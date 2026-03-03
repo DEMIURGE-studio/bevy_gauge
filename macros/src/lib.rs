@@ -1,4 +1,46 @@
 mod attribute_component_impl;
+mod define_tags_impl;
+
+/// Declare a unit struct with [`TagMask`] associated constants for a tag
+/// hierarchy, plus a `register(&mut TagResolver)` method that registers every
+/// tag name with the resolver.
+///
+/// # Syntax
+///
+/// ```ignore
+/// define_tags! {
+///     DamageTags,
+///     damage_type {
+///         elemental { fire, cold, lightning },
+///         physical,
+///         chaos,
+///     },
+///     weapon_type {
+///         melee { sword, axe },
+///         ranged { bow, wand },
+///     },
+/// }
+/// ```
+///
+/// This generates:
+///
+/// ```ignore
+/// pub struct DamageTags;
+/// impl DamageTags {
+///     pub const FIRE: TagMask = TagMask::bit(0);
+///     // ...
+///     pub const ELEMENTAL: TagMask = TagMask::new(Self::FIRE.0 | Self::COLD.0 | Self::LIGHTNING.0);
+///     // ...
+///     pub fn register(resolver: &mut TagResolver) { /* ... */ }
+/// }
+/// ```
+///
+/// [`TagMask`]: bevy_gauge::tags::TagMask
+/// [`TagResolver`]: bevy_gauge::tags::TagResolver
+#[proc_macro]
+pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    define_tags_impl::define_tags(input)
+}
 
 /// Generate a Bevy component whose fields are bound to attributes.
 ///

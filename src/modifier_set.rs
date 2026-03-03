@@ -148,6 +148,60 @@ impl ModifierSet {
         Ok(())
     }
 
+    /// Remove all modifiers in this set from an entity via `AttributesMut`.
+    ///
+    /// This is the inverse of [`apply`](Self::apply). Literal values are removed
+    /// as flat modifiers. Expression strings are recompiled and removed as
+    /// expression modifiers (compilation errors are silently ignored).
+    pub fn remove(&self, entity: Entity, attributes: &mut AttributesMut) {
+        let interner = crate::attribute_id::Interner::global();
+        for entry in &self.entries {
+            match &entry.value {
+                ModifierValue::Literal(val) => {
+                    let modifier = crate::modifier::Modifier::Flat(*val);
+                    attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
+                }
+                ModifierValue::ExprSource(src) => {
+                    if let Ok(expr) = crate::expr::Expr::compile_with_tags(
+                        src,
+                        &interner,
+                        Some(attributes.tag_resolver()),
+                    ) {
+                        let modifier = crate::modifier::Modifier::Expr(expr);
+                        attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remove all modifiers, returning errors for any expression compilation failures.
+    pub fn try_remove(
+        &self,
+        entity: Entity,
+        attributes: &mut AttributesMut,
+    ) -> Result<(), crate::expr::CompileError> {
+        let interner = crate::attribute_id::Interner::global();
+        for entry in &self.entries {
+            match &entry.value {
+                ModifierValue::Literal(val) => {
+                    let modifier = crate::modifier::Modifier::Flat(*val);
+                    attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
+                }
+                ModifierValue::ExprSource(src) => {
+                    let expr = crate::expr::Expr::compile_with_tags(
+                        src,
+                        &interner,
+                        Some(attributes.tag_resolver()),
+                    )?;
+                    let modifier = crate::modifier::Modifier::Expr(expr);
+                    attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Number of entries in this set.
     pub fn len(&self) -> usize {
         self.entries.len()

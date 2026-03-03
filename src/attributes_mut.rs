@@ -552,6 +552,97 @@ impl AttributesMut<'_, '_> {
     }
 
     // -----------------------------------------------------------------------
+    // Ad-hoc expression evaluation with role-entity mappings
+    // -----------------------------------------------------------------------
+
+    /// Evaluate a compiled expression with temporary role-entity source aliases.
+    ///
+    /// Each `(role_name, entity)` pair is registered as a cross-entity source
+    /// on `target_entity` so that `Attribute@role` references in the expression
+    /// resolve correctly. Sources are cleaned up after evaluation.
+    ///
+    /// `target_entity` is the entity whose attribute context is used for local
+    /// `Op::Load` references (e.g., bare `Strength` with no `@alias`).
+    pub fn evaluate_expr_with_roles(
+        &mut self,
+        expr: &Expr,
+        target_entity: Entity,
+        roles: &[(&str, Entity)],
+    ) -> f32 {
+        self.evaluate_expr_with_roles_ctx(expr, target_entity, roles, None)
+    }
+
+    /// Like [`evaluate_expr_with_roles`](Self::evaluate_expr_with_roles) but
+    /// also injects extra `(name, value)` pairs into the target entity's
+    /// context before evaluation (e.g., `"initialHit"` for the damage pipeline).
+    /// Injected values are removed after evaluation.
+    pub fn evaluate_expr_with_roles_ctx(
+        &mut self,
+        expr: &Expr,
+        target_entity: Entity,
+        roles: &[(&str, Entity)],
+        extra: Option<&[(&str, f32)]>,
+    ) -> f32 {
+        // 1. Register temporary source aliases
+        for &(alias, source_entity) in roles {
+            self.register_source(target_entity, alias, source_entity);
+        }
+
+        // 2. Manually cache source values for this expression's LoadSource
+        //    opcodes (register_source only caches for deps already registered
+        //    on permanent modifiers — ad-hoc expressions need explicit caching).
+        for (alias_id, attribute_id, cache_key) in expr.source_cache_keys() {
+            let source_entity = self.graph.resolve_alias(target_entity, alias_id);
+            let value = source_entity
+                .and_then(|se| self.query.get(se).ok())
+                .map(|attrs| attrs.get(attribute_id))
+                .unwrap_or(0.0);
+
+            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
+                attrs.context.set(cache_key, value);
+            }
+        }
+
+        // 3. Inject extra context values
+        let extra_ids: Vec<(AttributeId, f32)> = extra
+            .into_iter()
+            .flat_map(|pairs| pairs.iter())
+            .map(|&(name, val)| (self.intern(name), val))
+            .collect();
+
+        if !extra_ids.is_empty() {
+            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
+                for &(id, value) in &extra_ids {
+                    attrs.context.set(id, value);
+                }
+            }
+        }
+
+        // 4. Evaluate
+        let result = if let Ok(attrs) = self.query.get(target_entity) {
+            expr.evaluate(&attrs.context)
+        } else {
+            0.0
+        };
+
+        // 5. Clean up extra context values
+        if !extra_ids.is_empty() {
+            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
+                for &(id, _) in &extra_ids {
+                    attrs.context.remove(id);
+                }
+            }
+        }
+
+        // 6. Clean up temporary aliases
+        for &(alias, _) in roles {
+            self.unregister_source(target_entity, alias);
+        }
+
+        result
+    }
+
+    // -----------------------------------------------------------------------
     // Internal: lazy template materialization
     // -----------------------------------------------------------------------
 

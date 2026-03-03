@@ -34,6 +34,7 @@ pub mod prelude {
     pub use crate::instant::{
         InstantModifierSet, InstantOp, InstantEntry, EvaluatedInstantEntry,
         apply_instant, evaluate_instant, apply_evaluated_instant,
+        evaluate_expr_with_roles, evaluate_expr_with_roles_ctx,
     };
     pub use crate::requirements::AttributeRequirements;
     pub use crate::plugin::AttributesPlugin;
@@ -44,4 +45,5 @@ pub mod prelude {
     pub use crate::register_derived;
     pub use crate::register_write_back;
     pub use bevy_gauge_macros::attribute_component;
+    pub use bevy_gauge_macros::define_tags;
 }

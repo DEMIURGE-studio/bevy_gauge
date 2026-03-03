@@ -24,7 +24,11 @@
 
 use bevy::prelude::*;
 
+use crate::attribute_id::{global_rodeo, AttributeId};
+use crate::attributes::Attributes;
 use crate::attributes_mut::AttributesMut;
+use crate::context::AttributeContext;
+use crate::expr::Expr;
 use crate::modifier_set::ModifierValue;
 
 // ---------------------------------------------------------------------------
@@ -224,6 +228,71 @@ pub fn apply_instant(
 ) {
     let evaluated = evaluate_instant(instant, roles, target_entity, attributes);
     apply_evaluated_instant(&evaluated, target_entity, attributes);
+}
+
+// ---------------------------------------------------------------------------
+// Read-only expression evaluation with roles
+// ---------------------------------------------------------------------------
+
+/// Evaluate an expression against role-entity mappings without mutation.
+///
+/// Builds a **temporary** evaluation context by cloning the target entity's
+/// cached values and populating any `@role` source references from the
+/// corresponding role entities.  No dependency-graph or entity-component
+/// state is modified — this is purely read-only.
+///
+/// Use this instead of [`AttributesMut::evaluate_expr_with_roles`] when the
+/// system only needs to *read* attribute values (e.g. hit/damage resolution).
+pub fn evaluate_expr_with_roles(
+    expr: &Expr,
+    target_entity: Entity,
+    roles: &[(&str, Entity)],
+    q_attrs: &Query<&Attributes>,
+) -> f32 {
+    evaluate_expr_with_roles_ctx(expr, target_entity, roles, q_attrs, None)
+}
+
+/// Like [`evaluate_expr_with_roles`] but injects additional ad-hoc `(name,
+/// value)` pairs into the evaluation context (e.g. `("initialHit", 42.0)`).
+pub fn evaluate_expr_with_roles_ctx(
+    expr: &Expr,
+    target_entity: Entity,
+    roles: &[(&str, Entity)],
+    q_attrs: &Query<&Attributes>,
+    extra: Option<&[(&str, f32)]>,
+) -> f32 {
+    let rodeo = global_rodeo();
+
+    let role_map: Vec<(AttributeId, Entity)> = roles
+        .iter()
+        .filter_map(|&(name, entity)| {
+            rodeo.get(name).map(|spur| (AttributeId(spur), entity))
+        })
+        .collect();
+
+    let mut ctx: AttributeContext = q_attrs
+        .get(target_entity)
+        .map(|a| a.context.clone())
+        .unwrap_or_default();
+
+    for (alias_id, attribute_id, cache_key) in expr.source_cache_keys() {
+        let value = role_map
+            .iter()
+            .find(|(id, _)| *id == alias_id)
+            .and_then(|(_, &e)| q_attrs.get(e).ok())
+            .map(|attrs| attrs.get(attribute_id))
+            .unwrap_or(0.0);
+        ctx.set(cache_key, value);
+    }
+
+    if let Some(extras) = extra {
+        for &(name, val) in extras {
+            let spur = rodeo.get_or_intern(name);
+            ctx.set(AttributeId(spur), val);
+        }
+    }
+
+    expr.evaluate(&ctx)
 }
 
 // ---------------------------------------------------------------------------
