@@ -1,18 +1,18 @@
 //! Boolean attribute requirements — expressions evaluated against an entity's
-//! [`Attributes`] that gate attributee-machine transitions, equipment prerequisites,
+//! [`Attributes`] that gate state-machine transitions, equipment prerequisites,
 //! ability conditions, etc.
 //!
 //! # Example
 //!
 //! ```ignore
-//! // As a component on a attributee-machine edge:
+//! // As a component on a state-machine edge:
 //! commands.spawn((
 //!     requires! { "ProjectileLife <= 0" },
 //!     // ...
 //! ));
 //!
 //! // Checking requirements in a system:
-//! if attribute_requirements.met(&attrs, &interner) {
+//! if attribute_requirements.met(&attrs) {
 //!     // all requirements satisfied
 //! }
 //! ```
@@ -29,8 +29,8 @@ use crate::expr::Expr;
 
 /// A single boolean requirement over attributes.
 ///
-/// The expression is compiled lazily on first [`met`](Self::met) call because
-/// compilation requires an [`Interner`] which is not available at spawn time.
+/// The expression is compiled lazily on first [`met`](Self::met) call using
+/// the global [`Interner`].
 #[derive(Clone, Debug)]
 pub struct AttributeRequirement {
     source: String,
@@ -50,14 +50,15 @@ impl AttributeRequirement {
 
     /// Check whether this requirement is satisfied against the given attributes.
     ///
-    /// The expression is compiled on first call and cached for subsequent
-    /// evaluations. Returns `true` if the expression evaluates to a non-zero
-    /// value (truthy).
-    pub fn met(&mut self, attrs: &Attributes, interner: &Interner) -> bool {
+    /// The expression is compiled on first call (using the global interner)
+    /// and cached for subsequent evaluations. Returns `true` if the expression
+    /// evaluates to a non-zero value (truthy).
+    pub fn met(&mut self, attrs: &Attributes) -> bool {
         let expr = match &self.compiled {
             Some(expr) => expr,
             None => {
-                match Expr::compile(&self.source, interner) {
+                let interner = Interner::global();
+                match Expr::compile(&self.source, &interner) {
                     Ok(expr) => {
                         self.compiled = Some(expr);
                         self.compiled.as_ref().unwrap()
@@ -112,8 +113,8 @@ impl AttributeRequirements {
     /// Check whether **all** requirements are satisfied.
     ///
     /// Returns `true` if the list is empty (vacuous truth).
-    pub fn met(&mut self, attrs: &Attributes, interner: &Interner) -> bool {
-        self.0.iter_mut().all(|req| req.met(attrs, interner))
+    pub fn met(&mut self, attrs: &Attributes) -> bool {
+        self.0.iter_mut().all(|req| req.met(attrs))
     }
 
     pub fn len(&self) -> usize {
@@ -169,6 +170,13 @@ mod tests {
     use crate::modifier::Modifier;
     use crate::node::ReduceFn;
 
+    fn test_interner() -> Interner {
+        // First call creates and sets the global; subsequent calls are no-ops.
+        let i = Interner::new();
+        i.set_global();
+        Interner::global()
+    }
+
     fn make_attrs(interner: &Interner, attributes: &[(&str, f32)]) -> Attributes {
         let mut attrs = Attributes::new();
         for &(name, value) in attributes {
@@ -182,50 +190,49 @@ mod tests {
 
     #[test]
     fn single_requirement_met() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0)]);
         let mut req = AttributeRequirement::new("Strength >= 10");
-        assert!(req.met(&attrs, &interner));
+        assert!(req.met(&attrs));
     }
 
     #[test]
     fn single_requirement_not_met() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 5.0)]);
         let mut req = AttributeRequirement::new("Strength >= 10");
-        assert!(!req.met(&attrs, &interner));
+        assert!(!req.met(&attrs));
     }
 
     #[test]
     fn requirements_all_met() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 10.0)]);
         let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
-        assert!(reqs.met(&attrs, &interner));
+        assert!(reqs.met(&attrs));
     }
 
     #[test]
     fn requirements_partial_met() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 3.0)]);
         let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
-        assert!(!reqs.met(&attrs, &interner));
+        assert!(!reqs.met(&attrs));
     }
 
     #[test]
     fn empty_requirements_are_met() {
-        let interner = Interner::new();
         let attrs = Attributes::new();
         let mut reqs = AttributeRequirements::new();
-        assert!(reqs.met(&attrs, &interner));
+        assert!(reqs.met(&attrs));
     }
 
     #[test]
     fn le_zero_check() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let attrs = make_attrs(&interner, &[("ProjectileLife", 0.0)]);
         let mut req = AttributeRequirement::new("ProjectileLife <= 0");
-        assert!(req.met(&attrs, &interner));
+        assert!(req.met(&attrs));
     }
 
     #[test]

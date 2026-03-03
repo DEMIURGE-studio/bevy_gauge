@@ -212,7 +212,7 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
             let path = &f.path;
             quote! {
                 {
-                    let _val = attrs.get_by_name(#path, interner);
+                    let _val = attrs.value(#path);
                     if (self.#name - _val).abs() > f32::EPSILON {
                         return true;
                     }
@@ -224,16 +224,15 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
             let name = &f.name;
             let path = &f.path;
             quote! {
-                self.#name = attrs.get_by_name(#path, interner);
+                self.#name = attrs.value(#path);
             }
         }).collect();
 
         quote! {
-            impl ::bevy_attributes::derived::AttributeDerived for #struct_name {
+            impl ::bevy_gauge::derived::AttributeDerived for #struct_name {
                 fn should_update(
                     &self,
-                    attrs: &::bevy_attributes::attributes::Attributes,
-                    interner: &::bevy_attributes::attribute_id::Interner,
+                    attrs: &::bevy_gauge::attributes::Attributes,
                 ) -> bool {
                     #(#should_update_checks)*
                     false
@@ -241,8 +240,7 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
 
                 fn update_from_attributes(
                     &mut self,
-                    attrs: &::bevy_attributes::attributes::Attributes,
-                    interner: &::bevy_attributes::attribute_id::Interner,
+                    attrs: &::bevy_gauge::attributes::Attributes,
                 ) {
                     #(#update_assignments)*
                 }
@@ -259,7 +257,7 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
             let path = &f.path;
             quote! {
                 {
-                    let _val = attrs.get_by_name(#path, interner);
+                    let _val = attrs.value(#path);
                     if (self.#name - _val).abs() > f32::EPSILON {
                         return true;
                     }
@@ -276,11 +274,10 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
         }).collect();
 
         quote! {
-            impl ::bevy_attributes::derived::WriteBack for #struct_name {
+            impl ::bevy_gauge::derived::WriteBack for #struct_name {
                 fn should_write_back(
                     &self,
-                    attrs: &::bevy_attributes::attributes::Attributes,
-                    interner: &::bevy_attributes::attribute_id::Interner,
+                    attrs: &::bevy_gauge::attributes::Attributes,
                 ) -> bool {
                     #(#should_writeback_checks)*
                     false
@@ -289,7 +286,7 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
                 fn write_back(
                     &self,
                     entity: ::bevy::prelude::Entity,
-                    attributes: &mut ::bevy_attributes::attributes_mut::AttributesMut,
+                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut,
                 ) {
                     #(#writeback_assignments)*
                 }
@@ -306,9 +303,9 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
         if has_reads {
             registrations.push(quote! {
                 ::inventory::submit! {
-                    ::bevy_attributes::derived::AttributeRegistration {
+                    ::bevy_gauge::derived::AttributeRegistration {
                         register_fn: |app| {
-                            use ::bevy_attributes::derived::AttributesAppExt;
+                            use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_attribute_derived::<#struct_name>();
                         }
                     }
@@ -319,9 +316,9 @@ fn expand(input: AttributeComponentInput) -> syn::Result<TokenStream> {
         if has_writes {
             registrations.push(quote! {
                 ::inventory::submit! {
-                    ::bevy_attributes::derived::AttributeRegistration {
+                    ::bevy_gauge::derived::AttributeRegistration {
                         register_fn: |app| {
-                            use ::bevy_attributes::derived::AttributesAppExt;
+                            use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_write_back::<#struct_name>();
                         }
                     }

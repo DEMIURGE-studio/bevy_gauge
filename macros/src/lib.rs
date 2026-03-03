@@ -28,9 +28,9 @@ mod attribute_component_impl;
 /// - `"AttributePath"` — explicit attribute path string
 /// - `$` — auto-path: `"StructName.field_name"` (e.g. `"Life.current"`)
 ///
-/// [`AttributeDerived`]: bevy_attributes::derived::AttributeDerived
-/// [`WriteBack`]: bevy_attributes::derived::WriteBack
-/// [`AttributesPlugin`]: bevy_attributes::plugin::AttributesPlugin
+/// [`AttributeDerived`]: bevy_gauge::derived::AttributeDerived
+/// [`WriteBack`]: bevy_gauge::derived::WriteBack
+/// [`AttributesPlugin`]: bevy_gauge::plugin::AttributesPlugin
 #[proc_macro]
 pub fn attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     attribute_component_impl::attribute_component(input)

@@ -155,9 +155,10 @@ pub fn evaluate_instant(
         let value = match &entry.value {
             ModifierValue::Literal(v) => *v,
             ModifierValue::ExprSource(src) => {
+                let interner = attributes.interner();
                 let expr = crate::expr::Expr::compile_with_tags(
                     src,
-                    attributes.interner(),
+                    &interner,
                     Some(attributes.tag_resolver()),
                 );
                 match expr {

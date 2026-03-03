@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::context::AttributeContext;
 use crate::node::{ReduceFn, AttributeNode};
-use crate::attribute_id::{Interner, AttributeId};
+use crate::attribute_id::{global_rodeo, Interner, AttributeId};
 use crate::tags::TagMask;
 
 /// Template for lazy materialization of tagged complex attributes.
@@ -76,7 +76,33 @@ impl Attributes {
         self.context.get(id)
     }
 
-    /// Read a attribute by string name. Requires interner access for name resolution.
+    /// Read a attribute by string name using the global interner.
+    ///
+    /// Requires [`AttributesPlugin`](crate::plugin::AttributesPlugin) to have
+    /// been added. Panics otherwise.
+    pub fn value(&self, name: &str) -> f32 {
+        if let Some(spur) = global_rodeo().get(name) {
+            self.context.get(AttributeId(spur))
+        } else {
+            0.0
+        }
+    }
+
+    /// Read a tagged attribute query by string name using the global interner.
+    ///
+    /// Requires [`AttributesPlugin`](crate::plugin::AttributesPlugin) to have
+    /// been added. Panics otherwise.
+    pub fn value_tagged(&self, name: &str, mask: TagMask) -> f32 {
+        if let Some(spur) = global_rodeo().get(name) {
+            self.get_tagged(AttributeId(spur), mask)
+        } else {
+            0.0
+        }
+    }
+
+    /// Read a attribute by string name. Requires explicit interner access.
+    ///
+    /// Prefer [`value`](Self::value) for simpler usage.
     pub fn get_by_name(&self, name: &str, interner: &Interner) -> f32 {
         if let Some(id) = interner.get(name) {
             self.context.get(id)
@@ -104,6 +130,8 @@ impl Attributes {
     }
 
     /// Read a tagged attribute query by string name and tag mask.
+    ///
+    /// Prefer [`value_tagged`](Self::value_tagged) for simpler usage.
     pub fn get_tagged_by_name(&self, name: &str, mask: TagMask, interner: &Interner) -> f32 {
         if let Some(id) = interner.get(name) {
             self.get_tagged(id, mask)

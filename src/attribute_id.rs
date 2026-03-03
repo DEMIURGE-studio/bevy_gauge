@@ -1,5 +1,18 @@
-use bevy::prelude::*;
+use std::sync::{Arc, OnceLock};
+
 use lasso::{Spur, ThreadedRodeo};
+
+static GLOBAL_RODEO: OnceLock<Arc<ThreadedRodeo>> = OnceLock::new();
+
+/// Access the global interner rodeo.
+///
+/// Panics if [`AttributesPlugin`](crate::plugin::AttributesPlugin) has not
+/// been added to the app yet.
+pub(crate) fn global_rodeo() -> &'static Arc<ThreadedRodeo> {
+    GLOBAL_RODEO
+        .get()
+        .expect("Global interner not initialized — add AttributesPlugin first")
+}
 
 /// A lightweight handle to an interned attribute name.
 ///
@@ -16,22 +29,45 @@ impl AttributeId {
     }
 }
 
-/// Bevy Resource that manages string interning for attribute names.
+/// String interner for attribute names.
 ///
 /// All attribute name strings are interned here, converting them to lightweight
 /// `AttributeId` handles. This eliminates heap string allocations and makes
 /// comparisons O(1).
-#[derive(Resource)]
+///
+/// At runtime, [`AttributesPlugin`](crate::plugin::AttributesPlugin) initializes
+/// a single global `Interner` accessible via [`Interner::global()`]. Unit tests
+/// can create isolated instances via [`Interner::new()`].
+#[derive(Clone)]
 pub struct Interner {
-    rodeo: ThreadedRodeo,
+    rodeo: Arc<ThreadedRodeo>,
 }
 
 impl Interner {
     /// Create a new empty interner.
     pub fn new() -> Self {
         Self {
-            rodeo: ThreadedRodeo::default(),
+            rodeo: Arc::new(ThreadedRodeo::default()),
         }
+    }
+
+    /// Get the global `Interner`.
+    ///
+    /// Panics if [`AttributesPlugin`](crate::plugin::AttributesPlugin) has not
+    /// been added yet.
+    pub fn global() -> Self {
+        Self {
+            rodeo: Arc::clone(global_rodeo()),
+        }
+    }
+
+    /// Publish this interner's rodeo to the global static so that
+    /// [`Attributes::value`](crate::attributes::Attributes::value) can
+    /// resolve names without an explicit `Res<Interner>`.
+    ///
+    /// Called automatically by [`AttributesPlugin`](crate::plugin::AttributesPlugin).
+    pub fn set_global(&self) {
+        let _ = GLOBAL_RODEO.set(Arc::clone(&self.rodeo));
     }
 
     /// Intern a string, returning its `AttributeId`. If the string was already

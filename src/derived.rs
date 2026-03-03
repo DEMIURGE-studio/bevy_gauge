@@ -20,7 +20,6 @@ use bevy::prelude::*;
 
 use crate::attributes::Attributes;
 use crate::attributes_mut::AttributesMut;
-use crate::attribute_id::Interner;
 
 // ---------------------------------------------------------------------------
 // System sets
@@ -42,8 +41,8 @@ pub struct AttributeDerivedSet;
 
 /// A component whose fields are populated from attribute values.
 ///
-/// Implement this trait (manually or via a future `attribute_component!` macro)
-/// to have a component automatically updated when its source attributes change.
+/// Implement this trait (manually or via `attribute_component!`) to have a
+/// component automatically updated when its source attributes change.
 ///
 /// # Example
 ///
@@ -55,25 +54,25 @@ pub struct AttributeDerivedSet;
 /// }
 ///
 /// impl AttributeDerived for PlayerHealth {
-///     fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool {
-///         let max = attrs.get_by_name("Health.Max", interner);
-///         let current = attrs.get_by_name("Health.Current", interner);
+///     fn should_update(&self, attrs: &Attributes) -> bool {
+///         let max = attrs.value("Health.Max");
+///         let current = attrs.value("Health.Current");
 ///         (self.max - max).abs() > f32::EPSILON
 ///             || (self.current - current).abs() > f32::EPSILON
 ///     }
 ///
-///     fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner) {
-///         self.max = attrs.get_by_name("Health.Max", interner);
-///         self.current = attrs.get_by_name("Health.Current", interner);
+///     fn update_from_attributes(&mut self, attrs: &Attributes) {
+///         self.max = attrs.value("Health.Max");
+///         self.current = attrs.value("Health.Current");
 ///     }
 /// }
 /// ```
 pub trait AttributeDerived: Component<Mutability = Mutable> {
     /// Check whether this component's fields are out of date relative to attributes.
-    fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool;
+    fn should_update(&self, attrs: &Attributes) -> bool;
 
     /// Update this component's fields from attribute values.
-    fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner);
+    fn update_from_attributes(&mut self, attrs: &Attributes);
 }
 
 /// A component whose fields are written back into the attribute system.
@@ -90,8 +89,8 @@ pub trait AttributeDerived: Component<Mutability = Mutable> {
 /// }
 ///
 /// impl WriteBack for CombatInput {
-///     fn should_write_back(&self, attrs: &Attributes, interner: &Interner) -> bool {
-///         let current = attrs.get_by_name("AttackPower.Override", interner);
+///     fn should_write_back(&self, attrs: &Attributes) -> bool {
+///         let current = attrs.value("AttackPower.Override");
 ///         (self.attack_power_override - current).abs() > f32::EPSILON
 ///     }
 ///
@@ -102,7 +101,7 @@ pub trait AttributeDerived: Component<Mutability = Mutable> {
 /// ```
 pub trait WriteBack: Component {
     /// Check whether this component has values that differ from current attributes.
-    fn should_write_back(&self, attrs: &Attributes, interner: &Interner) -> bool;
+    fn should_write_back(&self, attrs: &Attributes) -> bool;
 
     /// Write this component's values into the attribute system.
     fn write_back(&self, entity: Entity, attributes: &mut AttributesMut);
@@ -117,11 +116,10 @@ pub trait WriteBack: Component {
 /// Only runs for entities whose [`Attributes`] changed since last tick.
 pub fn update_attribute_derived<T: AttributeDerived>(
     mut query: Query<(&mut T, &Attributes), Changed<Attributes>>,
-    interner: Res<Interner>,
 ) {
     for (mut derived, attrs) in &mut query {
-        if derived.should_update(attrs, &interner) {
-            derived.update_from_attributes(attrs, &interner);
+        if derived.should_update(attrs) {
+            derived.update_from_attributes(attrs);
         }
     }
 }
@@ -135,7 +133,6 @@ pub fn update_attribute_derived<T: AttributeDerived>(
 pub fn update_write_back<T: WriteBack>(
     query: Query<Entity, (With<T>, Changed<Attributes>)>,
     q_wb: Query<&T>,
-    interner: Res<Interner>,
     mut attributes: AttributesMut,
 ) {
     for entity in &query {
@@ -144,7 +141,7 @@ pub fn update_write_back<T: WriteBack>(
             let Some(attrs) = attributes.get_attributes(entity) else {
                 continue;
             };
-            wb.should_write_back(attrs, &interner)
+            wb.should_write_back(attrs)
         };
         if should {
             wb.write_back(entity, &mut attributes);

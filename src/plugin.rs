@@ -7,10 +7,10 @@ use crate::modifier_set::apply_initial_attributes;
 use crate::attribute_id::Interner;
 use crate::tags::TagResolver;
 
-/// The main bevy_attributes plugin.
+/// The main plugin.
 ///
-/// Adds the `Interner`, `DependencyGraph`, and `TagResolver` resources,
-/// and sets up:
+/// Initializes the global [`Interner`], adds the [`DependencyGraph`] and
+/// [`TagResolver`] resources, and sets up:
 /// - Observer: clean up dependency edges when entities with `Attributes` are despawned.
 /// - Observer: apply `AttributeInitializer` modifier sets when they are added to entities.
 /// - System sets: `WriteBackSet` → `AttributeDerivedSet` in `PostUpdate`
@@ -22,10 +22,12 @@ pub struct AttributesPlugin;
 
 impl Plugin for AttributesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Interner>()
-            .init_resource::<DependencyGraph>()
-            .init_resource::<TagResolver>()
-            .add_observer(on_attributes_removed)
+        Interner::new().set_global();
+
+        app.init_resource::<DependencyGraph>()
+            .init_resource::<TagResolver>();
+
+        app.add_observer(on_attributes_removed)
             .add_observer(apply_initial_attributes)
             .configure_sets(
                 PostUpdate,

@@ -43,5 +43,5 @@ pub mod prelude {
     pub use crate::requires;
     pub use crate::register_derived;
     pub use crate::register_write_back;
-    pub use bevy_attributes_macros::attribute_component;
+    pub use bevy_gauge_macros::attribute_component;
 }

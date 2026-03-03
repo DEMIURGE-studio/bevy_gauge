@@ -8,7 +8,7 @@ use crate::expr::{Dependency, Expr};
 use crate::graph::{register_expr_deps, unregister_expr_deps, DepNode, DependencyGraph};
 use crate::modifier::Modifier;
 use crate::node::ReduceFn;
-use crate::attribute_id::{Interner, AttributeId};
+use crate::attribute_id::{global_rodeo, Interner, AttributeId};
 use crate::tags::{TagMask, TagResolver};
 
 /// System parameter for mutating entity attributes.
@@ -21,20 +21,34 @@ use crate::tags::{TagMask, TagResolver};
 #[derive(SystemParam)]
 pub struct AttributesMut<'w, 's> {
     query: Query<'w, 's, &'static mut Attributes>,
-    interner: Res<'w, Interner>,
     graph: ResMut<'w, DependencyGraph>,
     tag_resolver: Res<'w, TagResolver>,
 }
 
 impl AttributesMut<'_, '_> {
-    /// Get a reference to the interner.
-    pub fn interner(&self) -> &Interner {
-        &self.interner
+    /// Get a clone of the global [`Interner`].
+    ///
+    /// Cheap (Arc clone). Useful when you need to pass an `&Interner` to APIs
+    /// like [`Expr::compile`](crate::expr::Expr::compile).
+    pub fn interner(&self) -> Interner {
+        Interner::global()
     }
 
     /// Get a reference to the tag resolver.
     pub fn tag_resolver(&self) -> &TagResolver {
         &self.tag_resolver
+    }
+
+    fn intern(&self, s: &str) -> AttributeId {
+        AttributeId(global_rodeo().get_or_intern(s))
+    }
+
+    fn try_intern(&self, s: &str) -> Option<AttributeId> {
+        global_rodeo().get(s).map(AttributeId)
+    }
+
+    fn resolve_id(&self, id: AttributeId) -> &str {
+        global_rodeo().resolve(&id.0)
     }
 
     /// Get read-only access to an entity's [`Attributes`].
@@ -76,7 +90,7 @@ impl AttributesMut<'_, '_> {
         tag: TagMask,
     ) {
         let modifier = modifier.into();
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         // Register dependencies if this is an expression modifier
         if let Modifier::Expr(expr) = &modifier {
@@ -124,7 +138,7 @@ impl AttributesMut<'_, '_> {
         reduce: ReduceFn,
     ) {
         let modifier = modifier.into();
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         if let Modifier::Expr(expr) = &modifier {
             for dep in expr.dependencies() {
@@ -157,8 +171,9 @@ impl AttributesMut<'_, '_> {
         attribute: &str,
         expr_source: &str,
     ) -> Result<(), crate::expr::CompileError> {
+        let interner = Interner::global();
         let expr =
-            Expr::compile_with_tags(expr_source, &self.interner, Some(&self.tag_resolver))?;
+            Expr::compile_with_tags(expr_source, &interner, Some(&self.tag_resolver))?;
         self.add_modifier(entity, attribute, Modifier::Expr(expr));
         Ok(())
     }
@@ -175,8 +190,9 @@ impl AttributesMut<'_, '_> {
         expr_source: &str,
         tag: TagMask,
     ) -> Result<(), crate::expr::CompileError> {
+        let interner = Interner::global();
         let expr =
-            Expr::compile_with_tags(expr_source, &self.interner, Some(&self.tag_resolver))?;
+            Expr::compile_with_tags(expr_source, &interner, Some(&self.tag_resolver))?;
         self.add_modifier_tagged(entity, attribute, Modifier::Expr(expr), tag);
         Ok(())
     }
@@ -188,7 +204,7 @@ impl AttributesMut<'_, '_> {
         attribute: &str,
         modifier: &Modifier,
     ) {
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         if let Modifier::Expr(expr) = modifier {
             unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
@@ -211,7 +227,7 @@ impl AttributesMut<'_, '_> {
         modifier: &Modifier,
         tag: TagMask,
     ) {
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         if let Modifier::Expr(expr) = modifier {
             unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
@@ -240,11 +256,11 @@ impl AttributesMut<'_, '_> {
     ///
     /// Expression modifiers and tagged modifiers are preserved. This is useful
     /// for attributes whose "base" value changes over time (e.g., current health,
-    /// resource pools, simulation attributee that accumulates deltas each tick).
+    /// resource pools, simulation state that accumulates deltas each tick).
     ///
     /// If the attribute node does not exist, it is created with `ReduceFn::Sum`.
     pub fn set_base(&mut self, entity: Entity, attribute: &str, value: f32) {
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
@@ -322,7 +338,7 @@ impl AttributesMut<'_, '_> {
         // Create part attribute nodes
         for (part_name, reduce) in parts {
             let attribute_name = format!("{}.{}", name, part_name);
-            let attribute_id = self.interner.get_or_intern(&attribute_name);
+            let attribute_id = self.intern(&attribute_name);
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.ensure_node(attribute_id, reduce.clone());
                 // Evaluate the empty node so its value (0.0 or 1.0) is in the context
@@ -380,7 +396,7 @@ impl AttributesMut<'_, '_> {
         // Create part attribute nodes
         for (part_name, reduce) in parts {
             let attribute_name = format!("{}.{}", name, part_name);
-            let attribute_id = self.interner.get_or_intern(&attribute_name);
+            let attribute_id = self.intern(&attribute_name);
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.ensure_node(attribute_id, reduce.clone());
                 attrs.evaluate_and_cache(attribute_id);
@@ -388,7 +404,7 @@ impl AttributesMut<'_, '_> {
         }
 
         // Ensure the parent node exists (Sum) so it's in the graph
-        let parent_id = self.interner.get_or_intern(name);
+        let parent_id = self.intern(name);
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             attrs.ensure_node(parent_id, ReduceFn::Sum);
         }
@@ -424,7 +440,7 @@ impl AttributesMut<'_, '_> {
         alias: &str,
         source_entity: Entity,
     ) {
-        let alias_id = self.interner.get_or_intern(alias);
+        let alias_id = self.intern(alias);
 
         // Rewire edges and get affected attributes
         let affected = self.graph.set_alias(entity, alias_id, source_entity);
@@ -443,7 +459,7 @@ impl AttributesMut<'_, '_> {
     /// Attributes that referenced this alias will re-evaluate to 0.0 for those
     /// source values (the cache entries are cleared).
     pub fn unregister_source(&mut self, entity: Entity, alias: &str) {
-        let alias_id = self.interner.get_or_intern(alias);
+        let alias_id = self.intern(alias);
 
         // Clear cached source values for attributes that used this alias
         self.clear_source_cache(entity, alias_id);
@@ -458,7 +474,7 @@ impl AttributesMut<'_, '_> {
 
     /// Look up which entity an alias on a given entity currently points to.
     pub fn resolve_source(&self, entity: Entity, alias: &str) -> Option<Entity> {
-        let alias_id = self.interner.get_or_intern(alias);
+        let alias_id = self.intern(alias);
         self.graph.resolve_alias(entity, alias_id)
     }
 
@@ -468,7 +484,7 @@ impl AttributesMut<'_, '_> {
 
     /// Force re-evaluation of a attribute and return its value.
     pub fn evaluate(&mut self, entity: Entity, attribute: &str) -> f32 {
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             attrs.evaluate_and_cache(attribute_id)
@@ -483,7 +499,7 @@ impl AttributesMut<'_, '_> {
     /// avoids the write-lock path on the interner. Returns `None` if the
     /// attribute name hasn't been interned yet.
     pub fn try_evaluate(&mut self, entity: Entity, attribute: &str) -> Option<f32> {
-        let attribute_id = self.interner.get(attribute)?;
+        let attribute_id = self.try_intern(attribute)?;
         Some(self.evaluate_id(entity, attribute_id))
     }
 
@@ -519,7 +535,7 @@ impl AttributesMut<'_, '_> {
             return self.evaluate(entity, attribute);
         }
 
-        let attribute_id = self.interner.get_or_intern(attribute);
+        let attribute_id = self.intern(attribute);
 
         // Lazy template materialization: if this attribute has a tagged-attribute
         // template and we haven't seen this tag combo yet, generate the
@@ -611,9 +627,9 @@ impl AttributesMut<'_, '_> {
         }
 
         // Create synthetic AttributeId
-        let parent_name = self.interner.resolve(parent_attribute_id);
+        let parent_name = self.resolve_id(parent_attribute_id);
         let synthetic_name = format!("\0tag:{parent_name}:{}", mask.0);
-        let synthetic_id = self.interner.get_or_intern(&synthetic_name);
+        let synthetic_id = self.intern(&synthetic_name);
 
         // Register in Attributes
         if let Ok(mut attrs) = self.query.get_mut(entity) {

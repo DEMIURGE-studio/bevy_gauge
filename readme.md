@@ -1,10 +1,8 @@
-# bevy_attributes
+# bevy_gauge
 
 An attribute system for [Bevy](https://bevyengine.org/) with expression-based modifiers, tagged filtering, cross-entity dependencies, and automatic propagation.
 
-Built for games that need attribute systems beyond simple key-value stores — RPGs with
-derived attributes, ARPGs with PoE-style damage pipelines, or any game where attributes
-depend on other attributes (possibly on other entities) and need to stay in sync.
+Built for games that need attribute systems beyond simple key-value stores — RPGs with derived attributes, ARPGs with PoE-style damage pipelines, or any game where attributes depend on other attributes (possibly on other entities) and need to stay in sync.
 
 ## Quick start
 
