@@ -111,10 +111,10 @@ This generates a struct with `TagMask` constants: `DamageTags::FIRE`, `DamageTag
 
 ```rust
 // Inserting — tag as broadly as the modifier applies
-attributes.add_modifier_tagged(entity, "Damage.Added", 100.0, DamageTags::PHYSICAL);  // all physical
-attributes.add_modifier_tagged(entity, "Damage.Added", 10.0, DamageTags::FIRE);       // all fire
-attributes.add_modifier_tagged(entity, "Damage.Added", 5.0, DamageTags::SWORD);       // all sword
-attributes.add_modifier(entity, "Damage.Added", 3.0);                                  // all damage (global)
+attributes.add_modifier_tagged(entity, "Damage.added", 100.0, DamageTags::PHYSICAL);  // all physical
+attributes.add_modifier_tagged(entity, "Damage.added", 10.0, DamageTags::FIRE);       // all fire
+attributes.add_modifier_tagged(entity, "Damage.added", 5.0, DamageTags::SWORD);       // all sword
+attributes.add_modifier(entity, "Damage.added", 3.0);                                  // all damage (global)
 
 // Querying
 let fire_sword = attributes.evaluate_tagged(entity, "Damage", DamageTags::FIRE | DamageTags::SWORD);
@@ -135,7 +135,7 @@ Attributes on one entity can reference attributes on another through source alia
 
 ```rust
 // Sword damage scales with wielder's Strength
-attributes.add_expr_modifier(sword, "Damage.Increased", "Strength@Wielder / 200.0")?;
+attributes.add_expr_modifier(sword, "Damage.increased", "Strength@Wielder / 200.0")?;
 attributes.register_source(sword, "Wielder", warrior);
 
 // Hand the sword to someone else — one call, everything updates
@@ -169,13 +169,13 @@ apply_instant(&on_hit, roles, target_entity, &mut attributes);
 commands.spawn(attributes! {
     "Strength" => 50.0,
     "MaxHealth" => "Strength * 2.0 + 100.0",
-    "Damage.Added" [FIRE | MELEE] => 10.0,
+    "Damage.added" [FIRE | MELEE] => 10.0,
 });
 
 // Runtime buffs
 let enchant = mod_set! {
-    "Damage.Added" [FIRE | MELEE] => 20.0,
-    "Damage.Increased" [FIRE] => 0.15,
+    "Damage.added" [FIRE | MELEE] => 20.0,
+    "Damage.increased" [FIRE] => 0.15,
 };
 enchant.apply(sword, &mut attributes);
 ```

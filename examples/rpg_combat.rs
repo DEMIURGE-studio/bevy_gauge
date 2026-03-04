@@ -1,17 +1,15 @@
 //! # RPG Combat Example — PoE-style tagged damage
 //!
-//! Demonstrates `bevy_attributes` with a Path of Exile-style damage model:
+//! Demonstrates `bevy_gauge` with a Path of Exile-style damage model:
 //!
+//! - **`define_tags!`** — declares a tag hierarchy with group tags that OR
+//!   their children together.
 //! - **`tagged_attribute`** — sets up a multi-part attribute (Added × (1 + Increased))
-//!   with per-tag-combo expressions in one call.
-//! - **Modifier generality** — a modifier tagged `MELEE` applies to *all*
-//!   melee damage. One tagged `FIRE | MELEE` only applies to fire melee.
-//!   Untagged modifiers are global and apply to everything.
-//! - **Query specificity** — when dealing a fire melee hit, you query with
-//!   `FIRE | MELEE` to pull in global, FIRE-only, MELEE-only, and
-//!   FIRE|MELEE modifiers.
-//! - **Expression tag syntax** — `"Damage.Added{FIRE|MELEE}"` inside
-//!   expressions to reference tag-filtered values.
+//!   with per-tag-combo expressions materialized lazily.
+//! - **Insert broadly, query specifically** — a modifier tagged `PHYSICAL`
+//!   applies to all physical damage. When dealing a physical sword hit, query
+//!   `PHYSICAL | SWORD` to pull in global, physical-only, sword-only, and
+//!   physical+sword modifiers.
 //! - **Cross-entity deps** — the sword references its wielder's attributes via
 //!   `@Wielder`. Swapping the wielder automatically rewires everything.
 //! - **`attributes!` / `mod_set!` macros** — ergonomic batch init and buffs.
@@ -19,16 +17,23 @@
 //! Run with: `cargo run --example rpg_combat`
 
 use bevy::prelude::*;
-use bevy_attributes::prelude::*;
+use bevy_gauge::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Tags
 // ---------------------------------------------------------------------------
-// Damage types
-const PHYSICAL: TagMask = TagMask::bit(0);
-const FIRE: TagMask = TagMask::bit(1);
-// Delivery / context tags
-const MELEE: TagMask = TagMask::bit(2);
+
+define_tags! {
+    Tags,
+    damage_type {
+        elemental { fire, cold },
+        physical,
+    },
+    weapon_type {
+        melee { sword, axe },
+        ranged { bow },
+    },
+}
 
 // ---------------------------------------------------------------------------
 // Marker components & handles
@@ -48,28 +53,12 @@ struct Entities {
 // AttributeDerived — auto-syncs a component from tagged attribute values
 // ---------------------------------------------------------------------------
 
-/// Mirrors the sword's per-type damage totals. Updated automatically each
-/// frame by the `AttributeDerived` system in PostUpdate.
-#[derive(Component, Default, Debug)]
+#[derive(Component, Default, Debug, AttributeComponent)]
 struct SwordDamageDisplay {
-    physical_melee: f32,
-    fire_melee: f32,
-}
-
-impl AttributeDerived for SwordDamageDisplay {
-    fn should_update(&self, attrs: &Attributes, interner: &Interner) -> bool {
-        // In a real game you'd compare against the cached tagged values.
-        // For simplicity we just check the untagged totals here.
-        let phys = attrs.get_by_name("Damage", interner);
-        let fire = attrs.get_by_name("Damage", interner);
-        (self.physical_melee - phys).abs() > f32::EPSILON
-            || (self.fire_melee - fire).abs() > f32::EPSILON
-    }
-
-    fn update_from_attributes(&mut self, attrs: &Attributes, interner: &Interner) {
-        self.physical_melee = attrs.get_tagged_by_name("Damage", PHYSICAL | MELEE, interner);
-        self.fire_melee = attrs.get_tagged_by_name("Damage", FIRE | MELEE, interner);
-    }
+    #[read("Damage", Tags::PHYSICAL | Tags::SWORD)]
+    physical_sword: f32,
+    #[read("Damage", Tags::FIRE | Tags::SWORD)]
+    fire_sword: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +69,6 @@ fn main() {
     App::new()
         .add_plugins(MinimalPlugins)
         .add_plugins(AttributesPlugin)
-        .register_attribute_derived::<SwordDamageDisplay>()
         .add_systems(
             Startup,
             (
@@ -99,18 +87,16 @@ fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 0: Register tag names so expressions can use {FIRE|MELEE} syntax
+// Step 0: Register tag names so expressions can use {FIRE|SWORD} syntax
 // ---------------------------------------------------------------------------
 
 fn register_tags(mut resolver: ResMut<TagResolver>) {
-    resolver.register("PHYSICAL", PHYSICAL);
-    resolver.register("FIRE", FIRE);
-    resolver.register("MELEE", MELEE);
+    Tags::register(&mut resolver);
     println!("--- Tags registered ---\n");
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: Spawn entities — players get flat attributes via the attributes! macro
+// Step 1: Spawn entities
 // ---------------------------------------------------------------------------
 
 fn spawn_entities(mut commands: Commands) {
@@ -155,55 +141,41 @@ fn spawn_entities(mut commands: Commands) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Configure sword attributes — tagged_attribute sets up the formula,
-//         then we add modifiers to the parts
+// Step 2: Configure sword attributes
 // ---------------------------------------------------------------------------
 
 fn setup_sword_attributes(mut attributes: AttributesMut, handles: Res<Entities>) {
     let sword = handles.sword;
 
-    // One call sets up the whole damage pipeline:
-    //   - Creates "Damage.Added" (Sum) and "Damage.Increased" (Sum) part nodes.
-    //   - Stores the expression template "Added * (1 + Increased)".
-    //   - When evaluate_tagged is called with e.g. PHYSICAL|MELEE, the system
-    //     auto-generates:
-    //       "Damage.Added{PHYSICAL|MELEE} * (1 + Damage.Increased{PHYSICAL|MELEE})"
-    //     No need to enumerate every possible tag combo up front!
     attributes
         .tagged_attribute(
             sword,
             "Damage",
-            &[("Added", ReduceFn::Sum), ("Increased", ReduceFn::Sum)],
-            "Added * (1 + Increased)",
+            &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
+            "added * (1 + increased)",
         )
         .expect("valid tagged attribute");
 
-    // --- Damage.Added ---
-    // Two tagged modifiers on the SAME attribute:
-    //   25 physical melee flat damage
-    //   10 fire melee flat damage
-    attributes.add_modifier_tagged(sword, "Damage.Added", 25.0, PHYSICAL | MELEE);
-    attributes.add_modifier_tagged(sword, "Damage.Added", 10.0, FIRE | MELEE);
+    // Flat damage — tagged broadly by damage type
+    attributes.add_modifier_tagged(sword, "Damage.added", 25.0, Tags::PHYSICAL);
+    attributes.add_modifier_tagged(sword, "Damage.added", 10.0, Tags::FIRE);
 
-    // --- Damage.Increased ---
-    // Physical scaling from wielder Strength, fire scaling from Intelligence.
-    // Tagged by damage type only — delivery method (MELEE) doesn't matter
-    // for scaling, so a MELEE query will also pick these up.
+    // Increased damage — scales from wielder stats
     attributes
         .add_expr_modifier_tagged(
             sword,
-            "Damage.Increased",
+            "Damage.increased",
             "Strength@Wielder / 200",
-            PHYSICAL,
+            Tags::PHYSICAL,
         )
         .expect("valid expression");
 
     attributes
         .add_expr_modifier_tagged(
             sword,
-            "Damage.Increased",
+            "Damage.increased",
             "Intelligence@Wielder / 300",
-            FIRE,
+            Tags::FIRE,
         )
         .expect("valid expression");
 
@@ -220,28 +192,28 @@ fn equip_warrior(mut attributes: AttributesMut, handles: Res<Entities>) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Print Warrior damage
+// Step 4: Print Warrior damage — query with leaf combos
 // ---------------------------------------------------------------------------
 
 fn print_warrior(mut attributes: AttributesMut, handles: Res<Entities>) {
     let sword = handles.sword;
 
-    let phys_added = attributes.evaluate_tagged(sword, "Damage.Added", PHYSICAL | MELEE);
-    let phys_inc = attributes.evaluate_tagged(sword, "Damage.Increased", PHYSICAL | MELEE);
-    let phys_total = attributes.evaluate_tagged(sword, "Damage", PHYSICAL | MELEE);
-    let fire_added = attributes.evaluate_tagged(sword, "Damage.Added", FIRE | MELEE);
-    let fire_inc = attributes.evaluate_tagged(sword, "Damage.Increased", FIRE | MELEE);
-    let fire_total = attributes.evaluate_tagged(sword, "Damage", FIRE | MELEE);
+    let phys_added = attributes.evaluate_tagged(sword, "Damage.added", Tags::PHYSICAL | Tags::SWORD);
+    let phys_inc = attributes.evaluate_tagged(sword, "Damage.increased", Tags::PHYSICAL | Tags::SWORD);
+    let phys_total = attributes.evaluate_tagged(sword, "Damage", Tags::PHYSICAL | Tags::SWORD);
+    let fire_added = attributes.evaluate_tagged(sword, "Damage.added", Tags::FIRE | Tags::SWORD);
+    let fire_inc = attributes.evaluate_tagged(sword, "Damage.increased", Tags::FIRE | Tags::SWORD);
+    let fire_total = attributes.evaluate_tagged(sword, "Damage", Tags::FIRE | Tags::SWORD);
 
-    println!("  Physical Melee Damage:");
-    println!("    Added:     {:.1}", phys_added);
-    println!("    Increased: {:.4} ({:.1}%)", phys_inc, phys_inc * 100.0);
-    println!("    Total:     {:.2}  = {:.1} * (1 + {:.4})", phys_total, phys_added, phys_inc);
+    println!("  Physical Sword Damage:");
+    println!("    Added:     {phys_added:.1}");
+    println!("    Increased: {phys_inc:.4} ({:.1}%)", phys_inc * 100.0);
+    println!("    Total:     {phys_total:.2}  = {phys_added:.1} * (1 + {phys_inc:.4})");
 
-    println!("  Fire Melee Damage:");
-    println!("    Added:     {:.1}", fire_added);
-    println!("    Increased: {:.4} ({:.1}%)", fire_inc, fire_inc * 100.0);
-    println!("    Total:     {:.2}  = {:.1} * (1 + {:.4})", fire_total, fire_added, fire_inc);
+    println!("  Fire Sword Damage:");
+    println!("    Added:     {fire_added:.1}");
+    println!("    Increased: {fire_inc:.4} ({:.1}%)", fire_inc * 100.0);
+    println!("    Total:     {fire_total:.2}  = {fire_added:.1} * (1 + {fire_inc:.4})");
 
     println!("\n  Expected (Warrior: Str 50, Int 10):");
     println!("    Physical: 25 * (1 + 50/200) = 25 * 1.25  = 31.25");
@@ -266,22 +238,22 @@ fn swap_to_mage(mut attributes: AttributesMut, handles: Res<Entities>) {
 fn print_mage(mut attributes: AttributesMut, handles: Res<Entities>) {
     let sword = handles.sword;
 
-    let phys_added = attributes.evaluate_tagged(sword, "Damage.Added", PHYSICAL | MELEE);
-    let phys_inc = attributes.evaluate_tagged(sword, "Damage.Increased", PHYSICAL | MELEE);
-    let phys_total = attributes.evaluate_tagged(sword, "Damage", PHYSICAL | MELEE);
-    let fire_added = attributes.evaluate_tagged(sword, "Damage.Added", FIRE | MELEE);
-    let fire_inc = attributes.evaluate_tagged(sword, "Damage.Increased", FIRE | MELEE);
-    let fire_total = attributes.evaluate_tagged(sword, "Damage", FIRE | MELEE);
+    let phys_added = attributes.evaluate_tagged(sword, "Damage.added", Tags::PHYSICAL | Tags::SWORD);
+    let phys_inc = attributes.evaluate_tagged(sword, "Damage.increased", Tags::PHYSICAL | Tags::SWORD);
+    let phys_total = attributes.evaluate_tagged(sword, "Damage", Tags::PHYSICAL | Tags::SWORD);
+    let fire_added = attributes.evaluate_tagged(sword, "Damage.added", Tags::FIRE | Tags::SWORD);
+    let fire_inc = attributes.evaluate_tagged(sword, "Damage.increased", Tags::FIRE | Tags::SWORD);
+    let fire_total = attributes.evaluate_tagged(sword, "Damage", Tags::FIRE | Tags::SWORD);
 
-    println!("  Physical Melee Damage:");
-    println!("    Added:     {:.1}", phys_added);
-    println!("    Increased: {:.4} ({:.1}%)", phys_inc, phys_inc * 100.0);
-    println!("    Total:     {:.2}  = {:.1} * (1 + {:.4})", phys_total, phys_added, phys_inc);
+    println!("  Physical Sword Damage:");
+    println!("    Added:     {phys_added:.1}");
+    println!("    Increased: {phys_inc:.4} ({:.1}%)", phys_inc * 100.0);
+    println!("    Total:     {phys_total:.2}  = {phys_added:.1} * (1 + {phys_inc:.4})");
 
-    println!("  Fire Melee Damage:");
-    println!("    Added:     {:.1}", fire_added);
-    println!("    Increased: {:.4} ({:.1}%)", fire_inc, fire_inc * 100.0);
-    println!("    Total:     {:.2}  = {:.1} * (1 + {:.4})", fire_total, fire_added, fire_inc);
+    println!("  Fire Sword Damage:");
+    println!("    Added:     {fire_added:.1}");
+    println!("    Increased: {fire_inc:.4} ({:.1}%)", fire_inc * 100.0);
+    println!("    Total:     {fire_total:.2}  = {fire_added:.1} * (1 + {fire_inc:.4})");
 
     println!("\n  Expected (Mage: Str 15, Int 60):");
     println!("    Physical: 25 * (1 + 15/200) = 25 * 1.075 = 26.88");
@@ -298,38 +270,37 @@ fn show_tag_queries(mut attributes: AttributesMut, handles: Res<Entities>) {
 
     let sword = handles.sword;
 
-    // Damage.Added has two modifiers:
-    //   25.0 [PHYSICAL|MELEE]  and  10.0 [FIRE|MELEE]
+    // Damage.added has two modifiers:
+    //   25.0 [PHYSICAL]  and  10.0 [FIRE]
     //
-    // Queries must be at least as specific as the modifier's tags.
     // A modifier matches when ALL its tags are present in the query.
+    // Broad modifiers match more queries.
 
-    let all = attributes.evaluate(sword, "Damage.Added");
-    let melee = attributes.evaluate_tagged(sword, "Damage.Added", MELEE);
-    let physical = attributes.evaluate_tagged(sword, "Damage.Added", PHYSICAL);
-    let fire = attributes.evaluate_tagged(sword, "Damage.Added", FIRE);
-    let phys_melee = attributes.evaluate_tagged(sword, "Damage.Added", PHYSICAL | MELEE);
-    let fire_melee = attributes.evaluate_tagged(sword, "Damage.Added", FIRE | MELEE);
+    let phys_sword = attributes.evaluate_tagged(sword, "Damage.added", Tags::PHYSICAL | Tags::SWORD);
+    let fire_sword = attributes.evaluate_tagged(sword, "Damage.added", Tags::FIRE | Tags::SWORD);
 
-    println!("  Damage.Added (unfiltered):       {:.1}  (25 + 10 = 35)", all);
-    println!("  Damage.Added [MELEE]:            {:.1}  (neither mod is MELEE-only)", melee);
-    println!("  Damage.Added [PHYSICAL]:         {:.1}  (neither mod is PHYSICAL-only)", physical);
-    println!("  Damage.Added [FIRE]:             {:.1}  (neither mod is FIRE-only)", fire);
-    println!("  Damage.Added [PHYSICAL|MELEE]:   {:.1}  (matches the 25.0 physical melee mod)", phys_melee);
-    println!("  Damage.Added [FIRE|MELEE]:       {:.1}  (matches the 10.0 fire melee mod)", fire_melee);
+    println!("  Damage.added [PHYSICAL|SWORD]: {phys_sword:.1}  (25 physical matches)");
+    println!("  Damage.added [FIRE|SWORD]:     {fire_sword:.1}  (10 fire matches)");
 
-    // Now add a MELEE-only modifier — like a passive "+5 melee flat damage".
-    // This is more general: it should appear in EVERY melee query.
-    println!("\n  Adding +5 generic melee damage (tagged MELEE only)...\n");
-    attributes.add_modifier_tagged(sword, "Damage.Added", 5.0, MELEE);
+    // Add a generic sword modifier — tagged SWORD only, applies to all sword queries
+    println!("\n  Adding +5 generic sword damage (tagged SWORD only)...\n");
+    attributes.add_modifier_tagged(sword, "Damage.added", 5.0, Tags::SWORD);
 
-    let melee2 = attributes.evaluate_tagged(sword, "Damage.Added", MELEE);
-    let phys_melee2 = attributes.evaluate_tagged(sword, "Damage.Added", PHYSICAL | MELEE);
-    let fire_melee2 = attributes.evaluate_tagged(sword, "Damage.Added", FIRE | MELEE);
+    let phys_sword2 = attributes.evaluate_tagged(sword, "Damage.added", Tags::PHYSICAL | Tags::SWORD);
+    let fire_sword2 = attributes.evaluate_tagged(sword, "Damage.added", Tags::FIRE | Tags::SWORD);
 
-    println!("  Damage.Added [MELEE]:            {:.1}  (the +5 mod is MELEE-only → matches)", melee2);
-    println!("  Damage.Added [PHYSICAL|MELEE]:   {:.1}  (25 physical melee + 5 generic melee)", phys_melee2);
-    println!("  Damage.Added [FIRE|MELEE]:       {:.1}  (10 fire melee + 5 generic melee)", fire_melee2);
+    println!("  Damage.added [PHYSICAL|SWORD]: {phys_sword2:.1}  (25 physical + 5 sword)");
+    println!("  Damage.added [FIRE|SWORD]:     {fire_sword2:.1}  (10 fire + 5 sword)");
+
+    // Add a global modifier — no tags, applies to everything
+    println!("\n  Adding +3 global damage (untagged)...\n");
+    attributes.add_modifier(sword, "Damage.added", 3.0);
+
+    let phys_sword3 = attributes.evaluate_tagged(sword, "Damage.added", Tags::PHYSICAL | Tags::SWORD);
+    let fire_sword3 = attributes.evaluate_tagged(sword, "Damage.added", Tags::FIRE | Tags::SWORD);
+
+    println!("  Damage.added [PHYSICAL|SWORD]: {phys_sword3:.1}  (25 physical + 5 sword + 3 global)");
+    println!("  Damage.added [FIRE|SWORD]:     {fire_sword3:.1}  (10 fire + 5 sword + 3 global)");
     println!();
 }
 
@@ -341,16 +312,16 @@ fn apply_buff_and_show(mut attributes: AttributesMut, handles: Res<Entities>) {
     println!("=== Applying Fire Enchantment via mod_set! ===\n");
 
     let enchantment = mod_set! {
-        "Damage.Added" [FIRE | MELEE] => 20.0,
+        "Damage.added" [Tags::FIRE] => 20.0,
     };
     enchantment.apply(handles.sword, &mut attributes);
 
-    let fire_added = attributes.evaluate_tagged(handles.sword, "Damage.Added", FIRE | MELEE);
-    let fire_total = attributes.evaluate_tagged(handles.sword, "Damage", FIRE | MELEE);
+    let fire_added = attributes.evaluate_tagged(handles.sword, "Damage.added", Tags::FIRE | Tags::SWORD);
+    let fire_total = attributes.evaluate_tagged(handles.sword, "Damage", Tags::FIRE | Tags::SWORD);
 
-    println!("  After +20 fire melee enchantment:");
-    println!("    Damage.Added [FIRE|MELEE]: {:.1}  (was 10+5=15, now 10+5+20=35)", fire_added);
-    println!("    Damage [FIRE|MELEE]:       {:.2}  = 35 * (1 + 60/300) = 35 * 1.2 = 42.00", fire_total);
+    println!("  After +20 fire enchantment:");
+    println!("    Damage.added [FIRE|SWORD]: {fire_added:.1}  (10 fire + 5 sword + 3 global + 20 fire = 38)");
+    println!("    Damage [FIRE|SWORD]:       {fire_total:.2}  = 38 * (1 + 60/300) = 38 * 1.2 = 45.60");
 
     println!("\n--- Done ---");
     std::process::exit(0);
