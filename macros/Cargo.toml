@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gauge_macros"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "Proc macros for bevy_gauge"
 license = "MIT OR Apache-2.0"
