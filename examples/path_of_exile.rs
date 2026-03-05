@@ -14,7 +14,7 @@
 //!   `@Wielder`. Swapping the wielder automatically rewires everything.
 //! - **`attributes!` / `mod_set!` macros** — ergonomic batch init and buffs.
 //!
-//! Run with: `cargo run --example rpg_combat`
+//! Run with: `cargo run --example path_of_exile`
 
 use bevy::prelude::*;
 use bevy_gauge::prelude::*;
@@ -149,8 +149,8 @@ fn setup_sword_attributes(mut attributes: AttributesMut, handles: Res<Entities>)
         .tagged_attribute(
             sword,
             "Damage",
-            &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
-            "added * (1 + increased)",
+            &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)],
+            "added * (1 + increased) * more",
         )
         .expect("valid tagged attribute");
 

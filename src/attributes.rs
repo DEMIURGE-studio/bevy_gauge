@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::context::AttributeContext;
 use crate::node::{ReduceFn, AttributeNode};
-use crate::attribute_id::{global_rodeo, Interner, AttributeId};
+use crate::attribute_id::{global_rodeo, AttributeId};
 use crate::tags::TagMask;
 
 /// Template for lazy materialization of tagged complex attributes.
@@ -100,17 +100,6 @@ impl Attributes {
         }
     }
 
-    /// Read a attribute by string name. Requires explicit interner access.
-    ///
-    /// Prefer [`value`](Self::value) for simpler usage.
-    pub fn get_by_name(&self, name: &str, interner: &Interner) -> f32 {
-        if let Some(id) = interner.get(name) {
-            self.context.get(id)
-        } else {
-            0.0
-        }
-    }
-
     /// Read a tagged attribute query result by AttributeId and tag mask.
     ///
     /// Returns the cached result if the tag query has been registered (via
@@ -124,17 +113,6 @@ impl Attributes {
         }
         if let Some(&synthetic_id) = self.tag_query_ids.get(&(id, mask)) {
             self.context.get(synthetic_id)
-        } else {
-            0.0
-        }
-    }
-
-    /// Read a tagged attribute query by string name and tag mask.
-    ///
-    /// Prefer [`value_tagged`](Self::value_tagged) for simpler usage.
-    pub fn get_tagged_by_name(&self, name: &str, mask: TagMask, interner: &Interner) -> f32 {
-        if let Some(id) = interner.get(name) {
-            self.get_tagged(id, mask)
         } else {
             0.0
         }
@@ -205,6 +183,7 @@ impl Attributes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attribute_id::Interner;
     use crate::modifier::Modifier;
 
     #[test]
@@ -213,13 +192,6 @@ mod tests {
         let attrs = Attributes::new();
         let id = interner.get_or_intern("Nonexistent");
         assert_eq!(attrs.get(id), 0.0);
-    }
-
-    #[test]
-    fn get_by_name_unknown() {
-        let interner = Interner::new();
-        let attrs = Attributes::new();
-        assert_eq!(attrs.get_by_name("Unknown", &interner), 0.0);
     }
 
     #[test]
@@ -234,7 +206,6 @@ mod tests {
         let val = attrs.evaluate_and_cache(id);
         assert_eq!(val, 25.0);
         assert_eq!(attrs.get(id), 25.0);
-        assert_eq!(attrs.get_by_name("Strength", &interner), 25.0);
     }
 
     #[test]

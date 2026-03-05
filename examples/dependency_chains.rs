@@ -158,9 +158,7 @@ fn demo(handles: Res<Entities>, mut attributes: AttributesMut) {
     // --- Step 4: Swap owner to Warlock ---
     println!("\n=== Warlock takes the Crown from Necromancer ===\n");
 
-    // Unequip from necro
-    attributes.remove_modifier(necro, "IncreasedMinionLife",
-        &bevy_gauge::prelude::Modifier::Flat(0.0)); // we'll just re-set
+    // Unequip from necro: zero out the stat and disconnect the source
     attributes.set_base(necro, "IncreasedMinionLife", 0.0);
     attributes.unregister_source(necro, "Equipment");
 

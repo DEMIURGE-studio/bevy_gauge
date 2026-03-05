@@ -155,7 +155,6 @@ impl ModifierSet {
     /// as flat modifiers. Expression strings are recompiled and removed as
     /// expression modifiers (compilation errors are silently ignored).
     pub fn remove<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>) {
-        let interner = crate::attribute_id::Interner::global();
         for entry in &self.entries {
             match &entry.value {
                 ModifierValue::Literal(val) => {
@@ -163,9 +162,8 @@ impl ModifierSet {
                     attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
                 }
                 ModifierValue::ExprSource(src) => {
-                    if let Ok(expr) = crate::expr::Expr::compile_with_tags(
+                    if let Ok(expr) = crate::expr::Expr::compile(
                         src,
-                        &interner,
                         Some(attributes.tag_resolver()),
                     ) {
                         let modifier = crate::modifier::Modifier::Expr(expr);
@@ -182,7 +180,6 @@ impl ModifierSet {
         entity: Entity,
         attributes: &mut AttributesMut<'_, '_, F>,
     ) -> Result<(), crate::expr::CompileError> {
-        let interner = crate::attribute_id::Interner::global();
         for entry in &self.entries {
             match &entry.value {
                 ModifierValue::Literal(val) => {
@@ -190,9 +187,8 @@ impl ModifierSet {
                     attributes.remove_modifier_tagged(entity, &entry.attribute, &modifier, entry.tag);
                 }
                 ModifierValue::ExprSource(src) => {
-                    let expr = crate::expr::Expr::compile_with_tags(
+                    let expr = crate::expr::Expr::compile(
                         src,
-                        &interner,
                         Some(attributes.tag_resolver()),
                     )?;
                     let modifier = crate::modifier::Modifier::Expr(expr);

@@ -246,6 +246,19 @@ impl TagResolver {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Auto-registration via inventory
+// ---------------------------------------------------------------------------
+
+/// A registration entry submitted by [`define_tags!`](crate::define_tags) via
+/// `inventory`. Each entry carries a function that registers one tag struct's
+/// names with a [`TagResolver`].
+pub struct TagRegistration {
+    pub register_fn: fn(&mut TagResolver),
+}
+
+inventory::collect!(TagRegistration);
+
 #[cfg(test)]
 mod tests {
     use super::*;

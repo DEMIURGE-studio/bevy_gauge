@@ -5,7 +5,7 @@ use crate::derived::{AttributeRegistration, AttributeDerivedSet, WriteBackSet};
 use crate::graph::DependencyGraph;
 use crate::modifier_set::apply_initial_attributes;
 use crate::attribute_id::Interner;
-use crate::tags::TagResolver;
+use crate::tags::{TagResolver, TagRegistration};
 
 /// The main plugin.
 ///
@@ -27,8 +27,13 @@ impl Plugin for AttributesPlugin {
     fn build(&self, app: &mut App) {
         Interner::new().set_global();
 
+        let mut tag_resolver = TagResolver::new();
+        for reg in inventory::iter::<TagRegistration> {
+            (reg.register_fn)(&mut tag_resolver);
+        }
+
         app.init_resource::<DependencyGraph>()
-            .init_resource::<TagResolver>();
+            .insert_resource(tag_resolver);
 
         app.add_observer(on_attributes_removed)
             .add_observer(apply_initial_attributes)

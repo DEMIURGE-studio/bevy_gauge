@@ -548,7 +548,7 @@ impl<'a> Parser<'a> {
 
         let tags = self.tags.ok_or_else(|| {
             CompileError::Expected(
-                "TagResolver required for {TAG} syntax (use compile_with_tags)".to_string(),
+                "TagResolver required for {TAG} syntax — pass Some(&resolver) to Expr::compile".to_string(),
             )
         })?;
 
@@ -658,42 +658,28 @@ impl<'a> Parser<'a> {
 impl Expr {
     /// Compile an expression string into bytecode.
     ///
-    /// Attribute name strings are resolved to `AttributeId` via the interner at compile time.
-    /// This variant does not support `{TAG}` syntax — use
-    /// [`compile_with_tags`](Self::compile_with_tags) for that.
+    /// Attribute name strings are resolved to [`AttributeId`] via the global
+    /// [`Interner`] at compile time.  When `tags` is `Some`, expressions may
+    /// use `{TAG|TAG}` syntax to reference tag-filtered attribute values
+    /// (e.g., `Damage.Added{FIRE|SPELL} * 2`). Tag names are resolved via
+    /// the provided [`TagResolver`].
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let expr = Expr::compile("Strength / 10.0", &interner)?;
-    /// let expr = Expr::compile("-(Starvation.current / 100.0) * 0.5", &interner)?;
-    /// let expr = Expr::compile("Strength@Wielder * 2.0", &interner)?;
-    /// let expr = Expr::compile("max(Health, 0.0)", &interner)?;
-    /// ```
-    pub fn compile(source: &str, interner: &Interner) -> Result<Self, CompileError> {
-        Self::compile_with_tags(source, interner, None)
-    }
-
-    /// Compile an expression string into bytecode, with optional tag resolution.
-    ///
-    /// When `tags` is `Some`, expressions may use `{TAG|TAG}` syntax to
-    /// reference tag-filtered attribute values (e.g., `Damage.Added{FIRE|SPELL} * 2`).
-    /// Tag names are resolved via the provided [`TagResolver`].
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let expr = Expr::compile_with_tags(
+    /// let expr = Expr::compile("Strength / 10.0", None)?;
+    /// let expr = Expr::compile("Strength@Wielder * 2.0", None)?;
+    /// let expr = Expr::compile("max(Health, 0.0)", None)?;
+    /// let expr = Expr::compile(
     ///     "Damage.Added{FIRE|SPELL} * 2.0",
-    ///     &interner,
     ///     Some(&tag_resolver),
     /// )?;
     /// ```
-    pub fn compile_with_tags(
+    pub fn compile(
         source: &str,
-        interner: &Interner,
         tags: Option<&TagResolver>,
     ) -> Result<Self, CompileError> {
+        let interner = Interner::global();
         let trimmed = source.trim();
         if trimmed.is_empty() {
             return Err(CompileError::EmptyExpression);
@@ -712,7 +698,7 @@ impl Expr {
         }
 
         // Parse
-        let mut parser = Parser::new(tokens, interner, tags);
+        let mut parser = Parser::new(tokens, &interner, tags);
         parser.parse_expression(0)?;
 
         if parser.peek() != &Token::Eof {
@@ -900,70 +886,76 @@ mod tests {
     use super::*;
     use crate::attribute_id::Interner;
 
-    fn eval(source: &str, ctx: &AttributeContext, interner: &Interner) -> f32 {
-        let expr = Expr::compile(source, interner).unwrap();
+    fn test_interner() -> Interner {
+        let i = Interner::new();
+        i.set_global();
+        Interner::global()
+    }
+
+    fn eval(source: &str, ctx: &AttributeContext) -> f32 {
+        let expr = Expr::compile(source, None).unwrap();
         expr.evaluate(ctx)
     }
 
     #[test]
     fn literal() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("42.0", &ctx, &interner), 42.0);
+        assert_eq!(eval("42.0", &ctx), 42.0);
     }
 
     #[test]
     fn simple_arithmetic() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("2.0 + 3.0", &ctx, &interner), 5.0);
-        assert_eq!(eval("10.0 - 4.0", &ctx, &interner), 6.0);
-        assert_eq!(eval("3.0 * 4.0", &ctx, &interner), 12.0);
-        assert_eq!(eval("10.0 / 4.0", &ctx, &interner), 2.5);
+        assert_eq!(eval("2.0 + 3.0", &ctx), 5.0);
+        assert_eq!(eval("10.0 - 4.0", &ctx), 6.0);
+        assert_eq!(eval("3.0 * 4.0", &ctx), 12.0);
+        assert_eq!(eval("10.0 / 4.0", &ctx), 2.5);
     }
 
     #[test]
     fn precedence() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
         // 2 + 3 * 4 = 14, not 20
-        assert_eq!(eval("2.0 + 3.0 * 4.0", &ctx, &interner), 14.0);
+        assert_eq!(eval("2.0 + 3.0 * 4.0", &ctx), 14.0);
         // (2 + 3) * 4 = 20
-        assert_eq!(eval("(2.0 + 3.0) * 4.0", &ctx, &interner), 20.0);
+        assert_eq!(eval("(2.0 + 3.0) * 4.0", &ctx), 20.0);
     }
 
     #[test]
     fn unary_neg() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("-5.0", &ctx, &interner), -5.0);
-        assert_eq!(eval("-(3.0 + 2.0)", &ctx, &interner), -5.0);
+        assert_eq!(eval("-5.0", &ctx), -5.0);
+        assert_eq!(eval("-(3.0 + 2.0)", &ctx), -5.0);
     }
 
     #[test]
     fn attribute_reference() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let str_id = interner.get_or_intern("Strength");
         ctx.set(str_id, 25.0);
 
-        assert_eq!(eval("Strength / 10.0", &ctx, &interner), 2.5);
+        assert_eq!(eval("Strength / 10.0", &ctx), 2.5);
     }
 
     #[test]
     fn dotted_attribute_reference() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let id = interner.get_or_intern("Damage.current");
         ctx.set(id, 80.0);
 
-        assert_eq!(eval("Damage.current / 100.0", &ctx, &interner), 0.8);
+        assert_eq!(eval("Damage.current / 100.0", &ctx), 0.8);
     }
 
     #[test]
     fn cross_entity_reference_compiles() {
-        let interner = Interner::new();
-        let expr = Expr::compile("Strength@Wielder * 2.0", &interner).unwrap();
+        let interner = test_interner();
+        let expr = Expr::compile("Strength@Wielder * 2.0", None).unwrap();
         assert_eq!(expr.dependencies.len(), 1);
         match &expr.dependencies[0] {
             Dependency::Source { alias, attribute } => {
@@ -976,39 +968,39 @@ mod tests {
 
     #[test]
     fn builtin_max() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("max(3.0, 7.0)", &ctx, &interner), 7.0);
-        assert_eq!(eval("max(-1.0, 0.0)", &ctx, &interner), 0.0);
+        assert_eq!(eval("max(3.0, 7.0)", &ctx), 7.0);
+        assert_eq!(eval("max(-1.0, 0.0)", &ctx), 0.0);
     }
 
     #[test]
     fn builtin_min() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("min(3.0, 7.0)", &ctx, &interner), 3.0);
+        assert_eq!(eval("min(3.0, 7.0)", &ctx), 3.0);
     }
 
     #[test]
     fn builtin_abs() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("abs(-5.0)", &ctx, &interner), 5.0);
-        assert_eq!(eval("abs(5.0)", &ctx, &interner), 5.0);
+        assert_eq!(eval("abs(-5.0)", &ctx), 5.0);
+        assert_eq!(eval("abs(5.0)", &ctx), 5.0);
     }
 
     #[test]
     fn builtin_clamp() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("clamp(15.0, 0.0, 10.0)", &ctx, &interner), 10.0);
-        assert_eq!(eval("clamp(-5.0, 0.0, 10.0)", &ctx, &interner), 0.0);
-        assert_eq!(eval("clamp(5.0, 0.0, 10.0)", &ctx, &interner), 5.0);
+        assert_eq!(eval("clamp(15.0, 0.0, 10.0)", &ctx), 10.0);
+        assert_eq!(eval("clamp(-5.0, 0.0, 10.0)", &ctx), 0.0);
+        assert_eq!(eval("clamp(5.0, 0.0, 10.0)", &ctx), 5.0);
     }
 
     #[test]
     fn complex_expression() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let base = interner.get_or_intern("base");
         let increased = interner.get_or_intern("increased");
@@ -1018,36 +1010,36 @@ mod tests {
         ctx.set(more, 1.3);
 
         // PoE-style: base * (1 + increased) * more = 100 * 1.5 * 1.3 = 195
-        let result = eval("base * (1.0 + increased) * more", &ctx, &interner);
+        let result = eval("base * (1.0 + increased) * more", &ctx);
         assert!((result - 195.0).abs() < 0.001);
     }
 
     #[test]
     fn division_by_zero_returns_zero() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("1.0 / 0.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("1.0 / 0.0", &ctx), 0.0);
     }
 
     #[test]
     fn empty_expression_error() {
-        let interner = Interner::new();
-        assert!(Expr::compile("", &interner).is_err());
-        assert!(Expr::compile("   ", &interner).is_err());
+        test_interner();
+        assert!(Expr::compile("", None).is_err());
+        assert!(Expr::compile("   ", None).is_err());
     }
 
     #[test]
     fn unknown_function_error() {
-        let interner = Interner::new();
+        test_interner();
         assert!(matches!(
-            Expr::compile("foo(1.0)", &interner),
+            Expr::compile("foo(1.0)", None),
             Err(CompileError::UnknownFunction(_))
         ));
     }
 
     #[test]
     fn equilibrium_decay_pattern() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let eq_id = interner.get_or_intern("equilibrium");
         let cur_id = interner.get_or_intern("current");
@@ -1055,12 +1047,12 @@ mod tests {
         ctx.set(cur_id, 40.0);
 
         // (equilibrium - current) * 0.05 = (70 - 40) * 0.05 = 1.5
-        let result = eval("(equilibrium - current) * 0.05", &ctx, &interner);
+        let result = eval("(equilibrium - current) * 0.05", &ctx);
         assert!((result - 1.5).abs() < 0.001);
 
         // When current > equilibrium, result is negative (natural pressure downward)
         ctx.set(cur_id, 90.0);
-        let result = eval("(equilibrium - current) * 0.05", &ctx, &interner);
+        let result = eval("(equilibrium - current) * 0.05", &ctx);
         assert!((result - -1.0).abs() < 0.001);
     }
 
@@ -1068,16 +1060,15 @@ mod tests {
 
     #[test]
     fn tag_query_compiles() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         let spell = TagMask::bit(3);
         tags.register("FIRE", fire);
         tags.register("SPELL", spell);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage.Added{FIRE|SPELL} * 2.0",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1098,14 +1089,13 @@ mod tests {
 
     #[test]
     fn tag_query_evaluates_with_synthetic_context() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         tags.register("FIRE", fire);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage.Added{FIRE} * 2.0",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1122,19 +1112,18 @@ mod tests {
 
     #[test]
     fn tag_query_without_resolver_errors() {
-        let interner = Interner::new();
+        test_interner();
         // compile (without tags) should error on {
-        let result = Expr::compile("Damage{FIRE}", &interner);
+        let result = Expr::compile("Damage{FIRE}", None);
         assert!(result.is_err());
     }
 
     #[test]
     fn tag_query_unknown_tag_errors() {
-        let interner = Interner::new();
+        test_interner();
         let tags = TagResolver::new(); // empty — no tags registered
-        let result = Expr::compile_with_tags(
+        let result = Expr::compile(
             "Damage{FIRE}",
-            &interner,
             Some(&tags),
         );
         assert!(matches!(result, Err(CompileError::UnknownTag(_))));
@@ -1144,130 +1133,129 @@ mod tests {
 
     #[test]
     fn comparison_greater_than() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("5.0 > 3.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("3.0 > 5.0", &ctx, &interner), 0.0);
-        assert_eq!(eval("3.0 > 3.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("5.0 > 3.0", &ctx), 1.0);
+        assert_eq!(eval("3.0 > 5.0", &ctx), 0.0);
+        assert_eq!(eval("3.0 > 3.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_less_than() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("3.0 < 5.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("5.0 < 3.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("3.0 < 5.0", &ctx), 1.0);
+        assert_eq!(eval("5.0 < 3.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_greater_equal() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("5.0 >= 3.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("3.0 >= 3.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("2.0 >= 3.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("5.0 >= 3.0", &ctx), 1.0);
+        assert_eq!(eval("3.0 >= 3.0", &ctx), 1.0);
+        assert_eq!(eval("2.0 >= 3.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_less_equal() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("3.0 <= 5.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("3.0 <= 3.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("5.0 <= 3.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("3.0 <= 5.0", &ctx), 1.0);
+        assert_eq!(eval("3.0 <= 3.0", &ctx), 1.0);
+        assert_eq!(eval("5.0 <= 3.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_equal() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("3.0 == 3.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("3.0 == 4.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("3.0 == 3.0", &ctx), 1.0);
+        assert_eq!(eval("3.0 == 4.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_not_equal() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("3.0 != 4.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("3.0 != 3.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("3.0 != 4.0", &ctx), 1.0);
+        assert_eq!(eval("3.0 != 3.0", &ctx), 0.0);
     }
 
     #[test]
     fn logical_and() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("1.0 && 1.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("1.0 && 0.0", &ctx, &interner), 0.0);
-        assert_eq!(eval("0.0 && 1.0", &ctx, &interner), 0.0);
-        assert_eq!(eval("0.0 && 0.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("1.0 && 1.0", &ctx), 1.0);
+        assert_eq!(eval("1.0 && 0.0", &ctx), 0.0);
+        assert_eq!(eval("0.0 && 1.0", &ctx), 0.0);
+        assert_eq!(eval("0.0 && 0.0", &ctx), 0.0);
     }
 
     #[test]
     fn logical_or() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
-        assert_eq!(eval("1.0 || 1.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("1.0 || 0.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("0.0 || 1.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("0.0 || 0.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("1.0 || 1.0", &ctx), 1.0);
+        assert_eq!(eval("1.0 || 0.0", &ctx), 1.0);
+        assert_eq!(eval("0.0 || 1.0", &ctx), 1.0);
+        assert_eq!(eval("0.0 || 0.0", &ctx), 0.0);
     }
 
     #[test]
     fn comparison_with_attribute() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let stealth = interner.get_or_intern("Stealth");
         ctx.set(stealth, 50.0);
-        assert_eq!(eval("Stealth > 30.0", &ctx, &interner), 1.0);
-        assert_eq!(eval("Stealth < 30.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("Stealth > 30.0", &ctx), 1.0);
+        assert_eq!(eval("Stealth < 30.0", &ctx), 0.0);
     }
 
     #[test]
     fn compound_logical_expression() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut ctx = AttributeContext::new();
         let stealth = interner.get_or_intern("Stealth");
         let enshad = interner.get_or_intern("Enshadowment");
         ctx.set(stealth, 50.0);
         ctx.set(enshad, 40.0);
         // Both true
-        assert_eq!(eval("Stealth > 30.0 && Enshadowment < 90.0", &ctx, &interner), 1.0);
+        assert_eq!(eval("Stealth > 30.0 && Enshadowment < 90.0", &ctx), 1.0);
         // First true, second false
         ctx.set(enshad, 95.0);
-        assert_eq!(eval("Stealth > 30.0 && Enshadowment < 90.0", &ctx, &interner), 0.0);
+        assert_eq!(eval("Stealth > 30.0 && Enshadowment < 90.0", &ctx), 0.0);
         // OR: one true is enough
-        assert_eq!(eval("Stealth > 30.0 || Enshadowment < 90.0", &ctx, &interner), 1.0);
+        assert_eq!(eval("Stealth > 30.0 || Enshadowment < 90.0", &ctx), 1.0);
     }
 
     #[test]
     fn comparison_precedence() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
         // a + b > c * d  →  (a + b) > (c * d)  →  (2+3) > (1*4)  →  5 > 4  →  1.0
-        assert_eq!(eval("2.0 + 3.0 > 1.0 * 4.0", &ctx, &interner), 1.0);
+        assert_eq!(eval("2.0 + 3.0 > 1.0 * 4.0", &ctx), 1.0);
     }
 
     #[test]
     fn logical_precedence() {
-        let interner = Interner::new();
+        test_interner();
         let ctx = AttributeContext::new();
         // 1 && 0 || 1  →  (1 && 0) || 1  →  0 || 1  →  1.0
-        assert_eq!(eval("1.0 && 0.0 || 1.0", &ctx, &interner), 1.0);
+        assert_eq!(eval("1.0 && 0.0 || 1.0", &ctx), 1.0);
         // 1 || 0 && 0  →  1 || (0 && 0)  →  1 || 0  →  1.0
-        assert_eq!(eval("1.0 || 0.0 && 0.0", &ctx, &interner), 1.0);
+        assert_eq!(eval("1.0 || 0.0 && 0.0", &ctx), 1.0);
     }
 
     #[test]
     fn single_tag_query() {
-        let interner = Interner::new();
+        test_interner();
         let mut tags = TagResolver::new();
         let physical = TagMask::bit(1);
         tags.register("PHYSICAL", physical);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{PHYSICAL}",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1284,14 +1272,13 @@ mod tests {
 
     #[test]
     fn cross_entity_tagged_ref_compiles() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         tags.register("FIRE", fire);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{FIRE}@weapon * 2.0",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1309,14 +1296,13 @@ mod tests {
 
     #[test]
     fn cross_entity_tagged_ref_cache_key_encodes_tag() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         tags.register("FIRE", fire);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{FIRE}@weapon",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1333,14 +1319,13 @@ mod tests {
 
     #[test]
     fn cross_entity_tagged_ref_evaluates() {
-        let interner = Interner::new();
+        let interner = test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         tags.register("FIRE", fire);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{FIRE}@weapon * 2.0",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1356,14 +1341,13 @@ mod tests {
 
     #[test]
     fn cross_entity_tagged_and_untagged_coexist() {
-        let interner = Interner::new();
+        test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         tags.register("FIRE", fire);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{FIRE}@weapon + Strength@attacker",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1380,16 +1364,15 @@ mod tests {
 
     #[test]
     fn cross_entity_multi_tag_ref() {
-        let interner = Interner::new();
+        test_interner();
         let mut tags = TagResolver::new();
         let fire = TagMask::bit(0);
         let spell = TagMask::bit(3);
         tags.register("FIRE", fire);
         tags.register("SPELL", spell);
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{FIRE|SPELL}@weapon",
-            &interner,
             Some(&tags),
         )
         .unwrap();
@@ -1404,12 +1387,12 @@ mod tests {
 
     #[test]
     fn ambiguous_tag_errors_in_expression() {
-        let interner = Interner::new();
+        test_interner();
         let mut tags = TagResolver::new();
         tags.register_namespaced("Element", "FIRE", TagMask::bit(0));
         tags.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
 
-        let result = Expr::compile_with_tags("Damage{FIRE}", &interner, Some(&tags));
+        let result = Expr::compile("Damage{FIRE}", Some(&tags));
         assert!(matches!(result, Err(CompileError::AmbiguousTag(_, _))));
 
         if let Err(CompileError::AmbiguousTag(name, alts)) = result {
@@ -1421,14 +1404,13 @@ mod tests {
 
     #[test]
     fn namespaced_tag_resolves_in_expression() {
-        let interner = Interner::new();
+        test_interner();
         let mut tags = TagResolver::new();
         tags.register_namespaced("Element", "FIRE", TagMask::bit(0));
         tags.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
 
-        let expr = Expr::compile_with_tags(
+        let expr = Expr::compile(
             "Damage{Element::FIRE}",
-            &interner,
             Some(&tags),
         )
         .unwrap();

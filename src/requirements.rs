@@ -20,7 +20,6 @@
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
-use crate::attribute_id::Interner;
 use crate::expr::Expr;
 
 // ---------------------------------------------------------------------------
@@ -30,7 +29,7 @@ use crate::expr::Expr;
 /// A single boolean requirement over attributes.
 ///
 /// The expression is compiled lazily on first [`met`](Self::met) call using
-/// the global [`Interner`].
+/// the global [`Interner`](crate::attribute_id::Interner).
 #[derive(Clone, Debug)]
 pub struct AttributeRequirement {
     source: String,
@@ -57,8 +56,7 @@ impl AttributeRequirement {
         let expr = match &self.compiled {
             Some(expr) => expr,
             None => {
-                let interner = Interner::global();
-                match Expr::compile(&self.source, &interner) {
+                match Expr::compile(&self.source, None) {
                     Ok(expr) => {
                         self.compiled = Some(expr);
                         self.compiled.as_ref().unwrap()

@@ -78,8 +78,8 @@ impl InstantModifierSet {
         Self::default()
     }
 
-    /// Add a **Set** operation (overwrites the attribute value).
-    pub fn add_set(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+    /// Push a **Set** operation (overwrites the attribute value).
+    pub fn push_set(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
         self.entries.push(InstantEntry {
             attribute: attribute.to_string(),
             op: InstantOp::Set,
@@ -87,8 +87,8 @@ impl InstantModifierSet {
         });
     }
 
-    /// Add an **Add** operation (adds to the current attribute value).
-    pub fn add_add(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+    /// Push an **Add** operation (adds to the current attribute value).
+    pub fn push_add(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
         self.entries.push(InstantEntry {
             attribute: attribute.to_string(),
             op: InstantOp::Add,
@@ -96,8 +96,8 @@ impl InstantModifierSet {
         });
     }
 
-    /// Add a **Sub** operation (subtracts from the current attribute value).
-    pub fn add_sub(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
+    /// Push a **Sub** operation (subtracts from the current attribute value).
+    pub fn push_sub(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
         self.entries.push(InstantEntry {
             attribute: attribute.to_string(),
             op: InstantOp::Sub,
@@ -313,10 +313,8 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
             let value = match &entry.value {
                 ModifierValue::Literal(v) => *v,
                 ModifierValue::ExprSource(src) => {
-                    let interner = self.interner();
-                    let expr = crate::expr::Expr::compile_with_tags(
+                    let expr = crate::expr::Expr::compile(
                         src,
-                        &interner,
                         Some(self.tag_resolver()),
                     );
                     match expr {
@@ -549,13 +547,13 @@ macro_rules! instant {
     }};
 
     (@entry $set:ident, $attribute:literal, +=, $value:expr) => {
-        $set.add_add($attribute, $value);
+        $set.push_add($attribute, $value);
     };
     (@entry $set:ident, $attribute:literal, -=, $value:expr) => {
-        $set.add_sub($attribute, $value);
+        $set.push_sub($attribute, $value);
     };
     (@entry $set:ident, $attribute:literal, =, $value:expr) => {
-        $set.add_set($attribute, $value);
+        $set.push_set($attribute, $value);
     };
 }
 
@@ -574,7 +572,7 @@ mod tests {
         resolver.register("FIRE", TagMask::bit(0));
 
         let mut instant = InstantModifierSet::new();
-        instant.add_sub(
+        instant.push_sub(
             "Life.current",
             ModifierValue::ExprSource("Damage{%element%}@weapon".into()),
         );
@@ -601,7 +599,7 @@ mod tests {
         resolver.register("SPELL", TagMask::bit(3));
 
         let mut instant = InstantModifierSet::new();
-        instant.add_sub(
+        instant.push_sub(
             "Life.current",
             ModifierValue::ExprSource("Damage{%element%}@weapon".into()),
         );
@@ -624,7 +622,7 @@ mod tests {
     fn substitute_preserves_literals() {
         let resolver = TagResolver::new();
         let mut instant = InstantModifierSet::new();
-        instant.add_add("Scorch", 5.0f32);
+        instant.push_add("Scorch", 5.0f32);
 
         let result = substitute_tag_params(&instant, &[], &resolver).unwrap();
         match &result.entries[0].value {
@@ -640,7 +638,7 @@ mod tests {
         resolver.register("PHYSICAL", TagMask::bit(1));
 
         let mut instant = InstantModifierSet::new();
-        instant.add_sub(
+        instant.push_sub(
             "Life.current",
             ModifierValue::ExprSource(
                 "Damage{%element%}@weapon * (1 - Resistance{%element%})".into(),
@@ -667,7 +665,7 @@ mod tests {
         let resolver = TagResolver::new();
 
         let mut instant = InstantModifierSet::new();
-        instant.add_sub(
+        instant.push_sub(
             "Life.current",
             ModifierValue::ExprSource("Damage{%element%}@weapon".into()),
         );
@@ -724,7 +722,7 @@ mod tests {
         resolver.register("POISON", TagMask::bit(0));
 
         let mut instant = InstantModifierSet::new();
-        instant.add_add("Status{%status%}", 10.0f32);
+        instant.push_add("Status{%status%}", 10.0f32);
 
         let result = substitute_tag_params(
             &instant,

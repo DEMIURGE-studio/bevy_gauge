@@ -109,7 +109,7 @@ fn spawn_entities(mut commands: Commands) {
             attributes! {
                 "Life"         => 80.0,
                 "Life.current" => 80.0,
-                "DodgeRating"  => 30.0,
+                "DodgeRating"  => 20.0,
                 "BlockChance"  => 0.20,
                 "BlockRating"  => 15.0,
                 "ArmorRating"  => 10.0,
@@ -130,8 +130,7 @@ fn spawn_entities(mut commands: Commands) {
         ))
         .id();
 
-    let interner = Interner::global();
-    let hit_expr = Expr::compile("Strength@attacker * 0.5 + Damage@weapon", &interner)
+    let hit_expr = Expr::compile("Intelligence@attacker * 0.5 + Damage@weapon", None)
         .expect("valid hit expression");
 
     let staff = commands

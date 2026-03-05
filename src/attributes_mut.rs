@@ -9,7 +9,7 @@ use crate::expr::{Dependency, Expr};
 use crate::graph::{register_expr_deps, unregister_expr_deps, DepNode, DependencyGraph};
 use crate::modifier::Modifier;
 use crate::node::ReduceFn;
-use crate::attribute_id::{global_rodeo, Interner, AttributeId};
+use crate::attribute_id::{global_rodeo, AttributeId};
 use crate::tags::{TagMask, TagResolver};
 
 /// System parameter for mutating entity attributes.
@@ -27,14 +27,6 @@ pub struct AttributesMut<'w, 's, F: QueryFilter + 'static = ()> {
 }
 
 impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
-    /// Get a clone of the global [`Interner`].
-    ///
-    /// Cheap (Arc clone). Useful when you need to pass an `&Interner` to APIs
-    /// like [`Expr::compile`](crate::expr::Expr::compile).
-    pub fn interner(&self) -> Interner {
-        Interner::global()
-    }
-
     /// Get a reference to the tag resolver.
     pub fn tag_resolver(&self) -> &TagResolver {
         &self.tag_resolver
@@ -176,9 +168,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         attribute: &str,
         expr_source: &str,
     ) -> Result<(), crate::expr::CompileError> {
-        let interner = Interner::global();
         let expr =
-            Expr::compile_with_tags(expr_source, &interner, Some(&self.tag_resolver))?;
+            Expr::compile(expr_source, Some(&self.tag_resolver))?;
         self.add_modifier(entity, attribute, Modifier::Expr(expr));
         Ok(())
     }
@@ -195,9 +186,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         expr_source: &str,
         tag: TagMask,
     ) -> Result<(), crate::expr::CompileError> {
-        let interner = Interner::global();
         let expr =
-            Expr::compile_with_tags(expr_source, &interner, Some(&self.tag_resolver))?;
+            Expr::compile(expr_source, Some(&self.tag_resolver))?;
         self.add_modifier_tagged(entity, attribute, Modifier::Expr(expr), tag);
         Ok(())
     }
@@ -335,31 +325,20 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// Create a **complex attribute** composed of named parts combined via an
     /// expression.
     ///
-    /// Mimics gauge's `Complex` attribute type. Each part becomes its own attribute node
-    /// (`"{name}.{part}"`) that can receive modifiers independently. A total
-    /// expression on `"{name}"` combines the parts.
-    ///
-    /// Short part names in the expression are automatically qualified with the
-    /// parent name (e.g., `base` → `Damage.base`).
+    /// Each part becomes its own attribute node (`"{name}.{part}"`) that can
+    /// receive modifiers independently. A total expression on `"{name}"`
+    /// combines the parts. Short part names in the expression are automatically
+    /// qualified with the parent name (e.g., `base` → `Damage.base`).
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // PoE-style damage: base * (1 + increased) * more
     /// attributes.complex_attribute(
     ///     entity,
     ///     "Damage",
     ///     &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)],
     ///     "base * (1 + increased) * more",
     /// )?;
-    ///
-    /// // Now add modifiers to the parts:
-    /// attributes.add_modifier(entity, "Damage.base", 100.0);
-    /// attributes.add_modifier(entity, "Damage.increased", 0.5);  // +50%
-    /// attributes.add_modifier(entity, "Damage.more", 0.2);       // 20% more (Product: 1.2×)
-    ///
-    /// // Damage = 100 * (1 + 0.5) * 1.2 = 180
-    /// let total = attributes.evaluate(entity, "Damage");
     /// ```
     pub fn complex_attribute(
         &mut self,
@@ -370,41 +349,30 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ) -> Result<(), crate::expr::CompileError> {
         let part_names: Vec<&str> = parts.iter().map(|(n, _)| *n).collect();
 
-        // Create part attribute nodes
         for (part_name, reduce) in parts {
             let attribute_name = format!("{}.{}", name, part_name);
             let attribute_id = self.intern(&attribute_name);
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.ensure_node(attribute_id, reduce.clone());
-                // Evaluate the empty node so its value (0.0 or 1.0) is in the context
                 attrs.evaluate_and_cache(attribute_id);
             }
         }
 
-        // Qualify the expression: replace short part names with "Name.part"
         let qualified = qualify_expression(name, &part_names, expression, None);
-
-        // Add the expression modifier on the parent attribute
         self.add_expr_modifier(entity, name, &qualified)
     }
 
     /// Create a **tagged attribute** — a complex attribute with tag-filtered
     /// evaluation that materializes lazily.
     ///
-    /// Mimics gauge's `Tagged` attribute type. Like [`complex_attribute`](Self::complex_attribute),
-    /// this creates named part nodes and stores an expression template. Unlike
-    /// `complex_attribute`, the expression is **not** compiled immediately.
-    /// Instead, when [`evaluate_tagged`](Self::evaluate_tagged) is called for a
-    /// new tag combo, the template auto-generates a tagged expression modifier
-    /// with `{TAG|TAG}` syntax. No need to enumerate combos up front.
-    ///
-    /// Requires that all tag bits used at evaluation time have registered names
-    /// in the [`TagResolver`].
+    /// Each part becomes its own attribute node. When
+    /// [`evaluate_tagged`](Self::evaluate_tagged) is called for a new tag
+    /// combo, the template auto-generates a tagged expression modifier with
+    /// `{TAG|TAG}` syntax. No need to enumerate combos up front.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // One call — no tag combos required:
     /// attributes.tagged_attribute(
     ///     entity,
     ///     "Damage",
@@ -412,14 +380,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ///     "added * (1 + increased)",
     /// )?;
     ///
-    /// // Add tagged modifiers to parts:
     /// attributes.add_modifier_tagged(entity, "Damage.added", 25.0, PHYSICAL | MELEE);
-    /// attributes.add_modifier_tagged(entity, "Damage.added", 10.0, FIRE | MELEE);
-    /// attributes.add_modifier_tagged(entity, "Damage.increased", 0.25, PHYSICAL);
-    ///
-    /// // Query any combo — expression auto-materializes on first use:
-    /// let phys = attributes.evaluate_tagged(entity, "Damage", PHYSICAL | MELEE);
-    /// let fire = attributes.evaluate_tagged(entity, "Damage", FIRE | MELEE);
     /// ```
     pub fn tagged_attribute(
         &mut self,
@@ -428,7 +389,6 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         parts: &[(&str, ReduceFn)],
         expression: &str,
     ) -> Result<(), crate::expr::CompileError> {
-        // Create part attribute nodes
         for (part_name, reduce) in parts {
             let attribute_name = format!("{}.{}", name, part_name);
             let attribute_id = self.intern(&attribute_name);
@@ -438,13 +398,11 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             }
         }
 
-        // Ensure the parent node exists (Sum) so it's in the graph
         let parent_id = self.intern(name);
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             attrs.ensure_node(parent_id, ReduceFn::Sum);
         }
 
-        // Store the template for lazy materialization
         let template = crate::attributes::AttributeTemplate {
             expression: expression.to_string(),
             parts: parts.iter().map(|(n, _)| n.to_string()).collect(),
@@ -530,7 +488,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
     /// Re-evaluate a known attribute by name using a read-only interner lookup.
     ///
-    /// Uses [`Interner::get`] instead of [`Interner::get_or_intern`], which
+    /// Uses [`Interner::get`](crate::attribute_id::Interner::get) instead of
+    /// [`Interner::get_or_intern`](crate::attribute_id::Interner::get_or_intern), which
     /// avoids the write-lock path on the interner. Returns `None` if the
     /// attribute name hasn't been interned yet.
     pub fn try_evaluate(&mut self, entity: Entity, attribute: &str) -> Option<f32> {

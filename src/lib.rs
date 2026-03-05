@@ -21,22 +21,19 @@ pub use bevy_gauge_macros::AttributeComponent;
 pub use bevy_gauge_macros::define_tags;
 
 pub mod prelude {
-    pub use crate::attribute_id::{AttributeId, Interner};
-    pub use crate::expr::{Expr, Op, CompileError};
-    pub use crate::context::AttributeContext;
-    pub use crate::modifier::{Modifier, TaggedModifier};
+    pub use crate::expr::{Expr, CompileError};
+    pub use crate::modifier::Modifier;
     pub use crate::modifier_set::{ModifierSet, ModifierValue, AttributeInitializer};
-    pub use crate::node::{AttributeNode, ReduceFn};
+    pub use crate::node::ReduceFn;
     pub use crate::tags::{TagMask, TagResolver};
-    pub use crate::graph::DependencyGraph;
     pub use crate::attributes::Attributes;
     pub use crate::attributes_mut::AttributesMut;
     pub use crate::derived::{
-        AttributeRegistration, AttributeDerived, WriteBack,
+        AttributeDerived, WriteBack,
         AttributeDerivedSet, WriteBackSet, AttributesAppExt,
     };
     pub use crate::instant::{
-        InstantModifierSet, InstantOp, InstantEntry, EvaluatedInstantEntry,
+        InstantModifierSet, EvaluatedInstantEntry,
         AttributeQueries, InstantExt,
     };
     pub use crate::requirements::AttributeRequirements;
