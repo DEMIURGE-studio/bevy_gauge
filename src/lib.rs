@@ -37,8 +37,7 @@ pub mod prelude {
     };
     pub use crate::instant::{
         InstantModifierSet, InstantOp, InstantEntry, EvaluatedInstantEntry,
-        apply_instant, evaluate_instant, apply_evaluated_instant,
-        evaluate_expr_with_roles, evaluate_expr_with_roles_ctx,
+        AttributeQueries, InstantExt,
     };
     pub use crate::requirements::AttributeRequirements;
     pub use crate::plugin::AttributesPlugin;

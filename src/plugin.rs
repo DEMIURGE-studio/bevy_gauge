@@ -13,8 +13,11 @@ use crate::tags::TagResolver;
 /// [`TagResolver`] resources, and sets up:
 /// - Observer: clean up dependency edges when entities with `Attributes` are despawned.
 /// - Observer: apply `AttributeInitializer` modifier sets when they are added to entities.
-/// - System sets: `WriteBackSet` → `AttributeDerivedSet` in `PostUpdate`
-///   (write-back first, then derived updates).
+/// - System sets: `WriteBackSet` → `AttributeDerivedSet` in both `PreUpdate`
+///   and `PostUpdate`. The `PreUpdate` pass flushes pending component-side
+///   writes so that `Update` systems see fresh attributes and components.
+///   The `PostUpdate` pass syncs any attribute changes made during `Update`
+///   back to derived components.
 /// - Auto-registration: iterates all [`AttributeRegistration`] entries
 ///   submitted via `inventory` (from `attribute_component!`, `register_derived!`,
 ///   or `register_write_back!`).
@@ -29,6 +32,10 @@ impl Plugin for AttributesPlugin {
 
         app.add_observer(on_attributes_removed)
             .add_observer(apply_initial_attributes)
+            .configure_sets(
+                PreUpdate,
+                (WriteBackSet, AttributeDerivedSet).chain(),
+            )
             .configure_sets(
                 PostUpdate,
                 (WriteBackSet, AttributeDerivedSet).chain(),

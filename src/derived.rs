@@ -27,12 +27,12 @@ use crate::attributes_mut::AttributesMut;
 // ---------------------------------------------------------------------------
 
 /// System set for systems that write [`WriteBack`] component values into attributes.
-/// Runs in `PostUpdate`, before [`AttributeDerivedSet`].
+/// Runs in both `PreUpdate` and `PostUpdate`, before [`AttributeDerivedSet`].
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WriteBackSet;
 
 /// System set for systems that update [`AttributeDerived`] components from attributes.
-/// Runs in `PostUpdate`, after [`WriteBackSet`].
+/// Runs in both `PreUpdate` and `PostUpdate`, after [`WriteBackSet`].
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AttributeDerivedSet;
 
@@ -155,20 +155,28 @@ pub fn update_write_back<T: WriteBack>(
 pub trait AttributesAppExt {
     /// Register a [`AttributeDerived`] component.
     ///
-    /// Adds a system to [`PostUpdate`] (in the [`AttributeDerivedSet`]) that
-    /// updates all entities with this component from their attribute values.
+    /// Adds sync systems to both [`PreUpdate`] and [`PostUpdate`] (in the
+    /// [`AttributeDerivedSet`]). The `PreUpdate` pass ensures components are
+    /// fresh before `Update` gameplay systems run; the `PostUpdate` pass
+    /// catches attribute changes made during `Update`.
     fn register_attribute_derived<T: AttributeDerived>(&mut self) -> &mut Self;
 
     /// Register a [`WriteBack`] component.
     ///
-    /// Adds a system to [`PostUpdate`] (in the [`WriteBackSet`]) that
-    /// writes this component's values back into the attribute system.
+    /// Adds write-back systems to both [`PreUpdate`] and [`PostUpdate`] (in
+    /// the [`WriteBackSet`]). The `PreUpdate` pass flushes component-side
+    /// changes into attributes before `Update`; the `PostUpdate` pass catches
+    /// changes made during `Update`.
     fn register_write_back<T: WriteBack>(&mut self) -> &mut Self;
 }
 
 impl AttributesAppExt for App {
     fn register_attribute_derived<T: AttributeDerived>(&mut self) -> &mut Self {
         self.add_systems(
+            PreUpdate,
+            update_attribute_derived::<T>.in_set(AttributeDerivedSet),
+        )
+        .add_systems(
             PostUpdate,
             update_attribute_derived::<T>.in_set(AttributeDerivedSet),
         )
@@ -176,6 +184,10 @@ impl AttributesAppExt for App {
 
     fn register_write_back<T: WriteBack>(&mut self) -> &mut Self {
         self.add_systems(
+            PreUpdate,
+            update_write_back::<T>.in_set(WriteBackSet),
+        )
+        .add_systems(
             PostUpdate,
             update_write_back::<T>.in_set(WriteBackSet),
         )

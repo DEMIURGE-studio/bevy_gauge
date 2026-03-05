@@ -102,7 +102,6 @@ fn register_tags(mut resolver: ResMut<TagResolver>) {
 fn spawn_entities(mut commands: Commands) {
     let warrior = commands
         .spawn((
-            Attributes::new(),
             attributes! {
                 "Strength"     => 50.0,
                 "Intelligence" => 10.0,
@@ -113,7 +112,6 @@ fn spawn_entities(mut commands: Commands) {
 
     let mage = commands
         .spawn((
-            Attributes::new(),
             attributes! {
                 "Strength"     => 15.0,
                 "Intelligence" => 60.0,
@@ -125,9 +123,9 @@ fn spawn_entities(mut commands: Commands) {
     let sword = commands
         .spawn((
             Sword,
-            Attributes::new(),
             SwordDamageDisplay::default(),
             Name::new("Flaming Greatsword"),
+            Attributes::new(),
         ))
         .id();
 

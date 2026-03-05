@@ -30,6 +30,8 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         gen_constants(tag_node, &mut counter, &mut const_defs, &mut register_calls);
     }
 
+    let struct_name_str = struct_name_ident.to_string();
+
     let expanded = quote! {
         #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
         pub struct #struct_name_ident;
@@ -38,7 +40,12 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             #(#const_defs)*
 
             /// Register every tag (leaves and groups) with a [`TagResolver`].
+            ///
+            /// Tags are registered both as short names (e.g., `"FIRE"`) and
+            /// namespaced names (e.g., `"Tags::FIRE"`). If a short name
+            /// collides with another namespace, the namespaced form must be used.
             pub fn register(resolver: &mut bevy_gauge::tags::TagResolver) {
+                let _ns = #struct_name_str;
                 #(#register_calls)*
             }
         }
@@ -105,7 +112,7 @@ fn gen_constants(
     });
 
     register_calls.push(quote! {
-        resolver.register(#name_str, Self::#const_ident);
+        resolver.register_namespaced(_ns, #name_str, Self::#const_ident);
     });
 
     // Return a simple reference to the const so parent OR expressions stay readable.

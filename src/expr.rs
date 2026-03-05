@@ -29,6 +29,16 @@ pub enum Op {
         /// Used for local context lookup during evaluation.
         cache_key: AttributeId,
     },
+    /// Load a tag-filtered attribute value from a cross-entity source.
+    ///
+    /// Like `LoadSource` but carries a [`TagMask`] so the caller can
+    /// read the source entity's value via `get_tagged` instead of `get`.
+    LoadSourceTagged {
+        alias: AttributeId,
+        attribute: AttributeId,
+        mask: TagMask,
+        cache_key: AttributeId,
+    },
     // Binary arithmetic (pops two, pushes one)
     Add,
     Sub,
@@ -91,6 +101,8 @@ pub enum Dependency {
     Local(AttributeId),
     /// A cross-entity attribute reference (e.g., `Strength@Wielder`).
     Source { alias: AttributeId, attribute: AttributeId },
+    /// A cross-entity attribute reference filtered by tags (e.g., `Damage{FIRE}@weapon`).
+    SourceTagQuery { alias: AttributeId, attribute: AttributeId, mask: TagMask },
     /// A local attribute reference filtered by tags (e.g., `Damage.Added{FIRE|SPELL}`).
     ///
     /// The expression depends on the synthetic tag-query node. The synthetic
@@ -135,6 +147,9 @@ pub enum CompileError {
     /// tags for expression generation (some bits have no registered name in
     /// the [`TagResolver`](crate::tags::TagResolver)).
     UnresolvableTagMask(crate::tags::TagMask),
+    /// A tag name is ambiguous — it was registered by multiple namespaces.
+    /// The `Vec<String>` contains the fully-qualified alternatives.
+    AmbiguousTag(String, Vec<String>),
 }
 
 impl fmt::Display for CompileError {
@@ -153,6 +168,12 @@ impl fmt::Display for CompileError {
                 "cannot decompose TagMask({}) into named tags — \
                  some bits are not registered in TagResolver",
                 mask.0
+            ),
+            CompileError::AmbiguousTag(name, alternatives) => write!(
+                f,
+                "ambiguous tag '{}' — registered by multiple namespaces, use one of: {}",
+                name,
+                alternatives.join(", ")
             ),
         }
     }
@@ -180,6 +201,7 @@ enum Token {
     LBrace,       // { for tag query open
     RBrace,       // } for tag query close
     Pipe,         // | for tag OR within braces
+    ColonColon,   // :: for namespaced tags
     // Comparison
     GreaterThan,  // >
     LessThan,     // <
@@ -251,6 +273,9 @@ impl Tokenizer {
             }
             '!' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1] == '=' => {
                 self.pos += 2; Ok(Token::BangEqual)
+            }
+            ':' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1] == ':' => {
+                self.pos += 2; Ok(Token::ColonColon)
             }
             '.' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1].is_ascii_digit() => {
                 // Decimal number starting with '.' like .5
@@ -456,19 +481,34 @@ impl<'a> Parser<'a> {
                 Token::Ident(alias_name) => {
                     let attribute_id = self.interner.get_or_intern(&full_name);
                     let alias_id = self.interner.get_or_intern(&alias_name);
-                    // Pre-compute composite cache key: "AttributeName@Alias"
-                    let composite = format!("{}@{}", full_name, alias_name);
-                    let cache_key = self.interner.get_or_intern(&composite);
-                    self.dependencies
-                        .push(Dependency::Source { alias: alias_id, attribute: attribute_id });
-                    self.ops.push(Op::LoadSource {
-                        alias: alias_id,
-                        attribute: attribute_id,
-                        cache_key,
-                    });
-                    // Note: cross-entity tagged refs (Attribute{TAG}@Alias) are not yet
-                    // supported. The tag query portion is parsed but ignored for
-                    // cross-entity references. This can be extended in the future.
+
+                    if let Some(mask) = tag_mask {
+                        let tagged_composite = format!("\0tag:{}@{}:{}", full_name, alias_name, mask.0);
+                        let cache_key = self.interner.get_or_intern(&tagged_composite);
+                        self.dependencies.push(Dependency::SourceTagQuery {
+                            alias: alias_id,
+                            attribute: attribute_id,
+                            mask,
+                        });
+                        self.ops.push(Op::LoadSourceTagged {
+                            alias: alias_id,
+                            attribute: attribute_id,
+                            mask,
+                            cache_key,
+                        });
+                    } else {
+                        let composite = format!("{}@{}", full_name, alias_name);
+                        let cache_key = self.interner.get_or_intern(&composite);
+                        self.dependencies.push(Dependency::Source {
+                            alias: alias_id,
+                            attribute: attribute_id,
+                        });
+                        self.ops.push(Op::LoadSource {
+                            alias: alias_id,
+                            attribute: attribute_id,
+                            cache_key,
+                        });
+                    }
                 }
                 other => {
                     return Err(CompileError::Expected(format!(
@@ -516,9 +556,31 @@ impl<'a> Parser<'a> {
         loop {
             match self.advance() {
                 Token::Ident(name) => {
-                    let tag = tags
-                        .resolve(&name)
-                        .ok_or_else(|| CompileError::UnknownTag(name.clone()))?;
+                    // Check for namespaced form: Namespace::TAG
+                    let full_name = if self.peek() == &Token::ColonColon {
+                        self.advance(); // consume ::
+                        match self.advance() {
+                            Token::Ident(tag_part) => format!("{}::{}", name, tag_part),
+                            other => {
+                                return Err(CompileError::Expected(format!(
+                                    "tag name after '::', got {:?}",
+                                    other
+                                )));
+                            }
+                        }
+                    } else {
+                        name
+                    };
+
+                    let tag = match tags.resolve(&full_name) {
+                        Some(m) => m,
+                        None => {
+                            if let Some(alts) = tags.ambiguous_alternatives(&full_name) {
+                                return Err(CompileError::AmbiguousTag(full_name, alts));
+                            }
+                            return Err(CompileError::UnknownTag(full_name));
+                        }
+                    };
                     mask = mask | tag;
                 }
                 other => {
@@ -686,10 +748,7 @@ impl Expr {
                     stack[sp] = context.get(*id);
                     sp += 1;
                 }
-                Op::LoadSource { cache_key, .. } => {
-                    // Source values are cached in the local context under the
-                    // composite key (e.g., "Strength@Wielder"). If not cached
-                    // yet, resolves to 0.0.
+                Op::LoadSource { cache_key, .. } | Op::LoadSourceTagged { cache_key, .. } => {
                     stack[sp] = context.get(*cache_key);
                     sp += 1;
                 }
@@ -807,15 +866,21 @@ impl Expr {
         &self.dependencies
     }
 
-    /// Iterate over source cache entries: (alias, attribute, cache_key) triples.
+    /// Iterate over source cache entries: `(alias, attribute, cache_key, tag_mask)`.
     ///
     /// Used by `AttributesMut` to know which composite keys to populate
-    /// in the local context when a source alias is set/changed.
-    pub fn source_cache_keys(&self) -> impl Iterator<Item = (AttributeId, AttributeId, AttributeId)> + '_ {
+    /// in the local context when a source alias is set/changed. When
+    /// `tag_mask` is `Some`, the value should be read via `get_tagged`.
+    pub fn source_cache_keys(&self) -> impl Iterator<Item = (AttributeId, AttributeId, AttributeId, Option<TagMask>)> + '_ {
         self.ops
             .iter()
             .filter_map(|op| match op {
-                Op::LoadSource { alias, attribute, cache_key } => Some((*alias, *attribute, *cache_key)),
+                Op::LoadSource { alias, attribute, cache_key } => {
+                    Some((*alias, *attribute, *cache_key, None))
+                }
+                Op::LoadSourceTagged { alias, attribute, cache_key, mask } => {
+                    Some((*alias, *attribute, *cache_key, Some(*mask)))
+                }
                 _ => None,
             })
     }
@@ -1210,6 +1275,167 @@ mod tests {
         match &expr.dependencies[0] {
             Dependency::TagQuery { mask, .. } => {
                 assert_eq!(*mask, physical);
+            }
+            other => panic!("expected TagQuery, got {:?}", other),
+        }
+    }
+
+    // --- Cross-entity tagged ref tests ---
+
+    #[test]
+    fn cross_entity_tagged_ref_compiles() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        let fire = TagMask::bit(0);
+        tags.register("FIRE", fire);
+
+        let expr = Expr::compile_with_tags(
+            "Damage{FIRE}@weapon * 2.0",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        assert_eq!(expr.dependencies.len(), 1);
+        match &expr.dependencies[0] {
+            Dependency::SourceTagQuery { alias, attribute, mask } => {
+                assert_eq!(interner.resolve(*alias), "weapon");
+                assert_eq!(interner.resolve(*attribute), "Damage");
+                assert_eq!(*mask, fire);
+            }
+            other => panic!("expected SourceTagQuery, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cross_entity_tagged_ref_cache_key_encodes_tag() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        let fire = TagMask::bit(0);
+        tags.register("FIRE", fire);
+
+        let expr = Expr::compile_with_tags(
+            "Damage{FIRE}@weapon",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        let entries: Vec<_> = expr.source_cache_keys().collect();
+        assert_eq!(entries.len(), 1);
+        let (alias, attribute, cache_key, tag_mask) = entries[0];
+        assert_eq!(interner.resolve(alias), "weapon");
+        assert_eq!(interner.resolve(attribute), "Damage");
+        assert_eq!(tag_mask, Some(fire));
+        let expected_key = format!("\0tag:Damage@weapon:{}", fire.0);
+        assert_eq!(interner.resolve(cache_key), expected_key);
+    }
+
+    #[test]
+    fn cross_entity_tagged_ref_evaluates() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        let fire = TagMask::bit(0);
+        tags.register("FIRE", fire);
+
+        let expr = Expr::compile_with_tags(
+            "Damage{FIRE}@weapon * 2.0",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        let cache_key_str = format!("\0tag:Damage@weapon:{}", fire.0);
+        let cache_key_id = interner.get_or_intern(&cache_key_str);
+
+        let mut ctx = AttributeContext::new();
+        ctx.set(cache_key_id, 35.0);
+
+        assert_eq!(expr.evaluate(&ctx), 70.0);
+    }
+
+    #[test]
+    fn cross_entity_tagged_and_untagged_coexist() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        let fire = TagMask::bit(0);
+        tags.register("FIRE", fire);
+
+        let expr = Expr::compile_with_tags(
+            "Damage{FIRE}@weapon + Strength@attacker",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        assert_eq!(expr.dependencies.len(), 2);
+        assert!(matches!(&expr.dependencies[0], Dependency::SourceTagQuery { .. }));
+        assert!(matches!(&expr.dependencies[1], Dependency::Source { .. }));
+
+        let entries: Vec<_> = expr.source_cache_keys().collect();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].3.is_some()); // tagged
+        assert!(entries[1].3.is_none()); // untagged
+    }
+
+    #[test]
+    fn cross_entity_multi_tag_ref() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        let fire = TagMask::bit(0);
+        let spell = TagMask::bit(3);
+        tags.register("FIRE", fire);
+        tags.register("SPELL", spell);
+
+        let expr = Expr::compile_with_tags(
+            "Damage{FIRE|SPELL}@weapon",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        match &expr.dependencies[0] {
+            Dependency::SourceTagQuery { mask, .. } => {
+                assert_eq!(*mask, fire | spell);
+            }
+            other => panic!("expected SourceTagQuery, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ambiguous_tag_errors_in_expression() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        tags.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        tags.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        let result = Expr::compile_with_tags("Damage{FIRE}", &interner, Some(&tags));
+        assert!(matches!(result, Err(CompileError::AmbiguousTag(_, _))));
+
+        if let Err(CompileError::AmbiguousTag(name, alts)) = result {
+            assert_eq!(name, "FIRE");
+            assert!(alts.contains(&"ELEMENT::FIRE".to_string()));
+            assert!(alts.contains(&"WEAPON::FIRE".to_string()));
+        }
+    }
+
+    #[test]
+    fn namespaced_tag_resolves_in_expression() {
+        let interner = Interner::new();
+        let mut tags = TagResolver::new();
+        tags.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        tags.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        let expr = Expr::compile_with_tags(
+            "Damage{Element::FIRE}",
+            &interner,
+            Some(&tags),
+        )
+        .unwrap();
+
+        match &expr.dependencies[0] {
+            Dependency::TagQuery { mask, .. } => {
+                assert_eq!(*mask, TagMask::bit(0));
             }
             other => panic!("expected TagQuery, got {:?}", other),
         }

@@ -350,19 +350,16 @@ pub fn register_expr_deps(
                 let source = DepNode::new(entity, *source_attribute);
                 graph.add_edge(source, dependent);
             }
-            Dependency::Source { alias, attribute } => {
-                // Record usage regardless of whether alias is resolved yet
+            Dependency::Source { alias, attribute }
+            | Dependency::SourceTagQuery { alias, attribute, .. } => {
                 graph.record_alias_usage(entity, *alias, attribute_id, *attribute);
 
-                // If the alias is currently resolved, add the edge
                 if let Some(source_entity) = graph.resolve_alias(entity, *alias) {
                     let source = DepNode::new(source_entity, *attribute);
                     graph.add_edge(source, dependent);
                 }
             }
             Dependency::TagQuery { synthetic, .. } => {
-                // The expression depends on the synthetic tag-query node's cached value.
-                // The synthetic → parent edge is set up by ensure_tag_query.
                 let source = DepNode::new(entity, *synthetic);
                 graph.add_edge(source, dependent);
             }
@@ -385,7 +382,8 @@ pub fn unregister_expr_deps(
                 let source = DepNode::new(entity, *source_attribute);
                 graph.remove_edge(source, dependent);
             }
-            Dependency::Source { alias, attribute } => {
+            Dependency::Source { alias, attribute }
+            | Dependency::SourceTagQuery { alias, attribute, .. } => {
                 graph.remove_alias_usage(entity, *alias, attribute_id, *attribute);
 
                 if let Some(source_entity) = graph.resolve_alias(entity, *alias) {

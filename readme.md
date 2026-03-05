@@ -159,7 +159,7 @@ let roles: &[(&str, Entity)] = &[
     ("bow", bow_entity),
     ("attacker", attacker_entity),
 ];
-apply_instant(&on_hit, roles, target_entity, &mut attributes);
+attributes.apply_instant(&on_hit, roles, target_entity);
 ```
 
 ### Batch Operations

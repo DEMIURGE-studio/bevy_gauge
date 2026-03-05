@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -48,7 +48,7 @@ impl TagMask {
     /// # Examples
     ///
     /// ```
-    /// # use bevy_attributes::prelude::TagMask;
+    /// # use bevy_gauge::prelude::TagMask;
     /// let fire = TagMask::bit(0);
     /// let physical = TagMask::bit(1);
     /// let melee = TagMask::bit(2);
@@ -107,6 +107,12 @@ pub struct TagResolver {
     /// Reverse mapping: bit position → registered tag name.
     /// Only populated for single-bit masks registered via [`register`](Self::register).
     reverse_tags: HashMap<u32, String>,
+    /// Short names that have been registered by more than one namespace.
+    /// These require fully-qualified `Namespace::TAG` syntax in expressions.
+    ambiguous: HashSet<String>,
+    /// Tracks which namespace owns each short name (first registrant).
+    /// Used to detect when a second namespace tries to register the same short name.
+    short_name_owner: HashMap<String, String>,
 }
 
 impl TagResolver {
@@ -129,10 +135,63 @@ impl TagResolver {
         }
     }
 
+    /// Register a tag name with a namespace.
+    ///
+    /// Registers both the short form (`"FIRE"`) and the namespaced form
+    /// (`"Element::FIRE"`). If the short form was already registered by
+    /// a different namespace, it is marked as ambiguous — callers must
+    /// use the fully-qualified `Namespace::TAG` form in expressions.
+    pub fn register_namespaced(&mut self, namespace: &str, name: &str, mask: TagMask) {
+        let upper_name = name.to_uppercase();
+        let upper_ns = namespace.to_uppercase();
+        let namespaced = format!("{}::{}", upper_ns, upper_name);
+
+        self.tags.insert(namespaced, mask);
+
+        if let Some(existing_ns) = self.short_name_owner.get(&upper_name) {
+            if *existing_ns != upper_ns {
+                self.ambiguous.insert(upper_name.clone());
+            }
+        } else {
+            self.short_name_owner.insert(upper_name.clone(), upper_ns);
+            self.tags.insert(upper_name.clone(), mask);
+        }
+
+        if mask.0.count_ones() == 1 {
+            self.reverse_tags.insert(mask.0.trailing_zeros(), upper_name);
+        }
+    }
+
     /// Resolve a tag name to its mask. Case-insensitive.
-    /// Returns `None` if the tag name hasn't been registered.
+    ///
+    /// Supports both short names (`"FIRE"`) and namespaced names
+    /// (`"Element::FIRE"`). Returns `None` if the name is unregistered
+    /// or if a short name is ambiguous (registered by multiple namespaces).
     pub fn resolve(&self, name: &str) -> Option<TagMask> {
-        self.tags.get(&name.to_uppercase()).copied()
+        let upper = name.to_uppercase();
+        if self.ambiguous.contains(&upper) {
+            return None;
+        }
+        self.tags.get(&upper).copied()
+    }
+
+    /// Return the list of namespaced forms available for an ambiguous short name.
+    ///
+    /// Returns `None` if the name is not ambiguous.
+    pub fn ambiguous_alternatives(&self, name: &str) -> Option<Vec<String>> {
+        let upper = name.to_uppercase();
+        if !self.ambiguous.contains(&upper) {
+            return None;
+        }
+        let mut alternatives = Vec::new();
+        let suffix = format!("::{}", upper);
+        for key in self.tags.keys() {
+            if key.ends_with(&suffix) {
+                alternatives.push(key.clone());
+            }
+        }
+        alternatives.sort();
+        Some(alternatives)
     }
 
     /// Resolve multiple tag names and OR them together.
@@ -373,5 +432,80 @@ mod tests {
 
         // Unresolvable
         assert_eq!(resolver.tag_suffix(TagMask::bit(5)), None);
+    }
+
+    // --- Namespaced resolution tests ---
+
+    #[test]
+    fn namespaced_register_resolves_short_and_qualified() {
+        let mut resolver = TagResolver::new();
+        let fire = TagMask::bit(0);
+        resolver.register_namespaced("Element", "FIRE", fire);
+
+        assert_eq!(resolver.resolve("FIRE"), Some(fire));
+        assert_eq!(resolver.resolve("Element::FIRE"), Some(fire));
+        assert_eq!(resolver.resolve("fire"), Some(fire)); // case insensitive
+        assert_eq!(resolver.resolve("element::fire"), Some(fire));
+    }
+
+    #[test]
+    fn namespaced_single_namespace_no_ambiguity() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        resolver.register_namespaced("Element", "COLD", TagMask::bit(1));
+
+        assert_eq!(resolver.resolve("FIRE"), Some(TagMask::bit(0)));
+        assert_eq!(resolver.resolve("COLD"), Some(TagMask::bit(1)));
+        assert!(resolver.ambiguous_alternatives("FIRE").is_none());
+    }
+
+    #[test]
+    fn namespaced_collision_marks_ambiguous() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        resolver.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        // Short name is now ambiguous
+        assert_eq!(resolver.resolve("FIRE"), None);
+
+        // Qualified names still work (case insensitive)
+        assert_eq!(resolver.resolve("ELEMENT::FIRE"), Some(TagMask::bit(0)));
+        assert_eq!(resolver.resolve("WEAPON::FIRE"), Some(TagMask::bit(4)));
+        assert_eq!(resolver.resolve("Element::FIRE"), Some(TagMask::bit(0)));
+    }
+
+    #[test]
+    fn namespaced_ambiguous_alternatives() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        resolver.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        let alts = resolver.ambiguous_alternatives("FIRE").unwrap();
+        assert_eq!(alts.len(), 2);
+        assert!(alts.contains(&"ELEMENT::FIRE".to_string()));
+        assert!(alts.contains(&"WEAPON::FIRE".to_string()));
+    }
+
+    #[test]
+    fn namespaced_non_colliding_tags_resolve_normally() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        resolver.register_namespaced("Weapon", "SWORD", TagMask::bit(4));
+
+        assert_eq!(resolver.resolve("FIRE"), Some(TagMask::bit(0)));
+        assert_eq!(resolver.resolve("SWORD"), Some(TagMask::bit(4)));
+        assert!(resolver.ambiguous_alternatives("FIRE").is_none());
+        assert!(resolver.ambiguous_alternatives("SWORD").is_none());
+    }
+
+    #[test]
+    fn namespaced_mixed_with_plain_register() {
+        let mut resolver = TagResolver::new();
+        resolver.register("FIRE", TagMask::bit(0));
+        resolver.register_namespaced("Element", "COLD", TagMask::bit(1));
+
+        assert_eq!(resolver.resolve("FIRE"), Some(TagMask::bit(0)));
+        assert_eq!(resolver.resolve("COLD"), Some(TagMask::bit(1)));
+        assert_eq!(resolver.resolve("ELEMENT::COLD"), Some(TagMask::bit(1)));
     }
 }

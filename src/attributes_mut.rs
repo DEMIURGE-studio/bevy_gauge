@@ -52,6 +52,10 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         global_rodeo().resolve(&id.0)
     }
 
+    pub fn value(&self, entity: Entity, attribute: &str) -> f32 {
+        self.query.get(entity).ok().map(|a| a.value(attribute)).unwrap_or(0.0)
+    }
+
     /// Get read-only access to an entity's [`Attributes`].
     ///
     /// Useful when you need to inspect attribute values through `AttributesMut`
@@ -265,15 +269,45 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
-            // Remove all untagged flat modifiers, preserving expressions and tagged mods.
             node.modifiers.retain(|tm| {
                 !(tm.tag.is_empty() && matches!(tm.modifier, Modifier::Flat(_)))
             });
-            // Add the replacement value.
             node.modifiers
                 .push(crate::modifier::TaggedModifier::global(Modifier::Flat(
                     value,
                 )));
+        }
+
+        self.evaluate_and_propagate(entity, attribute_id);
+    }
+
+    /// Replace all flat modifiers with a specific tag on an attribute.
+    ///
+    /// Like [`set_base`](Self::set_base), but targets modifiers with an exact
+    /// tag match instead of untagged modifiers. Expression modifiers and
+    /// modifiers with different tags are preserved.
+    pub fn set_base_tagged(
+        &mut self,
+        entity: Entity,
+        attribute: &str,
+        value: f32,
+        tag: TagMask,
+    ) {
+        if tag.is_empty() {
+            return self.set_base(entity, attribute, value);
+        }
+
+        let attribute_id = self.intern(attribute);
+
+        if let Ok(mut attrs) = self.query.get_mut(entity) {
+            let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
+            node.modifiers.retain(|tm| {
+                !(tm.tag == tag && matches!(tm.modifier, Modifier::Flat(_)))
+            });
+            node.modifiers.push(crate::modifier::TaggedModifier::new(
+                Modifier::Flat(value),
+                tag,
+            ));
         }
 
         self.evaluate_and_propagate(entity, attribute_id);
@@ -553,97 +587,6 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     }
 
     // -----------------------------------------------------------------------
-    // Ad-hoc expression evaluation with role-entity mappings
-    // -----------------------------------------------------------------------
-
-    /// Evaluate a compiled expression with temporary role-entity source aliases.
-    ///
-    /// Each `(role_name, entity)` pair is registered as a cross-entity source
-    /// on `target_entity` so that `Attribute@role` references in the expression
-    /// resolve correctly. Sources are cleaned up after evaluation.
-    ///
-    /// `target_entity` is the entity whose attribute context is used for local
-    /// `Op::Load` references (e.g., bare `Strength` with no `@alias`).
-    pub fn evaluate_expr_with_roles(
-        &mut self,
-        expr: &Expr,
-        target_entity: Entity,
-        roles: &[(&str, Entity)],
-    ) -> f32 {
-        self.evaluate_expr_with_roles_ctx(expr, target_entity, roles, None)
-    }
-
-    /// Like [`evaluate_expr_with_roles`](Self::evaluate_expr_with_roles) but
-    /// also injects extra `(name, value)` pairs into the target entity's
-    /// context before evaluation (e.g., `"initialHit"` for the damage pipeline).
-    /// Injected values are removed after evaluation.
-    pub fn evaluate_expr_with_roles_ctx(
-        &mut self,
-        expr: &Expr,
-        target_entity: Entity,
-        roles: &[(&str, Entity)],
-        extra: Option<&[(&str, f32)]>,
-    ) -> f32 {
-        // 1. Register temporary source aliases
-        for &(alias, source_entity) in roles {
-            self.register_source(target_entity, alias, source_entity);
-        }
-
-        // 2. Manually cache source values for this expression's LoadSource
-        //    opcodes (register_source only caches for deps already registered
-        //    on permanent modifiers — ad-hoc expressions need explicit caching).
-        for (alias_id, attribute_id, cache_key) in expr.source_cache_keys() {
-            let source_entity = self.graph.resolve_alias(target_entity, alias_id);
-            let value = source_entity
-                .and_then(|se| self.query.get(se).ok())
-                .map(|attrs| attrs.get(attribute_id))
-                .unwrap_or(0.0);
-
-            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
-                attrs.context.set(cache_key, value);
-            }
-        }
-
-        // 3. Inject extra context values
-        let extra_ids: Vec<(AttributeId, f32)> = extra
-            .into_iter()
-            .flat_map(|pairs| pairs.iter())
-            .map(|&(name, val)| (self.intern(name), val))
-            .collect();
-
-        if !extra_ids.is_empty() {
-            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
-                for &(id, value) in &extra_ids {
-                    attrs.context.set(id, value);
-                }
-            }
-        }
-
-        // 4. Evaluate
-        let result = if let Ok(attrs) = self.query.get(target_entity) {
-            expr.evaluate(&attrs.context)
-        } else {
-            0.0
-        };
-
-        // 5. Clean up extra context values
-        if !extra_ids.is_empty() {
-            if let Ok(mut attrs) = self.query.get_mut(target_entity) {
-                for &(id, _) in &extra_ids {
-                    attrs.context.remove(id);
-                }
-            }
-        }
-
-        // 6. Clean up temporary aliases
-        for &(alias, _) in roles {
-            self.unregister_source(target_entity, alias);
-        }
-
-        result
-    }
-
-    // -----------------------------------------------------------------------
     // Internal: lazy template materialization
     // -----------------------------------------------------------------------
 
@@ -733,7 +676,37 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         let synthetic_node = DepNode::new(entity, synthetic_id);
         self.graph.add_edge(parent_node, synthetic_node);
 
+        // Evaluate immediately so expressions that depend on this synthetic
+        // node see the correct value rather than the default 0.
+        if let Ok(mut attrs) = self.query.get_mut(entity) {
+            attrs.evaluate_and_cache(synthetic_id);
+        }
+
         synthetic_id
+    }
+
+    /// Cache source attribute values in `entity`'s context for the
+    /// `LoadSource` / `LoadSourceTagged` ops in an ad-hoc expression.
+    ///
+    /// Use this when evaluating an expression that isn't registered as a
+    /// persistent modifier on any attribute node (e.g., one-shot instants,
+    /// preview evaluations).  The caller must have already registered the
+    /// required source aliases via [`register_source`](Self::register_source).
+    pub fn cache_expr_source_values(&mut self, entity: Entity, expr: &Expr) {
+        for (alias_id, attribute_id, cache_key, tag_mask) in expr.source_cache_keys() {
+            let source_entity = self.graph.resolve_alias(entity, alias_id);
+            let value = source_entity
+                .and_then(|se| self.query.get(se).ok())
+                .map(|attrs| match tag_mask {
+                    Some(mask) => attrs.get_tagged(attribute_id, mask),
+                    None => attrs.get(attribute_id),
+                })
+                .unwrap_or(0.0);
+
+            if let Ok(mut attrs) = self.query.get_mut(entity) {
+                attrs.context.set(cache_key, value);
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -743,8 +716,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// Cache source attribute values in the local context for all expression
     /// modifiers on a attribute that reference cross-entity aliases.
     fn cache_source_values(&mut self, entity: Entity, attribute_id: AttributeId) {
-        // Collect (alias, source_attribute, cache_key) from all Expr modifiers on this attribute
-        let cache_entries: Vec<(AttributeId, AttributeId, AttributeId)> = {
+        let cache_entries: Vec<(AttributeId, AttributeId, AttributeId, Option<TagMask>)> = {
             let Ok(attrs) = self.query.get(entity) else { return };
             let Some(node) = attrs.nodes.get(&attribute_id) else { return };
             node.modifiers
@@ -761,13 +733,14 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             return;
         }
 
-        // For each (alias, source_attribute, cache_key), resolve the alias and
-        // read the value from the source entity, then cache it locally.
-        for (alias, source_attribute, cache_key) in cache_entries {
+        for (alias, source_attribute, cache_key, tag_mask) in cache_entries {
             let source_entity = self.graph.resolve_alias(entity, alias);
             let value = source_entity
                 .and_then(|se| self.query.get(se).ok())
-                .map(|attrs| attrs.get(source_attribute))
+                .map(|attrs| match tag_mask {
+                    Some(mask) => attrs.get_tagged(source_attribute, mask),
+                    None => attrs.get(source_attribute),
+                })
                 .unwrap_or(0.0);
 
             if let Ok(mut attrs) = self.query.get_mut(entity) {
@@ -786,8 +759,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                     node.modifiers.iter().filter_map(|tm| match &tm.modifier {
                         Modifier::Expr(expr) => Some(
                             expr.source_cache_keys()
-                                .filter(|(a, _, _)| *a == alias_id)
-                                .map(|(_, _, ck)| ck)
+                                .filter(|(a, _, _, _)| *a == alias_id)
+                                .map(|(_, _, ck, _)| ck)
                         ),
                         _ => None,
                     })
