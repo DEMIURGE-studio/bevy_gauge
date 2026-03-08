@@ -1,13 +1,10 @@
-/// Create an [`AttributeInitializer`](crate::modifier_set::AttributeInitializer) component
-/// from a set of attribute definitions.
-///
-/// Spawn this alongside [`Attributes`](crate::attributes::Attributes) to
-/// have the modifiers automatically applied on spawn.
+/// Create a [`ModifierSet`](crate::modifier_set::ModifierSet) from a set
+/// of attribute definitions.
 ///
 /// # Syntax
 ///
 /// ```ignore
-/// attributes! {
+/// mod_set! {
 ///     "AttributeName" => value,                         // untagged
 ///     "AttributeName" [TAG_EXPR] => value,              // tagged
 /// }
@@ -22,58 +19,10 @@
 /// # Example
 ///
 /// ```ignore
-/// use bevy_attributes::prelude::*;
-///
-/// const FIRE: TagMask = TagMask::bit(0);
-/// const MELEE: TagMask = TagMask::bit(2);
-///
-/// commands.spawn((
-///     Attributes::new(),
-///     attributes! {
-///         "Strength" => 50.0,
-///         "Damage.Added" [FIRE | MELEE] => 10.0,
-///         "Health" => "Strength * 2.0",
-///     },
-/// ));
-/// ```
-#[macro_export]
-macro_rules! attributes {
-    { $( $attribute:literal $( [ $tag:expr ] )? => $value:expr ),* $(,)? } => {{
-        let mut _set = $crate::modifier_set::ModifierSet::new();
-        $(
-            $crate::attributes!(@entry _set, $attribute $(, $tag )?, $value);
-        )*
-        $crate::modifier_set::AttributeInitializer::new(_set)
-    }};
-
-    // Internal: entry with tag
-    (@entry $set:ident, $attribute:literal, $tag:expr, $value:expr) => {
-        $set.add_tagged($attribute, $value, $tag);
-    };
-
-    // Internal: entry without tag
-    (@entry $set:ident, $attribute:literal, $value:expr) => {
-        $set.add($attribute, $value);
-    };
-}
-
-/// Create a [`ModifierSet`](crate::modifier_set::ModifierSet) from a set
-/// of attribute definitions.
-///
-/// Unlike [`attributes!`], this returns a bare `ModifierSet` instead of an
-/// `AttributeInitializer` component. Useful for applying modifiers to existing
-/// entities or building sets dynamically.
-///
-/// # Syntax
-///
-/// Same as [`attributes!`].
-///
-/// # Example
-///
-/// ```ignore
 /// let buff = mod_set! {
 ///     "Damage.Increased" => 0.25,
-///     "AttackSpeed" => 0.1,
+///     "Damage.Added" [FIRE | MELEE] => 10.0,
+///     "Health" => "Strength * 2.0",
 /// };
 /// buff.apply(entity, &mut attributes);
 /// ```
@@ -95,5 +44,33 @@ macro_rules! mod_set {
     // Internal: entry without tag
     (@entry $set:ident, $attribute:literal, $value:expr) => {
         $set.add($attribute, $value);
+    };
+}
+
+/// Create an [`AttributeInitializer`](crate::modifier_set::AttributeInitializer) component
+/// from a set of attribute definitions.
+///
+/// Spawn this alongside [`Attributes`](crate::attributes::Attributes) to
+/// have the modifiers automatically applied on spawn.
+///
+/// Uses the same syntax as [`mod_set!`] — this is just a convenience wrapper
+/// that returns an `AttributeInitializer` instead of a bare `ModifierSet`.
+///
+/// # Example
+///
+/// ```ignore
+/// commands.spawn((
+///     Attributes::new(),
+///     attributes! {
+///         "Strength" => 50.0,
+///         "Damage.Added" [FIRE | MELEE] => 10.0,
+///         "Health" => "Strength * 2.0",
+///     },
+/// ));
+/// ```
+#[macro_export]
+macro_rules! attributes {
+    { $($tt:tt)* } => {
+        $crate::modifier_set::AttributeInitializer::new($crate::mod_set!{ $($tt)* })
     };
 }
