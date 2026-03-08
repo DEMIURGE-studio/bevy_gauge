@@ -432,7 +432,7 @@ fn parse_attribute_tag(
     };
     let brace_end = brace_start + brace_end;
 
-    let base = attr[..brace_start].to_string();
+    let base = format!("{}{}", &attr[..brace_start], &attr[brace_end + 1..]);
     let tag_body = &attr[brace_start + 1..brace_end];
 
     let mut mask = TagMask::NONE;
@@ -705,6 +705,15 @@ mod tests {
         let (name, tag) = parse_attribute_tag("Damage{FIRE|SWORD}", &resolver).unwrap();
         assert_eq!(name, "Damage");
         assert_eq!(tag, Some(TagMask::bit(0) | TagMask::bit(1)));
+    }
+
+    #[test]
+    fn parse_attribute_with_suffix() {
+        let mut resolver = TagResolver::new();
+        resolver.register("FIRE", TagMask::bit(0));
+        let (name, tag) = parse_attribute_tag("Meter{FIRE}.current", &resolver).unwrap();
+        assert_eq!(name, "Meter.current");
+        assert_eq!(tag, Some(TagMask::bit(0)));
     }
 
     #[test]
