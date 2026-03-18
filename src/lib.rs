@@ -1,4 +1,5 @@
 pub mod attribute_id;
+pub mod commands;
 pub mod expr;
 pub mod context;
 pub mod modifier;
@@ -12,6 +13,7 @@ pub mod derived;
 pub mod instant;
 pub mod requirements;
 pub mod plugin;
+pub mod writer;
 
 #[doc(hidden)]
 pub mod macros;
@@ -36,6 +38,8 @@ pub mod prelude {
         InstantModifierSet, EvaluatedInstantEntry,
         AttributeQueries, InstantExt,
     };
+    pub use crate::commands::AttributeCommandsExt;
+    pub use crate::writer::{AttributeWriter, BoundAttributesMut};
     pub use crate::requirements::AttributeRequirements;
     pub use crate::plugin::AttributesPlugin;
     pub use crate::attributes;

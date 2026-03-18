@@ -204,6 +204,24 @@ pub struct Life {
 
 Fields with `#[read]` update from attributes automatically. Fields with `#[write]` push values back into the attribute system.
 
+### Deferred Commands
+
+Set up attributes at spawn time when only `Commands` is available:
+
+```rust
+commands.entity(entity).attrs(|attrs| {
+    attrs.flat_attribute("Strength", 50.0);
+    attrs.add_expr_modifier("MaxHealth", "Strength * 2.0 + 100.0").unwrap();
+    attrs.complex_attribute(
+        "Damage",
+        &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
+        "base * (1 + increased)",
+    ).unwrap();
+});
+```
+
+The closure runs during command flush with full `AttributesMut` access — expression modifiers, complex attributes, cross-entity sources, and reads all work.
+
 ## Reading vs Writing
 
 **Reading** only needs `&Attributes`:
