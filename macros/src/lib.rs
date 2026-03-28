@@ -74,7 +74,7 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// [`AttributeDerived`]: bevy_gauge::derived::AttributeDerived
 /// [`WriteBack`]: bevy_gauge::derived::WriteBack
 /// [`AttributesPlugin`]: bevy_gauge::plugin::AttributesPlugin
-#[proc_macro_derive(AttributeComponent, attributes(read, write))]
+#[proc_macro_derive(AttributeComponent, attributes(read, write, init_from))]
 pub fn derive_attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match attribute_component_impl::derive(input) {

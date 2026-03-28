@@ -22,6 +22,11 @@ struct BoundField {
     tag_expr: Option<syn::Expr>,
 }
 
+struct InitFromField {
+    name: Ident,
+    path: String,
+}
+
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
     let struct_name_str = struct_name.to_string();
@@ -44,33 +49,39 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let mut bound_fields: Vec<BoundField> = Vec::new();
+    let mut init_from_fields: Vec<InitFromField> = Vec::new();
 
     for field in &named.named {
         let field_name = field.ident.as_ref().unwrap();
 
         for attr in &field.attrs {
-            let (direction, path, tag_expr) = if attr.path().is_ident("read") {
-                let (p, t) = parse_path_and_tag(attr)?;
-                (Direction::ReadFrom, p, t)
-            } else if attr.path().is_ident("write") {
-                let (p, t) = parse_path_and_tag(attr)?;
-                (Direction::WriteTo, p, t)
-            } else {
-                continue;
-            };
+            if attr.path().is_ident("read") || attr.path().is_ident("write") {
+                let direction = if attr.path().is_ident("read") {
+                    Direction::ReadFrom
+                } else {
+                    Direction::WriteTo
+                };
+                let (path, tag_expr) = parse_path_and_tag(attr)?;
 
-            let resolved_path = match path {
-                AttributePath::Explicit(lit) => lit,
-                AttributePath::Auto => format!("{}.{}", struct_name_str, field_name),
-            };
+                let resolved_path = match path {
+                    AttributePath::Explicit(lit) => lit,
+                    AttributePath::Auto => format!("{}.{}", struct_name_str, field_name),
+                };
 
-            bound_fields.push(BoundField {
-                name: field_name.clone(),
-                ty: field.ty.clone(),
-                direction,
-                path: resolved_path,
-                tag_expr,
-            });
+                bound_fields.push(BoundField {
+                    name: field_name.clone(),
+                    ty: field.ty.clone(),
+                    direction,
+                    path: resolved_path,
+                    tag_expr,
+                });
+            } else if attr.path().is_ident("init_from") {
+                let path = parse_init_from(attr)?;
+                init_from_fields.push(InitFromField {
+                    name: field_name.clone(),
+                    path,
+                });
+            }
         }
     }
 
@@ -86,6 +97,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let has_reads = !read_fields.is_empty();
     let has_writes = !write_fields.is_empty();
+    let has_init_from = !init_from_fields.is_empty();
 
     let attribute_derived_impl = if has_reads {
         let should_update_checks: Vec<TokenStream> = read_fields.iter().map(|f| {
@@ -179,6 +191,29 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         TokenStream::new()
     };
 
+    let init_from_impl = if has_init_from {
+        let init_assignments: Vec<TokenStream> = init_from_fields.iter().map(|f| {
+            let name = &f.name;
+            let path = &f.path;
+            quote! {
+                self.#name = attrs.value(#path);
+            }
+        }).collect();
+
+        quote! {
+            impl ::bevy_gauge::derived::InitFrom for #struct_name {
+                fn init_from_attributes(
+                    &mut self,
+                    attrs: &::bevy_gauge::attributes::Attributes,
+                ) {
+                    #(#init_assignments)*
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+
     let inventory_submits = {
         let mut registrations = Vec::new();
 
@@ -208,12 +243,26 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             });
         }
 
+        if has_init_from {
+            registrations.push(quote! {
+                ::inventory::submit! {
+                    ::bevy_gauge::derived::AttributeRegistration {
+                        register_fn: |app| {
+                            use ::bevy_gauge::derived::AttributesAppExt;
+                            app.register_init_from::<#struct_name>();
+                        }
+                    }
+                }
+            });
+        }
+
         quote! { #(#registrations)* }
     };
 
     Ok(quote! {
         #attribute_derived_impl
         #write_back_impl
+        #init_from_impl
         #inventory_submits
     })
 }
@@ -222,6 +271,20 @@ fn read_value_expr(path: &str, tag_expr: &Option<syn::Expr>) -> TokenStream {
     match tag_expr {
         Some(expr) => quote! { attrs.value_tagged(#path, #expr) },
         None => quote! { attrs.value(#path) },
+    }
+}
+
+/// Parse `#[init_from("attribute_path")]`
+fn parse_init_from(attr: &syn::Attribute) -> syn::Result<String> {
+    match &attr.meta {
+        syn::Meta::List(list) => {
+            let lit: LitStr = syn::parse2(list.tokens.clone())?;
+            Ok(lit.value())
+        }
+        _ => Err(syn::Error::new_spanned(
+            attr,
+            "expected `#[init_from(\"attribute_path\")]`",
+        )),
     }
 }
 

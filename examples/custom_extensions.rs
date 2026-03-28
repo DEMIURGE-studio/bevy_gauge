@@ -1,12 +1,12 @@
-//! # Custom Extensions Example — Typed API over String Keys
+//! # Custom Extensions Example — Typed API + Custom AttributeBuilder
 //!
-//! Demonstrates how to wrap `Attributes` and `AttributesMut` with extension
-//! traits that provide a typed, game-specific API.
+//! Demonstrates how to build game-specific APIs on top of bevy_gauge:
 //!
-//! - **`DamageMutExt`** on `AttributesMut` — `setup_damage_pipeline(entity)`
-//!   wires up a `tagged_attribute` with `added`, `increased`, `more` parts
-//! - **`DamageExt`** on `Attributes` — `.damage(tags)` reads the evaluated
-//!   damage for a specific tag combo
+//! - **`DamagePipeline`** — a custom [`AttributeBuilder`] that sets up a tagged
+//!   damage attribute with `added`, `increased`, `more` parts. Can be used in
+//!   `attributes!` via `@build` or added programmatically.
+//! - **`DamageExt`** on `Attributes` — `.damage(tags)` reads evaluated damage
+//! - **`DamageMutExt`** on `AttributesMut` — `.add_damage()`, `.evaluate_damage()`
 //! - The typed layer composes cleanly with the underlying string-key system
 //!
 //! Run with: `cargo run --example custom_extensions`
@@ -28,6 +28,40 @@ define_tags! {
         melee { sword, axe },
         ranged { bow },
     },
+}
+
+// ---------------------------------------------------------------------------
+// DamagePipeline — custom AttributeBuilder
+// ---------------------------------------------------------------------------
+
+/// Sets up a tagged damage attribute with `added * (1 + increased) * more`.
+///
+/// This is a custom [`AttributeBuilder`] that can be used in `attributes!`
+/// via `@build` or added programmatically via `ModifierSet::add_builder()`.
+#[derive(Clone, Debug)]
+struct DamagePipeline;
+
+impl AttributeBuilder for DamagePipeline {
+    fn apply(&self, entity: Entity, attributes: &mut AttributesMut) {
+        let _ = attributes.tagged_attribute(
+            entity,
+            "Damage",
+            &[
+                ("added", ReduceFn::Sum),
+                ("increased", ReduceFn::Sum),
+                ("more", ReduceFn::Product),
+            ],
+            "added * (1 + increased) * more",
+        );
+    }
+
+    fn clone_box(&self) -> Box<dyn AttributeBuilder> {
+        Box::new(self.clone())
+    }
+
+    fn fmt_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DamagePipeline")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -64,31 +98,10 @@ impl DamageExt for Attributes {
 // ---------------------------------------------------------------------------
 
 trait DamageMutExt {
-    fn setup_damage_pipeline(&mut self, entity: Entity);
-    fn add_damage(&mut self, entity: Entity, part: &str, value: f32, tags: TagMask);
     fn evaluate_damage(&mut self, entity: Entity, tags: TagMask) -> f32;
 }
 
 impl<F: bevy::ecs::query::QueryFilter> DamageMutExt for AttributesMut<'_, '_, F> {
-    fn setup_damage_pipeline(&mut self, entity: Entity) {
-        self.tagged_attribute(
-            entity,
-            "Damage",
-            &[
-                ("added", ReduceFn::Sum),
-                ("increased", ReduceFn::Sum),
-                ("more", ReduceFn::Product),
-            ],
-            "added * (1 + increased) * more",
-        )
-        .expect("valid damage pipeline expression");
-    }
-
-    fn add_damage(&mut self, entity: Entity, part: &str, value: f32, tags: TagMask) {
-        let path = format!("Damage.{part}");
-        self.add_modifier_tagged(entity, &path, value, tags);
-    }
-
     fn evaluate_damage(&mut self, entity: Entity, tags: TagMask) -> f32 {
         self.evaluate_tagged(entity, "Damage", tags)
     }
@@ -115,9 +128,8 @@ fn main() {
             Startup,
             (
                 register_tags,
-                spawn_entities.after(register_tags),
-                configure_sword.after(spawn_entities),
-                demo.after(configure_sword),
+                spawn_and_configure.after(register_tags),
+                demo.after(spawn_and_configure),
             ),
         )
         .run();
@@ -129,33 +141,34 @@ fn register_tags(mut resolver: ResMut<TagResolver>) {
 }
 
 // ---------------------------------------------------------------------------
-// Setup: create a sword, then configure it via the typed API
+// Setup: create a sword with the damage pipeline wired up at spawn
 // ---------------------------------------------------------------------------
 
-fn spawn_entities(mut commands: Commands) {
+fn spawn_and_configure(mut commands: Commands) {
     let sword = commands
         .spawn((
             Name::new("Flaming Greatsword"),
-            Attributes::new(),
+            // DamagePipeline builder sets up the tagged attribute structure
+            attributes! {
+                @build DamagePipeline,
+            },
         ))
         .id();
 
+    // Add damage modifiers via the typed API (after commands flush,
+    // the builder will have run — but we can also add modifiers now
+    // since the AttributeInitializer observer fires immediately)
+    commands.entity(sword).attrs(|attrs| {
+        attrs.add_modifier_tagged("Damage.added", Modifier::Flat(100.0), Tags::PHYSICAL);
+        attrs.add_modifier_tagged("Damage.added", Modifier::Flat(30.0), Tags::FIRE);
+        attrs.add_modifier_tagged("Damage.added", Modifier::Flat(5.0), Tags::SWORD);
+        attrs.add_modifier_tagged("Damage.increased", Modifier::Flat(0.50), Tags::PHYSICAL);
+        attrs.add_modifier_tagged("Damage.increased", Modifier::Flat(0.25), Tags::FIRE);
+        attrs.add_modifier_tagged("Damage.more", Modifier::Flat(0.20), Tags::PHYSICAL);
+    });
+
     commands.insert_resource(Entities { sword });
-}
-
-fn configure_sword(handles: Res<Entities>, mut attributes: AttributesMut) {
-    let sword = handles.sword;
-
-    attributes.setup_damage_pipeline(sword);
-
-    attributes.add_damage(sword, "added", 100.0, Tags::PHYSICAL);
-    attributes.add_damage(sword, "added", 30.0, Tags::FIRE);
-    attributes.add_damage(sword, "added", 5.0, Tags::SWORD);
-    attributes.add_damage(sword, "increased", 0.50, Tags::PHYSICAL);
-    attributes.add_damage(sword, "increased", 0.25, Tags::FIRE);
-    attributes.add_damage(sword, "more", 0.20, Tags::PHYSICAL);
-
-    println!("--- Sword configured via typed API ---\n");
+    println!("--- Sword spawned with DamagePipeline builder ---\n");
 }
 
 // ---------------------------------------------------------------------------

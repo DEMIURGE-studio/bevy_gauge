@@ -5,8 +5,9 @@
 ///
 /// ```ignore
 /// mod_set! {
-///     "AttributeName" => value,                         // untagged
-///     "AttributeName" [TAG_EXPR] => value,              // tagged
+///     "AttributeName" => value,                         // untagged modifier
+///     "AttributeName" [TAG_EXPR] => value,              // tagged modifier
+///     @build ComplexAttribute::new(...),                 // attribute builder
 /// }
 /// ```
 ///
@@ -15,36 +16,79 @@
 ///   apply time).
 /// - **`TAG_EXPR`** is any Rust expression that evaluates to a [`TagMask`].
 ///   Typically `FIRE | MELEE` or `DamageTags::PHYSICAL`.
+/// - **`@build`** adds an [`AttributeBuilder`](crate::modifier_set::AttributeBuilder)
+///   that runs before modifier entries during apply.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let buff = mod_set! {
-///     "Damage.Increased" => 0.25,
+/// let set = mod_set! {
+///     "Damage.base" => 50.0,
 ///     "Damage.Added" [FIRE | MELEE] => 10.0,
-///     "Health" => "Strength * 2.0",
+///     @build ComplexAttribute::new("Damage",
+///         &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
+///         "base * (1 + increased)",
+///     ),
 /// };
-/// buff.apply(entity, &mut attributes);
+/// set.apply_all(entity, &mut attributes);
 /// ```
 #[macro_export]
 macro_rules! mod_set {
-    { $( $attribute:literal $( [ $tag:expr ] )? => $value:expr ),* $(,)? } => {{
-        let mut _set = $crate::modifier_set::ModifierSet::new();
-        $(
-            $crate::mod_set!(@entry _set, $attribute $(, $tag )?, $value);
-        )*
-        _set
-    }};
+    // ── @munch arms (listed before the entry point to avoid shadowing) ──
 
-    // Internal: entry with tag
-    (@entry $set:ident, $attribute:literal, $tag:expr, $value:expr) => {
-        $set.add_tagged($attribute, $value, $tag);
+    // Terminal: nothing left
+    (@munch $set:ident,) => {};
+
+    // Complex attribute shorthand: @complex "name" => [parts] => "expr"
+    (@munch $set:ident, @complex $name:literal => [ $( ($part:literal, $reduce:expr) ),* $(,)? ] => $expr:literal , $($rest:tt)*) => {
+        $set.add_builder($crate::modifier_set::ComplexAttribute::new(
+            $name, &[ $( ($part, $reduce) ),* ], $expr,
+        ));
+        $crate::mod_set!(@munch $set, $($rest)*);
+    };
+    (@munch $set:ident, @complex $name:literal => [ $( ($part:literal, $reduce:expr) ),* $(,)? ] => $expr:literal) => {
+        $set.add_builder($crate::modifier_set::ComplexAttribute::new(
+            $name, &[ $( ($part, $reduce) ),* ], $expr,
+        ));
     };
 
-    // Internal: entry without tag
-    (@entry $set:ident, $attribute:literal, $value:expr) => {
+    // Builder: @build expr , ...rest
+    (@munch $set:ident, @build $builder:expr , $($rest:tt)*) => {
+        $set.add_builder($builder);
+        $crate::mod_set!(@munch $set, $($rest)*);
+    };
+    // Builder: @build expr (terminal)
+    (@munch $set:ident, @build $builder:expr) => {
+        $set.add_builder($builder);
+    };
+
+    // Tagged modifier: "attr" [TAG] => value , ...rest
+    (@munch $set:ident, $attribute:literal [ $($tag:tt)+ ] => $value:expr , $($rest:tt)*) => {
+        $set.add_tagged($attribute, $value, $($tag)+);
+        $crate::mod_set!(@munch $set, $($rest)*);
+    };
+    // Tagged modifier: "attr" [TAG] => value (terminal)
+    (@munch $set:ident, $attribute:literal [ $($tag:tt)+ ] => $value:expr) => {
+        $set.add_tagged($attribute, $value, $($tag)+);
+    };
+
+    // Untagged modifier: "attr" => value , ...rest
+    (@munch $set:ident, $attribute:literal => $value:expr , $($rest:tt)*) => {
+        $set.add($attribute, $value);
+        $crate::mod_set!(@munch $set, $($rest)*);
+    };
+    // Untagged modifier: "attr" => value (terminal)
+    (@munch $set:ident, $attribute:literal => $value:expr) => {
         $set.add($attribute, $value);
     };
+
+    // ── Entry point (must be last — $($tt:tt)* matches everything) ──────
+
+    { $($tt:tt)* } => {{
+        let mut _set = $crate::modifier_set::ModifierSet::new();
+        $crate::mod_set!(@munch _set, $($tt)*);
+        _set
+    }};
 }
 
 /// Create an [`AttributeInitializer`](crate::modifier_set::AttributeInitializer) component
@@ -65,6 +109,10 @@ macro_rules! mod_set {
 ///         "Strength" => 50.0,
 ///         "Damage.Added" [FIRE | MELEE] => 10.0,
 ///         "Health" => "Strength * 2.0",
+///         @build ComplexAttribute::new("Health",
+///             &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
+///             "base * (1 + increased)",
+///         ),
 ///     },
 /// ));
 /// ```

@@ -85,6 +85,7 @@ fn spawn(mut commands: Commands) {
             Name::new("Skeleton"),
             attributes! {
                 "Life.base" => 100.0,
+                @complex "Life" => [("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)] => "base * (1 + increased)",
             },
         ))
         .id();
@@ -108,17 +109,6 @@ fn demo(handles: Res<Entities>, mut attributes: AttributesMut) {
     let necro = handles.necromancer;
     let warlock = handles.warlock;
     let skeleton = handles.skeleton;
-
-    // Structure Life as: Life = base * (1 + increased)
-    // This avoids self-referential expressions (a modifier on Life reading Life).
-    attributes
-        .complex_attribute(
-            skeleton,
-            "Life",
-            &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
-            "base * (1 + increased)",
-        )
-        .expect("valid expression");
 
     // --- Initial state ---
     println!("=== Initial state ===\n");

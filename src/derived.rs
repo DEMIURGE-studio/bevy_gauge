@@ -36,6 +36,12 @@ pub struct WriteBackSet;
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AttributeDerivedSet;
 
+/// System set for one-shot [`InitFrom`] systems that initialize component fields
+/// from attributes when the component is first added.
+/// Runs in `PreUpdate` only, after [`AttributeDerivedSet`].
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InitFromSet;
+
 // ---------------------------------------------------------------------------
 // Traits
 // ---------------------------------------------------------------------------
@@ -74,6 +80,30 @@ pub trait AttributeDerived: Component<Mutability = Mutable> {
 
     /// Update this component's fields from attribute values.
     fn update_from_attributes(&mut self, attrs: &Attributes);
+}
+
+/// A component with fields that should be initialized once from attribute values.
+///
+/// When a component implementing this trait is first added to an entity,
+/// `init_from_attributes` is called once in `PreUpdate` to set initial field
+/// values from the resolved attributes. This is useful for fields like
+/// "current health" that should start equal to "max health".
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Component, Default, AttributeComponent)]
+/// struct Health {
+///     #[read("health")]
+///     max: f32,
+///     #[write("health.current")]
+///     #[init_from("health")]
+///     current: f32,
+/// }
+/// ```
+pub trait InitFrom: Component<Mutability = Mutable> {
+    /// Set initial field values from attributes. Called once when the component is added.
+    fn init_from_attributes(&mut self, attrs: &Attributes);
 }
 
 /// A component whose fields are written back into the attribute system.
@@ -147,6 +177,18 @@ pub fn update_write_back<T: WriteBack>(
     }
 }
 
+/// Generic system that initializes [`InitFrom`] fields when the component is first added.
+///
+/// Uses `Added<T>` to fire exactly once per entity, after all commands from
+/// the previous frame have flushed and attributes are resolved.
+pub fn apply_init_from<T: InitFrom>(
+    mut query: Query<(&mut T, &Attributes), Added<T>>,
+) {
+    for (mut component, attrs) in &mut query {
+        component.init_from_attributes(attrs);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // App extension trait
 // ---------------------------------------------------------------------------
@@ -168,6 +210,12 @@ pub trait AttributesAppExt {
     /// changes into attributes before `Update`; the `PostUpdate` pass catches
     /// changes made during `Update`.
     fn register_write_back<T: WriteBack>(&mut self) -> &mut Self;
+
+    /// Register an [`InitFrom`] component.
+    ///
+    /// Adds a one-shot initialization system to [`PreUpdate`] (in the
+    /// [`InitFromSet`]) that runs when the component is first added.
+    fn register_init_from<T: InitFrom>(&mut self) -> &mut Self;
 }
 
 impl AttributesAppExt for App {
@@ -190,6 +238,13 @@ impl AttributesAppExt for App {
         .add_systems(
             PostUpdate,
             update_write_back::<T>.in_set(WriteBackSet),
+        )
+    }
+
+    fn register_init_from<T: InitFrom>(&mut self) -> &mut Self {
+        self.add_systems(
+            PreUpdate,
+            apply_init_from::<T>.in_set(InitFromSet),
         )
     }
 }
@@ -263,6 +318,16 @@ macro_rules! _register_attribute {
                 register_fn: |app| {
                     use $crate::derived::AttributesAppExt;
                     app.register_write_back::<$ty>();
+                }
+            }
+        }
+    };
+    (init_from, $ty:ty) => {
+        ::inventory::submit! {
+            $crate::derived::AttributeRegistration {
+                register_fn: |app| {
+                    use $crate::derived::AttributesAppExt;
+                    app.register_init_from::<$ty>();
                 }
             }
         }

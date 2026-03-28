@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
-use crate::derived::{AttributeRegistration, AttributeDerivedSet, WriteBackSet};
+use crate::derived::{AttributeRegistration, AttributeDerivedSet, InitFromSet, WriteBackSet};
 use crate::graph::DependencyGraph;
 use crate::modifier_set::apply_initial_attributes;
 use crate::attribute_id::Interner;
@@ -39,7 +39,7 @@ impl Plugin for AttributesPlugin {
             .add_observer(apply_initial_attributes)
             .configure_sets(
                 PreUpdate,
-                (WriteBackSet, AttributeDerivedSet).chain(),
+                (WriteBackSet, AttributeDerivedSet, InitFromSet).chain(),
             )
             .configure_sets(
                 PostUpdate,

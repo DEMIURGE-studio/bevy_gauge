@@ -2,9 +2,8 @@
 //!
 //! Demonstrates how attribute values flow to typed Bevy components:
 //!
-//! - **`Life`** component with `#[read("Life")]` for max and `#[read]` for
-//!   current — the derive macro auto-syncs these from attributes
-//! - **Observer** on `Remove<AttributeInitializer>` to initialize current = max
+//! - **`Life`** component with `#[read("Life")]` for max, `#[write]` + `#[init_from("Life")]`
+//!   for current — the derive macro auto-syncs and initializes these
 //! - **Manual `AttributeDerived`** that interprets `"Alive"` (f32) as a `bool`
 //!
 //! Run with: `cargo run --example derived_components`
@@ -13,14 +12,15 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 // ---------------------------------------------------------------------------
-// Life component — derive macro with #[read] and #[write]
+// Life component — derive macro with #[read], #[write], and #[init_from]
 // ---------------------------------------------------------------------------
 
 #[derive(Component, Default, Debug, AttributeComponent)]
 struct Life {
     #[read("Life")]
     max: f32,
-    #[read]
+    #[write("Life.current")]
+    #[init_from("Life")]
     current: f32,
 }
 
@@ -47,21 +47,6 @@ impl AttributeDerived for AliveStatus {
 register_derived!(AliveStatus);
 
 // ---------------------------------------------------------------------------
-// Observer: initialize Life.current = Life.max after spawn
-// ---------------------------------------------------------------------------
-
-fn on_attributes_initialized(
-    trigger: On<Remove, AttributeInitializer>,
-    mut q_life: Query<(&mut Life, &Attributes)>,
-) {
-    let entity = trigger.event_target();
-    if let Ok((mut life, attrs)) = q_life.get_mut(entity) {
-        life.max = attrs.value("Life");
-        life.current = life.max;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Resources
 // ---------------------------------------------------------------------------
 
@@ -82,7 +67,6 @@ fn main() {
     App::new()
         .add_plugins(MinimalPlugins)
         .add_plugins(AttributesPlugin)
-        .add_observer(on_attributes_initialized)
         .add_systems(Startup, spawn)
         .add_systems(Update, demo)
         .run();
@@ -100,7 +84,6 @@ fn spawn(mut commands: Commands) {
             AliveStatus { alive: true },
             attributes! {
                 "Life"  => 100.0,
-                "Life.current" => 100.0,
                 "Alive" => 1.0,
             },
         ))
@@ -118,29 +101,32 @@ fn spawn(mut commands: Commands) {
 fn demo(
     handles: Res<Entities>,
     mut attributes: AttributesMut,
-    q_life: Query<&Life>,
+    mut q_life: Query<&mut Life>,
     q_alive: Query<&AliveStatus>,
     mut step: ResMut<DemoStep>,
 ) {
     let hero = handles.hero;
 
     match step.0 {
-        // Frame 0: print initial state (PostUpdate already synced after Startup)
+        // Frame 0: print initial state — init_from set current = max automatically
         0 => {
-            println!("=== Initial state ===\n");
+            println!("=== Initial state (current initialized from max via #[init_from]) ===\n");
             print_state(hero, &mut attributes, &q_life, &q_alive);
 
+            // Damage goes through the component since current is #[write]
             println!("=== Taking 60 damage ===\n");
-            let current = attributes.evaluate(hero, "Life.current");
-            attributes.set_base(hero, "Life.current", current - 60.0);
+            if let Ok(mut life) = q_life.get_mut(hero) {
+                life.current -= 60.0;
+            }
         }
-        // Frame 1: components synced by PostUpdate — print, then apply lethal hit
+        // Frame 1: WriteBack pushed current to attribute — print, then apply lethal hit
         1 => {
             print_state(hero, &mut attributes, &q_life, &q_alive);
 
             println!("=== Taking 50 more damage (lethal) ===\n");
-            let current = attributes.evaluate(hero, "Life.current");
-            attributes.set_base(hero, "Life.current", current - 50.0);
+            if let Ok(mut life) = q_life.get_mut(hero) {
+                life.current -= 50.0;
+            }
             attributes.set_base(hero, "Alive", 0.0);
         }
         // Frame 2: components synced — print, then resurrect
@@ -149,8 +135,9 @@ fn demo(
 
             println!("=== Resurrecting (set Alive back to 1.0) ===\n");
             attributes.set_base(hero, "Alive", 1.0);
-            let max = attributes.evaluate(hero, "Life");
-            attributes.set_base(hero, "Life.current", max);
+            if let Ok(mut life) = q_life.get_mut(hero) {
+                life.current = life.max;
+            }
         }
         // Frame 3: components synced — print final state and exit
         3 => {
@@ -167,7 +154,7 @@ fn demo(
 fn print_state(
     entity: Entity,
     attributes: &mut AttributesMut,
-    q_life: &Query<&Life>,
+    q_life: &Query<&mut Life>,
     q_alive: &Query<&AliveStatus>,
 ) {
     let life_val = attributes.evaluate(entity, "Life");
