@@ -79,6 +79,16 @@ attributes.add_modifier(entity, "Damage.more", 0.2);        // 20% more → 1.2x
 
 `Sum` adds modifiers together. `Product` multiplies them as `(1+v)` factors.
 
+Complex attributes can also be declared inline with `@complex` in `attributes!` or `mod_set!`:
+
+```rust
+commands.spawn(attributes! {
+    @complex "Damage" => [("base", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)] => "base * (1 + increased) * more",
+    "Damage.base" => 100.0,
+    "Damage.increased" => 0.5,
+});
+```
+
 ### Tags and Filtered Evaluation
 
 Attach tags to modifiers, then query with a filter. Modifiers are inserted _generally_ - a modifier tagged `FIRE` applies to any query that includes fire. Queries are _specific_ - you query a leaf combination like `FIRE | SWORD` to get the total for that exact damage instance.
@@ -197,12 +207,15 @@ Sync struct fields with attribute values using a derive macro:
 pub struct Life {
     #[read("Life")]
     pub max: f32,
-    #[write]
-    pub current: f32,  // writes back to "Life.current"
+    #[write("Life.current")]
+    #[init_from("Life")]
+    pub current: f32,
 }
 ```
 
-Fields with `#[read]` update from attributes automatically. Fields with `#[write]` push values back into the attribute system.
+- `#[read]` updates the field from attributes every frame (when changed).
+- `#[write]` pushes the field value back into the attribute system.
+- `#[init_from]` sets the field's initial value from an attribute on spawn. In this example, `current` starts equal to `Life` (max health), then tracks independently via `#[write]`.
 
 ### Deferred Commands
 
