@@ -2,7 +2,7 @@
 
 A attribute system for [Bevy](https://bevy.org/).
 
-Built for games where attributes depend on other attributes — RPGs with derived attributes, ARPGs with PoE-style damage pipelines, or anything where changing one value should automatically ripple through a chain of dependencies, even across entities.
+Built for games where attributes depend on other attributes - RPGs with derived attributes, ARPGs with PoE-style damage pipelines, or anything where changing one value should automatically ripple through a chain of dependencies, even across entities.
 
 ## Quick Start
 
@@ -56,7 +56,7 @@ Expressions support arithmetic, parentheses, `min`/`max`/`abs`/`clamp`, cross-en
 
 ### Complex Attributes
 
-Named parts combined by an expression — each part receives modifiers independently:
+Named parts combined by an expression - each part receives modifiers independently:
 
 ```rust
 // PoE-style: base * (1 + increased) * more
@@ -81,7 +81,7 @@ attributes.add_modifier(entity, "Damage.more", 0.2);        // 20% more → 1.2x
 
 ### Tags and Filtered Evaluation
 
-Attach tags to modifiers, then query with a filter. Modifiers are inserted *generally* — a modifier tagged `FIRE` applies to any query that includes fire. Queries are *specific* — you query a leaf combination like `FIRE | SWORD` to get the total for that exact damage instance.
+Attach tags to modifiers, then query with a filter. Modifiers are inserted _generally_ - a modifier tagged `FIRE` applies to any query that includes fire. Queries are _specific_ - you query a leaf combination like `FIRE | SWORD` to get the total for that exact damage instance.
 
 This lets you naturally express things like "+10 fire damage" (applies to fire swords, fire bows, etc.), "+5 sword damage" (applies to physical swords, fire swords, etc.), and "+3 damage" (applies to everything).
 
@@ -110,7 +110,7 @@ fn setup_tags(mut resolver: ResMut<TagResolver>) {
 This generates a struct with `TagMask` constants: `DamageTags::FIRE`, `DamageTags::SWORD`, `DamageTags::ELEMENTAL`, etc. Group tags like `ELEMENTAL` are the OR of their children (`FIRE | COLD | LIGHTNING`).
 
 ```rust
-// Inserting — tag as broadly as the modifier applies
+// Inserting - tag as broadly as the modifier applies
 attributes.add_modifier_tagged(entity, "Damage.added", 100.0, DamageTags::PHYSICAL);  // all physical
 attributes.add_modifier_tagged(entity, "Damage.added", 10.0, DamageTags::FIRE);       // all fire
 attributes.add_modifier_tagged(entity, "Damage.added", 5.0, DamageTags::SWORD);       // all sword
@@ -127,7 +127,7 @@ let fire_bow = attributes.evaluate_tagged(entity, "Damage", DamageTags::FIRE | D
 // = fire(10) + global(3) = 13
 ```
 
-A modifier matches a query when all of its tag bits are present in the query. Untagged modifiers are global — they match everything.
+A modifier matches a query when all of its tag bits are present in the query. Untagged modifiers are global - they match everything.
 
 ### Cross-Entity Dependencies
 
@@ -138,7 +138,7 @@ Attributes on one entity can reference attributes on another through source alia
 attributes.add_expr_modifier(sword, "Damage.increased", "Strength@Wielder / 200.0")?;
 attributes.register_source(sword, "Wielder", warrior);
 
-// Hand the sword to someone else — one call, everything updates
+// Hand the sword to someone else - one call, everything updates
 attributes.register_source(sword, "Wielder", mage);
 ```
 
@@ -220,7 +220,7 @@ commands.entity(entity).attrs(|attrs| {
 });
 ```
 
-The closure runs during command flush with full `AttributesMut` access — expression modifiers, complex attributes, cross-entity sources, and reads all work.
+The closure runs during command flush with full `AttributesMut` access - expression modifiers, complex attributes, cross-entity sources, and reads all work.
 
 ## Reading vs Writing
 

@@ -1,12 +1,12 @@
-//! # Custom Extensions Example — Typed API + Custom AttributeBuilder
+//! # Custom Extensions Example - Typed API + Custom AttributeBuilder
 //!
 //! Demonstrates how to build game-specific APIs on top of bevy_gauge:
 //!
-//! - **`DamagePipeline`** — a custom [`AttributeBuilder`] that sets up a tagged
+//! - **`DamagePipeline`** - a custom [`AttributeBuilder`] that sets up a tagged
 //!   damage attribute with `added`, `increased`, `more` parts. Can be used in
 //!   `attributes!` via `@build` or added programmatically.
-//! - **`DamageExt`** on `Attributes` — `.damage(tags)` reads evaluated damage
-//! - **`DamageMutExt`** on `AttributesMut` — `.add_damage()`, `.evaluate_damage()`
+//! - **`DamageExt`** on `Attributes` - `.damage(tags)` reads evaluated damage
+//! - **`DamageMutExt`** on `AttributesMut` - `.add_damage()`, `.evaluate_damage()`
 //! - The typed layer composes cleanly with the underlying string-key system
 //!
 //! Run with: `cargo run --example custom_extensions`
@@ -31,7 +31,7 @@ define_tags! {
 }
 
 // ---------------------------------------------------------------------------
-// DamagePipeline — custom AttributeBuilder
+// DamagePipeline - custom AttributeBuilder
 // ---------------------------------------------------------------------------
 
 /// Sets up a tagged damage attribute with `added * (1 + increased) * more`.
@@ -156,7 +156,7 @@ fn spawn_and_configure(mut commands: Commands) {
         .id();
 
     // Add damage modifiers via the typed API (after commands flush,
-    // the builder will have run — but we can also add modifiers now
+    // the builder will have run - but we can also add modifiers now
     // since the AttributeInitializer observer fires immediately)
     commands.entity(sword).attrs(|attrs| {
         attrs.add_modifier_tagged("Damage.added", Modifier::Flat(100.0), Tags::PHYSICAL);

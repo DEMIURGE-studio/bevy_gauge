@@ -1,18 +1,18 @@
-//! # RPG Combat Example — PoE-style tagged damage
+//! # RPG Combat Example - PoE-style tagged damage
 //!
 //! Demonstrates `bevy_gauge` with a Path of Exile-style damage model:
 //!
-//! - **`define_tags!`** — declares a tag hierarchy with group tags that OR
+//! - **`define_tags!`** - declares a tag hierarchy with group tags that OR
 //!   their children together.
-//! - **`tagged_attribute`** — sets up a multi-part attribute (Added × (1 + Increased))
+//! - **`tagged_attribute`** - sets up a multi-part attribute (Added × (1 + Increased))
 //!   with per-tag-combo expressions materialized lazily.
-//! - **Insert broadly, query specifically** — a modifier tagged `PHYSICAL`
+//! - **Insert broadly, query specifically** - a modifier tagged `PHYSICAL`
 //!   applies to all physical damage. When dealing a physical sword hit, query
 //!   `PHYSICAL | SWORD` to pull in global, physical-only, sword-only, and
 //!   physical+sword modifiers.
-//! - **Cross-entity deps** — the sword references its wielder's attributes via
+//! - **Cross-entity deps** - the sword references its wielder's attributes via
 //!   `@Wielder`. Swapping the wielder automatically rewires everything.
-//! - **`attributes!` / `mod_set!` macros** — ergonomic batch init and buffs.
+//! - **`attributes!` / `mod_set!` macros** - ergonomic batch init and buffs.
 //!
 //! Run with: `cargo run --example path_of_exile`
 
@@ -50,7 +50,7 @@ struct Entities {
 }
 
 // ---------------------------------------------------------------------------
-// AttributeDerived — auto-syncs a component from tagged attribute values
+// AttributeDerived - auto-syncs a component from tagged attribute values
 // ---------------------------------------------------------------------------
 
 #[derive(Component, Default, Debug, AttributeComponent)]
@@ -154,11 +154,11 @@ fn setup_sword_attributes(mut attributes: AttributesMut, handles: Res<Entities>)
         )
         .expect("valid tagged attribute");
 
-    // Flat damage — tagged broadly by damage type
+    // Flat damage - tagged broadly by damage type
     attributes.add_modifier_tagged(sword, "Damage.added", 25.0, Tags::PHYSICAL);
     attributes.add_modifier_tagged(sword, "Damage.added", 10.0, Tags::FIRE);
 
-    // Increased damage — scales from wielder stats
+    // Increased damage - scales from wielder stats
     attributes
         .add_expr_modifier_tagged(
             sword,
@@ -190,7 +190,7 @@ fn equip_warrior(mut attributes: AttributesMut, handles: Res<Entities>) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Print Warrior damage — query with leaf combos
+// Step 4: Print Warrior damage - query with leaf combos
 // ---------------------------------------------------------------------------
 
 fn print_warrior(mut attributes: AttributesMut, handles: Res<Entities>) {
@@ -225,7 +225,7 @@ fn print_warrior(mut attributes: AttributesMut, handles: Res<Entities>) {
 
 fn swap_to_mage(mut attributes: AttributesMut, handles: Res<Entities>) {
     println!("=== Mage takes the sword from the Warrior ===");
-    println!("    (one call to register_source — edges auto-rewire)\n");
+    println!("    (one call to register_source - edges auto-rewire)\n");
     attributes.register_source(handles.sword, "Wielder", handles.mage);
 }
 
@@ -280,7 +280,7 @@ fn show_tag_queries(mut attributes: AttributesMut, handles: Res<Entities>) {
     println!("  Damage.added [PHYSICAL|SWORD]: {phys_sword:.1}  (25 physical matches)");
     println!("  Damage.added [FIRE|SWORD]:     {fire_sword:.1}  (10 fire matches)");
 
-    // Add a generic sword modifier — tagged SWORD only, applies to all sword queries
+    // Add a generic sword modifier - tagged SWORD only, applies to all sword queries
     println!("\n  Adding +5 generic sword damage (tagged SWORD only)...\n");
     attributes.add_modifier_tagged(sword, "Damage.added", 5.0, Tags::SWORD);
 
@@ -290,7 +290,7 @@ fn show_tag_queries(mut attributes: AttributesMut, handles: Res<Entities>) {
     println!("  Damage.added [PHYSICAL|SWORD]: {phys_sword2:.1}  (25 physical + 5 sword)");
     println!("  Damage.added [FIRE|SWORD]:     {fire_sword2:.1}  (10 fire + 5 sword)");
 
-    // Add a global modifier — no tags, applies to everything
+    // Add a global modifier - no tags, applies to everything
     println!("\n  Adding +3 global damage (untagged)...\n");
     attributes.add_modifier(sword, "Damage.added", 3.0);
 

@@ -2,7 +2,7 @@
 //!
 //! [`AttributeWriter`] defines the mutation API for a single entity's attributes.
 //! Unlike [`AttributesMut`], which requires an entity parameter on every call,
-//! `AttributeWriter` is bound to a specific entity — methods operate on that
+//! `AttributeWriter` is bound to a specific entity - methods operate on that
 //! entity implicitly.
 //!
 //! This trait is implemented by [`BoundAttributesMut`] (wraps a real

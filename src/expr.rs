@@ -5,7 +5,7 @@ use crate::attribute_id::{Interner, AttributeId};
 use crate::tags::{TagMask, TagResolver};
 
 // ---------------------------------------------------------------------------
-// Op — bytecode instructions
+// Op - bytecode instructions
 // ---------------------------------------------------------------------------
 
 /// A single bytecode instruction for the expression VM.
@@ -65,18 +65,18 @@ pub enum Op {
     /// a || b → 1.0 if either non-zero, else 0.0
     Or,
     // Built-in functions
-    /// max(a, b) — pops two, pushes one.
+    /// max(a, b) - pops two, pushes one.
     Max,
-    /// min(a, b) — pops two, pushes one.
+    /// min(a, b) - pops two, pushes one.
     Min,
-    /// abs(x) — pops one, pushes one.
+    /// abs(x) - pops one, pushes one.
     Abs,
-    /// clamp(x, lo, hi) — pops three, pushes one.
+    /// clamp(x, lo, hi) - pops three, pushes one.
     Clamp,
 }
 
 // ---------------------------------------------------------------------------
-// Expr — compiled expression
+// Expr - compiled expression
 // ---------------------------------------------------------------------------
 
 /// A compiled bytecode expression.
@@ -147,7 +147,7 @@ pub enum CompileError {
     /// tags for expression generation (some bits have no registered name in
     /// the [`TagResolver`](crate::tags::TagResolver)).
     UnresolvableTagMask(crate::tags::TagMask),
-    /// A tag name is ambiguous — it was registered by multiple namespaces.
+    /// A tag name is ambiguous - it was registered by multiple namespaces.
     /// The `Vec<String>` contains the fully-qualified alternatives.
     AmbiguousTag(String, Vec<String>),
 }
@@ -165,13 +165,13 @@ impl fmt::Display for CompileError {
             CompileError::EmptyExpression => write!(f, "empty expression"),
             CompileError::UnresolvableTagMask(mask) => write!(
                 f,
-                "cannot decompose TagMask({}) into named tags — \
+                "cannot decompose TagMask({}) into named tags - \
                  some bits are not registered in TagResolver",
                 mask.0
             ),
             CompileError::AmbiguousTag(name, alternatives) => write!(
                 f,
-                "ambiguous tag '{}' — registered by multiple namespaces, use one of: {}",
+                "ambiguous tag '{}' - registered by multiple namespaces, use one of: {}",
                 name,
                 alternatives.join(", ")
             ),
@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
                 if self.peek() == &Token::LParen {
                     self.parse_function_call(&name)
                 } else {
-                    // Attribute reference — may have dot-separated parts and/or @alias
+                    // Attribute reference - may have dot-separated parts and/or @alias
                     self.parse_attribute_reference(name)
                 }
             }
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
                 mask,
                 synthetic: synthetic_id,
             });
-            // Emit a plain Load on the synthetic ID — by the time the expression
+            // Emit a plain Load on the synthetic ID - by the time the expression
             // evaluates, the synthetic tag-query node will have been materialized
             // by AttributesMut and its value cached in the AttributeContext.
             self.ops.push(Op::Load(synthetic_id));
@@ -548,7 +548,7 @@ impl<'a> Parser<'a> {
 
         let tags = self.tags.ok_or_else(|| {
             CompileError::Expected(
-                "TagResolver required for {TAG} syntax — pass Some(&resolver) to Expr::compile".to_string(),
+                "TagResolver required for {TAG} syntax - pass Some(&resolver) to Expr::compile".to_string(),
             )
         })?;
 
@@ -1121,7 +1121,7 @@ mod tests {
     #[test]
     fn tag_query_unknown_tag_errors() {
         test_interner();
-        let tags = TagResolver::new(); // empty — no tags registered
+        let tags = TagResolver::new(); // empty - no tags registered
         let result = Expr::compile(
             "Damage{FIRE}",
             Some(&tags),

@@ -50,7 +50,7 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Fields without an annotation are plain struct fields.
 ///
 /// The macro also emits `inventory::submit!` calls so that the component
-/// is automatically registered with [`AttributesPlugin`] — no manual
+/// is automatically registered with [`AttributesPlugin`] - no manual
 /// `app.register_attribute_derived::<T>()` needed.
 ///
 /// # Syntax
@@ -68,8 +68,8 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// ## Path resolution
 ///
-/// - `#[read("path")]` / `#[write("path")]` — explicit attribute path string
-/// - `#[read]` / `#[write]` (no argument) — auto-path: `"StructName.field_name"`
+/// - `#[read("path")]` / `#[write("path")]` - explicit attribute path string
+/// - `#[read]` / `#[write]` (no argument) - auto-path: `"StructName.field_name"`
 ///
 /// [`AttributeDerived`]: bevy_gauge::derived::AttributeDerived
 /// [`WriteBack`]: bevy_gauge::derived::WriteBack

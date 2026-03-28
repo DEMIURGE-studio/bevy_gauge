@@ -1,4 +1,4 @@
-//! Boolean attribute requirements — expressions evaluated against an entity's
+//! Boolean attribute requirements - expressions evaluated against an entity's
 //! [`Attributes`] that gate state-machine transitions, equipment prerequisites,
 //! ability conditions, etc.
 //!

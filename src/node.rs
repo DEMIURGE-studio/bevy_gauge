@@ -20,7 +20,7 @@ impl Default for ReduceFn {
     }
 }
 
-/// A attribute node — the fundamental unit of the attribute graph.
+/// A attribute node - the fundamental unit of the attribute graph.
 ///
 /// Holds a collection of tagged modifiers and a reduce function that combines
 /// them into a single value. Each modifier carries a [`TagMask`] indicating
@@ -52,7 +52,7 @@ impl AttributeNode {
         Self::new(ReduceFn::Product)
     }
 
-    /// Add a modifier to this node (untagged — applies to every tag query).
+    /// Add a modifier to this node (untagged - applies to every tag query).
     pub fn add_modifier(&mut self, modifier: Modifier) {
         self.modifiers.push(TaggedModifier::global(modifier));
     }
@@ -207,7 +207,7 @@ mod tests {
         // FIRE|MELEE: fire+melee modifier (10) + global (5) = 15
         assert_eq!(node.evaluate_tagged(&ctx, fire | melee), 15.0);
 
-        // MELEE only: global (5) only — neither tagged modifier is a subset
+        // MELEE only: global (5) only - neither tagged modifier is a subset
         assert_eq!(node.evaluate_tagged(&ctx, melee), 5.0);
 
         // FIRE|PHYSICAL|MELEE: all three match = 25 + 10 + 5 = 40

@@ -1,4 +1,4 @@
-//! # Equipment Example — Enum State Machine with ModifierSet
+//! # Equipment Example - Enum State Machine with ModifierSet
 //!
 //! Demonstrates equipping and unequipping items that grant stat modifiers,
 //! using an enum-based state machine driven by Bevy events.
@@ -232,7 +232,7 @@ fn equip(
     attributes.register_source(item, "Wielder", wielder);
     mods.apply(wielder, attributes);
 
-    println!("  {item_name} equipped on {wielder_name} — modifiers applied");
+    println!("  {item_name} equipped on {wielder_name} - modifiers applied");
 }
 
 fn unequip(
@@ -269,7 +269,7 @@ fn unequip(
     mods.remove(wielder, attributes);
     attributes.unregister_source(item, "Wielder");
 
-    println!("  {item_name} unequipped from {wielder_name} — modifiers removed");
+    println!("  {item_name} unequipped from {wielder_name} - modifiers removed");
 }
 
 // ---------------------------------------------------------------------------

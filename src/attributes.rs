@@ -28,7 +28,7 @@ pub(crate) struct AttributeTemplate {
 /// The per-entity attribute storage component.
 ///
 /// Holds all attribute nodes and their current evaluated values.
-/// Read access requires only `&Attributes` — no special system params needed.
+/// Read access requires only `&Attributes` - no special system params needed.
 ///
 /// Writes (adding/removing modifiers, setting values) go through
 /// `AttributesMut` to ensure dependency propagation.
@@ -39,7 +39,7 @@ pub(crate) struct AttributeTemplate {
 /// synthetic attribute nodes** in the dependency graph. When a tag query is first
 /// requested, a synthetic `AttributeId` is created and wired as a dependent of
 /// the parent attribute. From then on, changes to the parent automatically
-/// propagate to and re-evaluate the tag query — no separate cache needed.
+/// propagate to and re-evaluate the tag query - no separate cache needed.
 ///
 /// Use [`get_tagged`](Self::get_tagged) to read cached tag-query results.
 /// The query must have been registered first via `AttributesMut::evaluate_tagged`

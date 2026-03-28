@@ -1,11 +1,11 @@
-//! # Damage Pipeline Example — Multi-Phase Attack Resolution
+//! # Damage Pipeline Example - Multi-Phase Attack Resolution
 //!
 //! Demonstrates a multi-phase damage pipeline:
 //!
 //! - **`define_tags!`** for damage element types (physical, fire, cold)
 //! - **`AttributeQueries::evaluate_expr_with_roles`** for multi-entity expression
 //!   evaluation (`@attacker`, `@weapon`)
-//! - **Tagged evaluation** — weapon damage and defender resistance are tagged
+//! - **Tagged evaluation** - weapon damage and defender resistance are tagged
 //!   by element, queried via `evaluate_tagged`
 //! - **`set_base`** for applying damage to `Life.current`
 //! - Multi-phase resolution: hit → dodge → block → armor → resistance → damage

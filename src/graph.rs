@@ -509,7 +509,7 @@ mod tests {
             &[DepNode::new(sword, attack)]
         );
 
-        // Re-point to player_b — should rewire
+        // Re-point to player_b - should rewire
         let affected = graph.set_alias(sword, wielder, player_b);
         assert!(affected.contains(&attack));
         // Old edge gone

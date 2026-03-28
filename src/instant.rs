@@ -1,4 +1,4 @@
-//! One-shot attribute mutations — Set, Add, or Subtract a value once without
+//! One-shot attribute mutations - Set, Add, or Subtract a value once without
 //! leaving a persistent modifier on the attribute node.
 //!
 //! [`InstantModifierSet`] is a portable collection of [`InstantEntry`] ops
@@ -55,7 +55,7 @@ pub struct InstantEntry {
     pub attribute: String,
     /// Which operation to perform.
     pub op: InstantOp,
-    /// The value — either a literal f32 or an expression source string that
+    /// The value - either a literal f32 or an expression source string that
     /// is compiled at apply time.
     pub value: ModifierValue,
 }
@@ -118,7 +118,7 @@ impl InstantModifierSet {
 // Evaluated entries
 // ---------------------------------------------------------------------------
 
-/// An [`InstantEntry`] after expression evaluation — holds a concrete f32.
+/// An [`InstantEntry`] after expression evaluation - holds a concrete f32.
 #[derive(Clone, Debug)]
 pub struct EvaluatedInstantEntry {
     pub attribute: String,
@@ -137,7 +137,7 @@ pub struct EvaluatedInstantEntry {
 pub type RoleMap<'a> = &'a [(&'a str, Entity)];
 
 // ---------------------------------------------------------------------------
-// AttributeQueries — read-only expression evaluation trait
+// AttributeQueries - read-only expression evaluation trait
 // ---------------------------------------------------------------------------
 
 /// Read-only access to [`Attributes`] for expression evaluation.
@@ -234,7 +234,7 @@ impl<'w, 's, F: QueryFilter> AttributeQueries for AttributesMut<'w, 's, F> {
 }
 
 // ---------------------------------------------------------------------------
-// InstantExt — instant evaluate/apply as methods on AttributesMut
+// InstantExt - instant evaluate/apply as methods on AttributesMut
 // ---------------------------------------------------------------------------
 
 /// Extension trait that provides instant evaluate/apply methods on

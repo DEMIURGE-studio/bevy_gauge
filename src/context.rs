@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::attribute_id::AttributeId;
 
-/// Sparse evaluation context — maps AttributeIds to their current f32 values.
+/// Sparse evaluation context - maps AttributeIds to their current f32 values.
 ///
 /// This is the data structure that expressions read from during evaluation.
 /// Unset attributes default to 0.0.

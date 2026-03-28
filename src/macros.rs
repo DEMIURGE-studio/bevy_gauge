@@ -82,7 +82,7 @@ macro_rules! mod_set {
         $set.add($attribute, $value);
     };
 
-    // ── Entry point (must be last — $($tt:tt)* matches everything) ──────
+    // ── Entry point (must be last - $($tt:tt)* matches everything) ──────
 
     { $($tt:tt)* } => {{
         let mut _set = $crate::modifier_set::ModifierSet::new();
@@ -97,7 +97,7 @@ macro_rules! mod_set {
 /// Spawn this alongside [`Attributes`](crate::attributes::Attributes) to
 /// have the modifiers automatically applied on spawn.
 ///
-/// Uses the same syntax as [`mod_set!`] — this is just a convenience wrapper
+/// Uses the same syntax as [`mod_set!`] - this is just a convenience wrapper
 /// that returns an `AttributeInitializer` instead of a bare `ModifierSet`.
 ///
 /// # Example

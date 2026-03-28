@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 /// A bitmask representing a set of tags on a modifier or a tag query.
 ///
-/// Tags enable filtered attribute evaluation — e.g., "fire sword damage" uses
+/// Tags enable filtered attribute evaluation - e.g., "fire sword damage" uses
 /// only modifiers that apply to fire and/or sword damage.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TagMask(pub u64);
@@ -41,7 +41,7 @@ impl TagMask {
     /// Check whether a modifier with this tag should participate in a given query.
     ///
     /// A modifier with tag `self` matches query `q` when:
-    /// - `self` is NONE (the modifier is global — it applies to every query), OR
+    /// - `self` is NONE (the modifier is global - it applies to every query), OR
     /// - All of `self`'s tag bits are present in `q` (the modifier's tags are a
     ///   subset of the query).
     ///
@@ -93,7 +93,7 @@ impl std::ops::BitAnd for TagMask {
 }
 
 // ---------------------------------------------------------------------------
-// TagResolver — ECS resource mapping tag name strings to TagMask values
+// TagResolver - ECS resource mapping tag name strings to TagMask values
 // ---------------------------------------------------------------------------
 
 /// ECS resource that maps tag name strings to [`TagMask`] values.
@@ -139,7 +139,7 @@ impl TagResolver {
     ///
     /// Registers both the short form (`"FIRE"`) and the namespaced form
     /// (`"Element::FIRE"`). If the short form was already registered by
-    /// a different namespace, it is marked as ambiguous — callers must
+    /// a different namespace, it is marked as ambiguous - callers must
     /// use the fully-qualified `Namespace::TAG` form in expressions.
     pub fn register_namespaced(&mut self, namespace: &str, name: &str, mask: TagMask) {
         let upper_name = name.to_uppercase();

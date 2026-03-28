@@ -18,7 +18,7 @@ use crate::tags::{TagMask, TagResolver};
 /// that dependency edges are maintained and changes propagate correctly
 /// through the global `DependencyGraph`.
 ///
-/// Reading attributes does NOT require this — use `&Attributes` directly.
+/// Reading attributes does NOT require this - use `&Attributes` directly.
 #[derive(SystemParam)]
 pub struct AttributesMut<'w, 's, F: QueryFilter + 'static = ()> {
     query: Query<'w, 's, &'static mut Attributes, F>,
@@ -60,7 +60,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // Core modifier operations
     // -----------------------------------------------------------------------
 
-    /// Add a modifier to a attribute on an entity (untagged — applies to every tag query).
+    /// Add a modifier to a attribute on an entity (untagged - applies to every tag query).
     ///
     /// The attribute node is created with `ReduceFn::Sum` if it doesn't exist.
     /// If the modifier is an `Expr`, dependency edges are registered in the
@@ -307,7 +307,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // Gauge-style convenience constructors
     // -----------------------------------------------------------------------
 
-    /// Create a **flat attribute** — a single value with no complex modification
+    /// Create a **flat attribute** - a single value with no complex modification
     /// rules.
     ///
     /// This is the simplest attribute type: a Sum-reducing node with one flat
@@ -362,7 +362,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         self.add_expr_modifier(entity, name, &qualified)
     }
 
-    /// Create a **tagged attribute** — a complex attribute with tag-filtered
+    /// Create a **tagged attribute** - a complex attribute with tag-filtered
     /// evaluation that materializes lazily.
     ///
     /// Each part becomes its own attribute node. When
@@ -553,7 +553,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// materialized yet, generate and add the tagged expression modifier.
     ///
     /// This is called from `evaluate_tagged` to provide lazy materialization
-    /// of tag combos — the user never needs to enumerate them up front.
+    /// of tag combos - the user never needs to enumerate them up front.
     fn maybe_materialize_template(
         &mut self,
         entity: Entity,
@@ -583,7 +583,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         // Build the tag suffix (e.g., "{FIRE|MELEE}")
         let Some(tag_suffix) = self.tag_resolver.tag_suffix(mask) else {
-            return; // can't decompose — skip silently
+            return; // can't decompose - skip silently
         };
 
         // Qualify the expression with the tag suffix
@@ -606,7 +606,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // -----------------------------------------------------------------------
 
     /// Ensure a materialized tag-query node exists for (parent_attribute, mask).
-    /// Returns the synthetic AttributeId. Idempotent — no-ops if already registered.
+    /// Returns the synthetic AttributeId. Idempotent - no-ops if already registered.
     pub(crate) fn ensure_tag_query(
         &mut self,
         entity: Entity,
@@ -821,7 +821,7 @@ fn qualify_expression(
                     result.push_str(suffix);
                 }
             } else {
-                // Not a part — pass through unchanged (function names, other attributes)
+                // Not a part - pass through unchanged (function names, other attributes)
                 result.push_str(&ident);
             }
         } else {

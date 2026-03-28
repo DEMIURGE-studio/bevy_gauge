@@ -132,7 +132,7 @@ impl From<String> for ModifierValue {
 pub struct ModifierEntry {
     /// The attribute path (e.g., `"Damage.Added"`).
     pub attribute: String,
-    /// The modifier value — either a literal or an expression source string.
+    /// The modifier value - either a literal or an expression source string.
     pub value: ModifierValue,
     /// Tag mask for the modifier. `TagMask::NONE` means global.
     pub tag: TagMask,
@@ -228,7 +228,7 @@ impl ModifierSet {
     ///
     /// Literal values are added as flat modifiers. Expression strings are
     /// compiled and added as expression modifiers (compilation errors are
-    /// silently ignored — use `try_apply` for error handling).
+    /// silently ignored - use `try_apply` for error handling).
     ///
     /// **Note:** this does not run builders. The [`AttributeInitializer`]
     /// observer calls [`apply_builders`](Self::apply_builders) before this
@@ -298,7 +298,7 @@ impl ModifierSet {
     /// as flat modifiers. Expression strings are recompiled and removed as
     /// expression modifiers (compilation errors are silently ignored).
     ///
-    /// Builders are not reversed — they define structure, not removable modifiers.
+    /// Builders are not reversed - they define structure, not removable modifiers.
     pub fn remove<F: QueryFilter>(
         &self,
         entity: Entity,

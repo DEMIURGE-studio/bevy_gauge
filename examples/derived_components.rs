@@ -1,9 +1,9 @@
-//! # Derived Components Example — Attribute → Component Sync
+//! # Derived Components Example - Attribute → Component Sync
 //!
 //! Demonstrates how attribute values flow to typed Bevy components:
 //!
 //! - **`Life`** component with `#[read("Life")]` for max, `#[write]` + `#[init_from("Life")]`
-//!   for current — the derive macro auto-syncs and initializes these
+//!   for current - the derive macro auto-syncs and initializes these
 //! - **Manual `AttributeDerived`** that interprets `"Alive"` (f32) as a `bool`
 //!
 //! Run with: `cargo run --example derived_components`
@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy_gauge::prelude::*;
 
 // ---------------------------------------------------------------------------
-// Life component — derive macro with #[read], #[write], and #[init_from]
+// Life component - derive macro with #[read], #[write], and #[init_from]
 // ---------------------------------------------------------------------------
 
 #[derive(Component, Default, Debug, AttributeComponent)]
@@ -25,7 +25,7 @@ struct Life {
 }
 
 // ---------------------------------------------------------------------------
-// AliveStatus — manual AttributeDerived (f32 → bool)
+// AliveStatus - manual AttributeDerived (f32 → bool)
 // ---------------------------------------------------------------------------
 
 #[derive(Component, Default, Debug)]
@@ -95,7 +95,7 @@ fn spawn(mut commands: Commands) {
 }
 
 // ---------------------------------------------------------------------------
-// Demo — one step per frame so PostUpdate derived‐component sync fires between
+// Demo - one step per frame so PostUpdate derived‐component sync fires between
 // ---------------------------------------------------------------------------
 
 fn demo(
@@ -108,7 +108,7 @@ fn demo(
     let hero = handles.hero;
 
     match step.0 {
-        // Frame 0: print initial state — init_from set current = max automatically
+        // Frame 0: print initial state - init_from set current = max automatically
         0 => {
             println!("=== Initial state (current initialized from max via #[init_from]) ===\n");
             print_state(hero, &mut attributes, &q_life, &q_alive);
@@ -119,7 +119,7 @@ fn demo(
                 life.current -= 60.0;
             }
         }
-        // Frame 1: WriteBack pushed current to attribute — print, then apply lethal hit
+        // Frame 1: WriteBack pushed current to attribute - print, then apply lethal hit
         1 => {
             print_state(hero, &mut attributes, &q_life, &q_alive);
 
@@ -129,7 +129,7 @@ fn demo(
             }
             attributes.set_base(hero, "Alive", 0.0);
         }
-        // Frame 2: components synced — print, then resurrect
+        // Frame 2: components synced - print, then resurrect
         2 => {
             print_state(hero, &mut attributes, &q_life, &q_alive);
 
@@ -139,7 +139,7 @@ fn demo(
                 life.current = life.max;
             }
         }
-        // Frame 3: components synced — print final state and exit
+        // Frame 3: components synced - print final state and exit
         3 => {
             print_state(hero, &mut attributes, &q_life, &q_alive);
             println!("--- Done ---");

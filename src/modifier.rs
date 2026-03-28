@@ -49,7 +49,7 @@ impl From<Expr> for Modifier {
 /// A modifier paired with a [`TagMask`] indicating which damage/attribute types
 /// it applies to.
 ///
-/// - A `TagMask::NONE` tag means the modifier is **global** — it participates
+/// - A `TagMask::NONE` tag means the modifier is **global** - it participates
 ///   in every tag query (like PoE's "+20% increased damage").
 /// - A non-empty tag (e.g. `FIRE | MELEE`) means the modifier only participates
 ///   in queries whose tag bits are a superset of the modifier's tag bits.

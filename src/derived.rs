@@ -1,11 +1,11 @@
-//! Derived component support — automatically sync Bevy components with attributes.
+//! Derived component support - automatically sync Bevy components with attributes.
 //!
 //! # Overview
 //!
-//! [`AttributeDerived`] components are **read-from** — their fields are updated
+//! [`AttributeDerived`] components are **read-from** - their fields are updated
 //! from attribute values every frame (when changed).
 //!
-//! [`WriteBack`] components are **write-to** — their fields are written
+//! [`WriteBack`] components are **write-to** - their fields are written
 //! back to the attribute system every frame (when changed).
 //!
 //! Register derived components via the [`AttributesAppExt`] extension trait:
@@ -109,7 +109,7 @@ pub trait InitFrom: Component<Mutability = Mutable> {
 /// A component whose fields are written back into the attribute system.
 ///
 /// Implement this for components that are authoritative over certain attribute
-/// values — e.g., an input component that controls a attribute directly.
+/// values - e.g., an input component that controls a attribute directly.
 ///
 /// # Example
 ///

@@ -11,13 +11,13 @@ static GLOBAL_RODEO: OnceLock<Arc<ThreadedRodeo>> = OnceLock::new();
 pub(crate) fn global_rodeo() -> &'static Arc<ThreadedRodeo> {
     GLOBAL_RODEO
         .get()
-        .expect("Global interner not initialized — add AttributesPlugin first")
+        .expect("Global interner not initialized - add AttributesPlugin first")
 }
 
 /// A lightweight handle to an interned attribute name.
 ///
 /// Cheap to copy, hash, and compare (u32 under the hood).
-/// All attribute references use `AttributeId` internally — no heap-allocated
+/// All attribute references use `AttributeId` internally - no heap-allocated
 /// strings in hot paths.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AttributeId(pub(crate) Spur);

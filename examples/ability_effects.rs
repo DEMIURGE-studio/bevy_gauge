@@ -1,4 +1,4 @@
-//! # Ability Effects Example — Instant Mutations with Roles
+//! # Ability Effects Example - Instant Mutations with Roles
 //!
 //! Demonstrates the `instant!` system with the arrow/bow/attacker role pattern.
 //!

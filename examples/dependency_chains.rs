@@ -1,4 +1,4 @@
-//! # Dependency Chains Example — Multi-Entity Propagation
+//! # Dependency Chains Example - Multi-Entity Propagation
 //!
 //! Demonstrates cross-entity wiring where changes cascade through a chain:
 //!

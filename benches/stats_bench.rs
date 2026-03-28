@@ -32,7 +32,7 @@ fn setup_app_with_entities(count: usize) -> (App, Vec<Entity>) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Stat access — cached read via &Attributes
+// 1. Stat access - cached read via &Attributes
 // ---------------------------------------------------------------------------
 
 pub fn bench_stat_access(c: &mut Criterion) {
@@ -286,7 +286,7 @@ pub fn bench_mixed_dependencies(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Update propagation — central entity → N dependents
+// 6. Update propagation - central entity → N dependents
 // ---------------------------------------------------------------------------
 
 pub fn bench_stats_update_propagation(c: &mut Criterion) {
@@ -320,7 +320,7 @@ pub fn bench_stats_update_propagation(c: &mut Criterion) {
 
                 let deps_read = dependents.clone();
                 b.iter(|| {
-                    // Mutate the central entity — propagation happens synchronously
+                    // Mutate the central entity - propagation happens synchronously
                     app.world_mut()
                         .run_system_once(move |mut stats: AttributesMut| {
                             stats.add_modifier(central, "Aura.base", 1.0);
