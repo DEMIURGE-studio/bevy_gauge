@@ -158,6 +158,17 @@ macro_rules! requires {
 }
 
 // ---------------------------------------------------------------------------
+// Gearbox GuardProvider integration
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "gearbox")]
+impl bevy_gearbox::guards::GuardProvider for AttributeRequirements {
+    fn guard_name() -> &'static str {
+        "stat_req_unmet"
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
