@@ -10,7 +10,7 @@ repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
 bevy = { version = "0.18", default-features = false, features = ["bevy_log"] }
 lasso = { version = "0.7", features = ["multi-threaded"] }
 inventory = "0.3"
-bevy_gauge_macros = { path = "macros", version = "0.4.3" }
+bevy_gauge_macros = { path = "./macros", version = "0.4.3" }
 bevy_gearbox = { path = "../bevy_gearbox", optional = true }
 
 [features]
