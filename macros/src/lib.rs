@@ -1,5 +1,6 @@
 mod attribute_component_impl;
 mod define_tags_impl;
+mod resolvable_impl;
 
 /// Declare a unit struct with [`TagMask`] associated constants for a tag
 /// hierarchy, plus a `register(&mut TagResolver)` method that registers every
@@ -74,6 +75,48 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// [`AttributeDerived`]: bevy_gauge::derived::AttributeDerived
 /// [`WriteBack`]: bevy_gauge::derived::WriteBack
 /// [`AttributesPlugin`]: bevy_gauge::plugin::AttributesPlugin
+/// Derive macro that generates [`AttributeResolvable`] for structs and enums.
+///
+/// Fields are resolved from attributes using dot-separated paths based on
+/// field names. Use `#[skip]` to exclude fields from resolution.
+///
+/// # Rules
+///
+/// - **Named struct fields**: each appends `.field_name` to the prefix
+/// - **Single resolvable field**: transparent — prefix resolves directly to the value
+/// - **Enums**: variant name is transparent, fields within each variant follow struct rules
+/// - **Newtypes**: transparent — prefix resolves to the inner value
+/// - **Unit variants/structs**: no-op
+/// - **Terminal types** (f32, integers, bool): read directly via `attrs.value()`
+/// - **Other types**: delegate to their `AttributeResolvable` impl
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(AttributeResolvable)]
+/// struct DirectionOffset {
+///     #[skip]
+///     direction: Dir3,
+///     magnitude: f32,  // single resolvable field → transparent
+/// }
+///
+/// #[derive(AttributeResolvable)]
+/// enum Gatherer {
+///     Circle { radius: f32, count: u32 },
+///     Sphere { radius: f32, count: u32 },
+/// }
+/// ```
+///
+/// [`AttributeResolvable`]: bevy_gauge::resolvable::AttributeResolvable
+#[proc_macro_derive(AttributeResolvable, attributes(skip))]
+pub fn derive_attribute_resolvable(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match resolvable_impl::derive(input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
 #[proc_macro_derive(AttributeComponent, attributes(read, write, init_from))]
 pub fn derive_attribute_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);

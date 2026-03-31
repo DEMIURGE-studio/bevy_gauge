@@ -22,6 +22,8 @@ enum FieldKind {
     Integer,
     /// `bool` — `!= 0.0` to read, `as u32 as f32` to write
     Bool,
+    /// Non-terminal type — delegate to `AttributeResolvable`
+    Composite,
 }
 
 /// Classify a syn::Type into a FieldKind.
@@ -34,11 +36,11 @@ fn classify_type(ty: &Type) -> FieldKind {
                 "bool" => FieldKind::Bool,
                 "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
                 | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => FieldKind::Integer,
-                _ => FieldKind::Float, // default to f32 for unknown types
+                _ => FieldKind::Composite,
             };
         }
     }
-    FieldKind::Float
+    FieldKind::Composite
 }
 
 struct BoundField {
@@ -135,7 +137,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let attribute_derived_impl = if has_reads {
         let should_update_checks: Vec<TokenStream> = read_fields.iter().map(|f| {
             let name = &f.name;
-            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            let path = &f.path;
+            let val_expr = read_value_expr(path, &f.tag_expr);
             match f.kind {
                 FieldKind::Float => quote! {
                     {
@@ -164,12 +167,20 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                         }
                     }
                 },
+                FieldKind::Composite => quote! {
+                    if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+                        &self.#name, #path, attrs,
+                    ) {
+                        return true;
+                    }
+                },
             }
         }).collect();
 
         let update_assignments: Vec<TokenStream> = read_fields.iter().map(|f| {
             let name = &f.name;
-            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            let path = &f.path;
+            let val_expr = read_value_expr(path, &f.tag_expr);
             match f.kind {
                 FieldKind::Float => quote! {
                     self.#name = #val_expr;
@@ -182,6 +193,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 },
                 FieldKind::Bool => quote! {
                     self.#name = (#val_expr) != 0.0;
+                },
+                FieldKind::Composite => quote! {
+                    ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+                        &mut self.#name, #path, attrs,
+                    );
                 },
             }
         }).collect();
@@ -211,7 +227,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let write_back_impl = if has_writes {
         let should_writeback_checks: Vec<TokenStream> = write_fields.iter().map(|f| {
             let name = &f.name;
-            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            let path = &f.path;
+            let val_expr = read_value_expr(path, &f.tag_expr);
             match f.kind {
                 FieldKind::Float => quote! {
                     {
@@ -240,6 +257,13 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                         }
                     }
                 },
+                FieldKind::Composite => quote! {
+                    if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+                        &self.#name, #path, attrs,
+                    ) {
+                        return true;
+                    }
+                },
             }
         }).collect();
 
@@ -255,6 +279,12 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 },
                 FieldKind::Bool => quote! {
                     attributes.set_base(entity, #path, if self.#name { 1.0 } else { 0.0 });
+                },
+                FieldKind::Composite => quote! {
+                    // Composite WriteBack is not supported — composites are read-only
+                    // via AttributeResolvable. Writing back nested structures to
+                    // attributes is not a supported pattern.
+                    compile_error!("Cannot use #[write] on a composite (non-terminal) field. Use #[read] instead.");
                 },
             }
         }).collect();
@@ -298,6 +328,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 },
                 FieldKind::Bool => quote! {
                     self.#name = attrs.value(#path) != 0.0;
+                },
+                FieldKind::Composite => quote! {
+                    ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+                        &mut self.#name, #path, attrs,
+                    );
                 },
             }
         }).collect();
