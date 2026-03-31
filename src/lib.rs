@@ -10,6 +10,7 @@ pub mod attributes;
 pub mod attributes_mut;
 pub mod modifier_set;
 pub mod derived;
+pub mod resolvable;
 pub mod instant;
 pub mod requirements;
 pub mod plugin;
@@ -40,6 +41,7 @@ pub mod prelude {
     };
     pub use crate::commands::AttributeCommandsExt;
     pub use crate::writer::{AttributeWriter, BoundAttributesMut};
+    pub use crate::resolvable::AttributeResolvable;
     pub use crate::requirements::AttributeRequirements;
     pub use crate::plugin::AttributesPlugin;
     pub use crate::attributes;
