@@ -13,18 +13,48 @@ enum AttributePath {
     Auto,
 }
 
+/// How to convert between f32 (gauge's native type) and the field type.
+#[derive(Clone, Copy)]
+enum FieldKind {
+    /// `f32` — no conversion needed
+    Float,
+    /// Integer types (`u32`, `i32`, `usize`, `u64`, `i64`, etc.) — `.round() as T`
+    Integer,
+    /// `bool` — `!= 0.0` to read, `as u32 as f32` to write
+    Bool,
+}
+
+/// Classify a syn::Type into a FieldKind.
+fn classify_type(ty: &Type) -> FieldKind {
+    if let Type::Path(type_path) = ty {
+        if let Some(ident) = type_path.path.get_ident() {
+            let name = ident.to_string();
+            return match name.as_str() {
+                "f32" | "f64" => FieldKind::Float,
+                "bool" => FieldKind::Bool,
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => FieldKind::Integer,
+                _ => FieldKind::Float, // default to f32 for unknown types
+            };
+        }
+    }
+    FieldKind::Float
+}
+
 struct BoundField {
     name: Ident,
-    #[allow(dead_code)]
     ty: Type,
     direction: Direction,
     path: String,
     tag_expr: Option<syn::Expr>,
+    kind: FieldKind,
 }
 
 struct InitFromField {
     name: Ident,
+    ty: Type,
     path: String,
+    kind: FieldKind,
 }
 
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
@@ -74,12 +104,15 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     direction,
                     path: resolved_path,
                     tag_expr,
+                    kind: classify_type(&field.ty),
                 });
             } else if attr.path().is_ident("init_from") {
                 let path = parse_init_from(attr)?;
                 init_from_fields.push(InitFromField {
                     name: field_name.clone(),
+                    ty: field.ty.clone(),
                     path,
+                    kind: classify_type(&field.ty),
                 });
             }
         }
@@ -102,24 +135,54 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let attribute_derived_impl = if has_reads {
         let should_update_checks: Vec<TokenStream> = read_fields.iter().map(|f| {
             let name = &f.name;
-            let path = &f.path;
-            let val_expr = read_value_expr(path, &f.tag_expr);
-            quote! {
-                {
-                    let _val = #val_expr;
-                    if (self.#name - _val).abs() > f32::EPSILON {
-                        return true;
+            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            match f.kind {
+                FieldKind::Float => quote! {
+                    {
+                        let _val = #val_expr;
+                        if (self.#name - _val).abs() > f32::EPSILON {
+                            return true;
+                        }
                     }
-                }
+                },
+                FieldKind::Integer => {
+                    let ty = &f.ty;
+                    quote! {
+                        {
+                            let _val = (#val_expr).round() as #ty;
+                            if self.#name != _val {
+                                return true;
+                            }
+                        }
+                    }
+                },
+                FieldKind::Bool => quote! {
+                    {
+                        let _val = (#val_expr) != 0.0;
+                        if self.#name != _val {
+                            return true;
+                        }
+                    }
+                },
             }
         }).collect();
 
         let update_assignments: Vec<TokenStream> = read_fields.iter().map(|f| {
             let name = &f.name;
-            let path = &f.path;
-            let val_expr = read_value_expr(path, &f.tag_expr);
-            quote! {
-                self.#name = #val_expr;
+            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            match f.kind {
+                FieldKind::Float => quote! {
+                    self.#name = #val_expr;
+                },
+                FieldKind::Integer => {
+                    let ty = &f.ty;
+                    quote! {
+                        self.#name = (#val_expr).round() as #ty;
+                    }
+                },
+                FieldKind::Bool => quote! {
+                    self.#name = (#val_expr) != 0.0;
+                },
             }
         }).collect();
 
@@ -148,23 +211,51 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let write_back_impl = if has_writes {
         let should_writeback_checks: Vec<TokenStream> = write_fields.iter().map(|f| {
             let name = &f.name;
-            let path = &f.path;
-            let val_expr = read_value_expr(path, &f.tag_expr);
-            quote! {
-                {
-                    let _val = #val_expr;
-                    if (self.#name - _val).abs() > f32::EPSILON {
-                        return true;
+            let val_expr = read_value_expr(&f.path, &f.tag_expr);
+            match f.kind {
+                FieldKind::Float => quote! {
+                    {
+                        let _val = #val_expr;
+                        if (self.#name - _val).abs() > f32::EPSILON {
+                            return true;
+                        }
                     }
-                }
+                },
+                FieldKind::Integer => {
+                    let ty = &f.ty;
+                    quote! {
+                        {
+                            let _val = (#val_expr).round() as #ty;
+                            if self.#name != _val {
+                                return true;
+                            }
+                        }
+                    }
+                },
+                FieldKind::Bool => quote! {
+                    {
+                        let _val = (#val_expr) != 0.0;
+                        if self.#name != _val {
+                            return true;
+                        }
+                    }
+                },
             }
         }).collect();
 
         let writeback_assignments: Vec<TokenStream> = write_fields.iter().map(|f| {
             let name = &f.name;
             let path = &f.path;
-            quote! {
-                attributes.set_base(entity, #path, self.#name);
+            match f.kind {
+                FieldKind::Float => quote! {
+                    attributes.set_base(entity, #path, self.#name);
+                },
+                FieldKind::Integer => quote! {
+                    attributes.set_base(entity, #path, self.#name as f32);
+                },
+                FieldKind::Bool => quote! {
+                    attributes.set_base(entity, #path, if self.#name { 1.0 } else { 0.0 });
+                },
             }
         }).collect();
 
@@ -195,8 +286,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         let init_assignments: Vec<TokenStream> = init_from_fields.iter().map(|f| {
             let name = &f.name;
             let path = &f.path;
-            quote! {
-                self.#name = attrs.value(#path);
+            match f.kind {
+                FieldKind::Float => quote! {
+                    self.#name = attrs.value(#path);
+                },
+                FieldKind::Integer => {
+                    let ty = &f.ty;
+                    quote! {
+                        self.#name = attrs.value(#path).round() as #ty;
+                    }
+                },
+                FieldKind::Bool => quote! {
+                    self.#name = attrs.value(#path) != 0.0;
+                },
             }
         }).collect();
 
