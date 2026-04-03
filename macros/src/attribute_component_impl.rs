@@ -428,7 +428,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             registrations.push(quote! {
                 ::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
-                        kind: ::bevy_gauge::derived::RegistrationKind::Derived,
+
                         register_fn: |app| {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_attribute_derived::<#struct_name>();
@@ -450,7 +450,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             registrations.push(quote! {
                 ::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
-                        kind: ::bevy_gauge::derived::RegistrationKind::WriteBack,
+
                         register_fn: |app| {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_write_back::<#struct_name>();
@@ -472,7 +472,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             registrations.push(quote! {
                 ::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
-                        kind: ::bevy_gauge::derived::RegistrationKind::InitTo,
+
                         register_fn: |app| {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_init_to::<#struct_name>();
@@ -487,7 +487,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             registrations.push(quote! {
                 ::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
-                        kind: ::bevy_gauge::derived::RegistrationKind::InitFrom,
+
                         register_fn: |app| {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_init_from::<#struct_name>();
@@ -499,7 +499,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                                 ::bevy_gauge::derived::apply_init_from::<#struct_name>
                                     .in_set(::bevy_gauge::derived::InitFromSet),
                             );
-                        },
+                        }),
                     }
                 }
             });
