@@ -17,6 +17,7 @@
 
 use bevy::ecs::component::Mutable;
 use bevy::ecs::query::QueryFilter;
+use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
@@ -253,9 +254,20 @@ impl AttributesAppExt for App {
 // Inventory-based auto-registration
 // ---------------------------------------------------------------------------
 
+/// Which kind of attribute sync a registration entry provides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationKind {
+    /// Reads from attributes into a component ([`AttributeDerived`]).
+    Derived,
+    /// Writes from a component back into attributes ([`WriteBack`]).
+    WriteBack,
+    /// One-shot initialization when a component is first added ([`InitFrom`]).
+    InitFrom,
+}
+
 /// A registration entry for the [`inventory`] crate.
 ///
-/// Each entry carries a function pointer that registers systems with the
+/// Each entry carries function pointers that register systems with the
 /// Bevy [`App`]. Entries are submitted at link time (via `inventory::submit!`)
 /// and collected in [`AttributesPlugin::build`](crate::plugin::AttributesPlugin).
 ///
@@ -268,10 +280,43 @@ impl AttributesAppExt for App {
 /// register_write_back!(MyCustomWriteBack);
 /// ```
 pub struct AttributeRegistration {
+    /// What kind of sync this registration provides.
+    pub kind: RegistrationKind,
+    /// Registers systems into the default schedules (`PreUpdate` / `PostUpdate`).
     pub register_fn: fn(&mut App),
+    /// Registers systems into an arbitrary schedule.
+    pub register_in_schedule_fn: fn(&mut App, InternedScheduleLabel),
 }
 
 inventory::collect!(AttributeRegistration);
+
+/// Add all registered gauge sync systems ([`WriteBack`] + [`AttributeDerived`])
+/// to an arbitrary schedule.
+///
+/// This configures [`WriteBackSet`] → [`AttributeDerivedSet`] ordering within
+/// the target schedule and adds all inventory-registered sync systems.
+///
+/// [`InitFrom`] registrations are intentionally excluded — they use `Added<T>`
+/// and belong in `PreUpdate`, not in looping sub-schedules.
+///
+/// # Example
+///
+/// ```ignore
+/// // In a gearbox plugin, add gauge sync between effects and edge checks:
+/// bevy_gauge::add_gauge_sync_to_schedule(app, GearboxSchedule);
+/// ```
+pub fn add_gauge_sync_to_schedule(app: &mut App, schedule: impl ScheduleLabel + Clone) {
+    let schedule = schedule.intern();
+    app.configure_sets(schedule, (WriteBackSet, AttributeDerivedSet).chain());
+    for reg in inventory::iter::<AttributeRegistration> {
+        match reg.kind {
+            RegistrationKind::Derived | RegistrationKind::WriteBack => {
+                (reg.register_in_schedule_fn)(app, schedule);
+            }
+            RegistrationKind::InitFrom => {}
+        }
+    }
+}
 
 /// Register a [`AttributeDerived`] component via the `inventory` auto-registration
 /// system. Place this at module scope.
@@ -305,30 +350,57 @@ macro_rules! _register_attribute {
     (attribute_derived, $ty:ty) => {
         ::inventory::submit! {
             $crate::derived::AttributeRegistration {
+                kind: $crate::derived::RegistrationKind::Derived,
                 register_fn: |app| {
                     use $crate::derived::AttributesAppExt;
                     app.register_attribute_derived::<$ty>();
-                }
+                },
+                register_in_schedule_fn: |app, schedule| {
+                    use ::bevy::prelude::*;
+                    app.add_systems(
+                        schedule,
+                        $crate::derived::update_attribute_derived::<$ty>
+                            .in_set($crate::derived::AttributeDerivedSet),
+                    );
+                },
             }
         }
     };
     (write_back, $ty:ty) => {
         ::inventory::submit! {
             $crate::derived::AttributeRegistration {
+                kind: $crate::derived::RegistrationKind::WriteBack,
                 register_fn: |app| {
                     use $crate::derived::AttributesAppExt;
                     app.register_write_back::<$ty>();
-                }
+                },
+                register_in_schedule_fn: |app, schedule| {
+                    use ::bevy::prelude::*;
+                    app.add_systems(
+                        schedule,
+                        $crate::derived::update_write_back::<$ty>
+                            .in_set($crate::derived::WriteBackSet),
+                    );
+                },
             }
         }
     };
     (init_from, $ty:ty) => {
         ::inventory::submit! {
             $crate::derived::AttributeRegistration {
+                kind: $crate::derived::RegistrationKind::InitFrom,
                 register_fn: |app| {
                     use $crate::derived::AttributesAppExt;
                     app.register_init_from::<$ty>();
-                }
+                },
+                register_in_schedule_fn: |app, schedule| {
+                    use ::bevy::prelude::*;
+                    app.add_systems(
+                        schedule,
+                        $crate::derived::apply_init_from::<$ty>
+                            .in_set($crate::derived::InitFromSet),
+                    );
+                },
             }
         }
     };

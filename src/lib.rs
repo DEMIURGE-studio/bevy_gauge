@@ -35,6 +35,7 @@ pub mod prelude {
     pub use crate::derived::{
         AttributeDerived, WriteBack, InitFrom,
         AttributeDerivedSet, WriteBackSet, InitFromSet, AttributesAppExt,
+        add_gauge_sync_to_schedule,
     };
     pub use crate::instant::{
         InstantModifierSet, EvaluatedInstantEntry,
