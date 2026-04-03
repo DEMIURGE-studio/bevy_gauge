@@ -59,6 +59,12 @@ struct InitFromField {
     kind: FieldKind,
 }
 
+struct InitToField {
+    name: Ident,
+    path: String,
+    kind: FieldKind,
+}
+
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
     let struct_name_str = struct_name.to_string();
@@ -82,9 +88,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let mut bound_fields: Vec<BoundField> = Vec::new();
     let mut init_from_fields: Vec<InitFromField> = Vec::new();
+    let mut init_to_fields: Vec<InitToField> = Vec::new();
 
     for field in &named.named {
         let field_name = field.ident.as_ref().unwrap();
+        let mut has_init_to = false;
+        let mut read_path: Option<String> = None;
+
+        // First pass: detect #[init_to] and collect #[read] path
+        for attr in &field.attrs {
+            if attr.path().is_ident("init_to") {
+                has_init_to = true;
+            }
+        }
 
         for attr in &field.attrs {
             if attr.path().is_ident("read") || attr.path().is_ident("write") {
@@ -99,6 +115,10 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     AttributePath::Explicit(lit) => lit,
                     AttributePath::Auto => format!("{}.{}", struct_name_str, field_name),
                 };
+
+                if matches!(direction, Direction::ReadFrom) {
+                    read_path = Some(resolved_path.clone());
+                }
 
                 bound_fields.push(BoundField {
                     name: field_name.clone(),
@@ -118,6 +138,20 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 });
             }
         }
+
+        if has_init_to {
+            let path = read_path.ok_or_else(|| {
+                syn::Error::new_spanned(
+                    field_name,
+                    "#[init_to] requires a #[read(\"path\")] attribute on the same field",
+                )
+            })?;
+            init_to_fields.push(InitToField {
+                name: field_name.clone(),
+                path,
+                kind: classify_type(&field.ty),
+            });
+        }
     }
 
     let read_fields: Vec<&BoundField> = bound_fields
@@ -132,6 +166,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let has_reads = !read_fields.is_empty();
     let has_writes = !write_fields.is_empty();
+    let has_init_to = !init_to_fields.is_empty();
     let has_init_from = !init_from_fields.is_empty();
 
     let attribute_derived_impl = if has_reads {
@@ -312,6 +347,41 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         TokenStream::new()
     };
 
+    let init_to_impl = if has_init_to {
+        let seed_assignments: Vec<TokenStream> = init_to_fields.iter().map(|f| {
+            let name = &f.name;
+            let path = &f.path;
+            match f.kind {
+                FieldKind::Float => quote! {
+                    attributes.set_base(entity, #path, self.#name);
+                },
+                FieldKind::Integer => quote! {
+                    attributes.set_base(entity, #path, self.#name as f32);
+                },
+                FieldKind::Bool => quote! {
+                    attributes.set_base(entity, #path, if self.#name { 1.0 } else { 0.0 });
+                },
+                FieldKind::Composite => quote! {
+                    compile_error!("Cannot use #[init_to] on a composite (non-terminal) field.");
+                },
+            }
+        }).collect();
+
+        quote! {
+            impl ::bevy_gauge::derived::InitTo for #struct_name {
+                fn init_to_attributes<F: ::bevy::ecs::query::QueryFilter>(
+                    &self,
+                    entity: ::bevy::prelude::Entity,
+                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut<'_, '_, F>,
+                ) {
+                    #(#seed_assignments)*
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+
     let init_from_impl = if has_init_from {
         let init_assignments: Vec<TokenStream> = init_from_fields.iter().map(|f| {
             let name = &f.name;
@@ -398,6 +468,28 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             });
         }
 
+        if has_init_to {
+            registrations.push(quote! {
+                ::inventory::submit! {
+                    ::bevy_gauge::derived::AttributeRegistration {
+                        kind: ::bevy_gauge::derived::RegistrationKind::InitTo,
+                        register_fn: |app| {
+                            use ::bevy_gauge::derived::AttributesAppExt;
+                            app.register_init_to::<#struct_name>();
+                        },
+                        register_in_schedule_fn: |app, schedule| {
+                            use ::bevy::prelude::*;
+                            app.add_systems(
+                                schedule,
+                                ::bevy_gauge::derived::apply_init_to::<#struct_name>
+                                    .in_set(::bevy_gauge::derived::WriteBackSet),
+                            );
+                        },
+                    }
+                }
+            });
+        }
+
         if has_init_from {
             registrations.push(quote! {
                 ::inventory::submit! {
@@ -426,6 +518,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     Ok(quote! {
         #attribute_derived_impl
         #write_back_impl
+        #init_to_impl
         #init_from_impl
         #inventory_submits
     })

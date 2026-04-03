@@ -107,6 +107,33 @@ pub trait InitFrom: Component<Mutability = Mutable> {
     fn init_from_attributes(&mut self, attrs: &Attributes);
 }
 
+/// A component whose fields seed attribute values once on spawn.
+///
+/// This is the mirror of [`InitFrom`]: where `InitFrom` reads **from**
+/// attributes into a component, `InitTo` writes **to** attributes from a
+/// component. Used on `#[read]` fields whose initial value should come from
+/// the component rather than an `attributes!` block.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Component, Default, AttributeComponent)]
+/// struct Controller {
+///     #[read("RideHeight")]
+///     #[init_to]
+///     ride_height: f32,
+/// }
+///
+/// // Spawning with a value seeds the attribute automatically:
+/// commands.spawn((Attributes::new(), Controller { ride_height: 1.0, ..default() }));
+/// // No need for attributes! { "RideHeight" => 1.0 }
+/// ```
+pub trait InitTo: Component {
+    /// Write initial field values into the attribute system. Called once when
+    /// the component is first added.
+    fn init_to_attributes<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>);
+}
+
 /// A component whose fields are written back into the attribute system.
 ///
 /// Implement this for components that are authoritative over certain attribute
@@ -178,6 +205,21 @@ pub fn update_write_back<T: WriteBack>(
     }
 }
 
+/// Generic system that seeds attribute values from [`InitTo`] fields when
+/// the component is first added.
+///
+/// Uses `Added<T>` to fire exactly once per entity. Runs in [`WriteBackSet`]
+/// so that seeded values are available before [`AttributeDerivedSet`] and
+/// [`InitFromSet`] run.
+pub fn apply_init_to<T: InitTo>(
+    query: Query<(Entity, &T), Added<T>>,
+    mut attributes: AttributesMut,
+) {
+    for (entity, component) in &query {
+        component.init_to_attributes(entity, &mut attributes);
+    }
+}
+
 /// Generic system that initializes [`InitFrom`] fields when the component is first added.
 ///
 /// Uses `Added<T>` to fire exactly once per entity, after all commands from
@@ -212,6 +254,12 @@ pub trait AttributesAppExt {
     /// changes made during `Update`.
     fn register_write_back<T: WriteBack>(&mut self) -> &mut Self;
 
+    /// Register an [`InitTo`] component.
+    ///
+    /// Adds a one-shot system to [`PreUpdate`] (in the [`WriteBackSet`]) that
+    /// seeds attribute values from component fields when first added.
+    fn register_init_to<T: InitTo>(&mut self) -> &mut Self;
+
     /// Register an [`InitFrom`] component.
     ///
     /// Adds a one-shot initialization system to [`PreUpdate`] (in the
@@ -242,6 +290,13 @@ impl AttributesAppExt for App {
         )
     }
 
+    fn register_init_to<T: InitTo>(&mut self) -> &mut Self {
+        self.add_systems(
+            PreUpdate,
+            apply_init_to::<T>.in_set(WriteBackSet),
+        )
+    }
+
     fn register_init_from<T: InitFrom>(&mut self) -> &mut Self {
         self.add_systems(
             PreUpdate,
@@ -261,6 +316,8 @@ pub enum RegistrationKind {
     Derived,
     /// Writes from a component back into attributes ([`WriteBack`]).
     WriteBack,
+    /// One-shot seed from component fields into attributes ([`InitTo`]).
+    InitTo,
     /// One-shot initialization when a component is first added ([`InitFrom`]).
     InitFrom,
 }
@@ -313,7 +370,7 @@ pub fn add_gauge_sync_to_schedule(app: &mut App, schedule: impl ScheduleLabel + 
             RegistrationKind::Derived | RegistrationKind::WriteBack => {
                 (reg.register_in_schedule_fn)(app, schedule);
             }
-            RegistrationKind::InitFrom => {}
+            RegistrationKind::InitTo | RegistrationKind::InitFrom => {}
         }
     }
 }
@@ -341,6 +398,19 @@ macro_rules! register_derived {
 macro_rules! register_write_back {
     ($ty:ty) => {
         $crate::_register_attribute!(write_back, $ty);
+    };
+}
+
+/// Register an [`InitTo`] component via the `inventory` auto-registration
+/// system. Place this at module scope.
+///
+/// ```ignore
+/// register_init_to!(MyController);
+/// ```
+#[macro_export]
+macro_rules! register_init_to {
+    ($ty:ty) => {
+        $crate::_register_attribute!(init_to, $ty);
     };
 }
 
@@ -379,6 +449,25 @@ macro_rules! _register_attribute {
                     app.add_systems(
                         schedule,
                         $crate::derived::update_write_back::<$ty>
+                            .in_set($crate::derived::WriteBackSet),
+                    );
+                },
+            }
+        }
+    };
+    (init_to, $ty:ty) => {
+        ::inventory::submit! {
+            $crate::derived::AttributeRegistration {
+                kind: $crate::derived::RegistrationKind::InitTo,
+                register_fn: |app| {
+                    use $crate::derived::AttributesAppExt;
+                    app.register_init_to::<$ty>();
+                },
+                register_in_schedule_fn: |app, schedule| {
+                    use ::bevy::prelude::*;
+                    app.add_systems(
+                        schedule,
+                        $crate::derived::apply_init_to::<$ty>
                             .in_set($crate::derived::WriteBackSet),
                     );
                 },

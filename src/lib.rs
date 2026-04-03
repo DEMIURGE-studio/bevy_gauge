@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::attributes::Attributes;
     pub use crate::attributes_mut::AttributesMut;
     pub use crate::derived::{
-        AttributeDerived, WriteBack, InitFrom,
+        AttributeDerived, WriteBack, InitTo, InitFrom,
         AttributeDerivedSet, WriteBackSet, InitFromSet, AttributesAppExt,
         add_gauge_sync_to_schedule,
     };
