@@ -433,14 +433,14 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_attribute_derived::<#struct_name>();
                         },
-                        register_in_schedule_fn: |app, schedule| {
+                        register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
                                 ::bevy_gauge::derived::update_attribute_derived::<#struct_name>
                                     .in_set(::bevy_gauge::derived::AttributeDerivedSet),
                             );
-                        },
+                        }),
                     }
                 }
             });
@@ -455,14 +455,14 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_write_back::<#struct_name>();
                         },
-                        register_in_schedule_fn: |app, schedule| {
+                        register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
                                 ::bevy_gauge::derived::update_write_back::<#struct_name>
                                     .in_set(::bevy_gauge::derived::WriteBackSet),
                             );
-                        },
+                        }),
                     }
                 }
             });
@@ -477,14 +477,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_init_to::<#struct_name>();
                         },
-                        register_in_schedule_fn: |app, schedule| {
-                            use ::bevy::prelude::*;
-                            app.add_systems(
-                                schedule,
-                                ::bevy_gauge::derived::apply_init_to::<#struct_name>
-                                    .in_set(::bevy_gauge::derived::WriteBackSet),
-                            );
-                        },
+                        register_in_schedule_fn: None,
                     }
                 }
             });
@@ -499,7 +492,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                             use ::bevy_gauge::derived::AttributesAppExt;
                             app.register_init_from::<#struct_name>();
                         },
-                        register_in_schedule_fn: |app, schedule| {
+                        register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
