@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gauge"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2024"
 description = "A flexible attribute and stat system for Bevy"
 license = "MIT OR Apache-2.0"
