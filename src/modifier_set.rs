@@ -173,6 +173,11 @@ impl ModifierSet {
         Self::default()
     }
 
+    /// Returns a slice of all modifier entries in this set.
+    pub fn entries(&self) -> &[ModifierEntry] {
+        &self.entries
+    }
+
     /// Add an untagged modifier (literal f32 or expression string).
     pub fn add(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
         self.entries.push(ModifierEntry {
