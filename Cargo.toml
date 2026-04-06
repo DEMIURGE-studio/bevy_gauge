@@ -6,11 +6,16 @@ description = "A flexible attribute and stat system for Bevy"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/DEMIURGE-studio/bevy_gauge"
 
+[features]
+default = []
+avian3d = ["dep:avian3d"]
+
 [dependencies]
 bevy = { version = "0.18", default-features = false, features = ["bevy_log"] }
 lasso = { version = "0.7", features = ["multi-threaded"] }
 inventory = "0.3"
 bevy_gauge_macros = { path = "./macros", version = "0.4.3" }
+avian3d = { version = "0.6", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

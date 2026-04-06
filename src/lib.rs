@@ -16,6 +16,9 @@ pub mod requirements;
 pub mod plugin;
 pub mod writer;
 
+#[cfg(feature = "avian3d")]
+pub mod avian;
+
 #[doc(hidden)]
 pub mod macros;
 
