@@ -17,6 +17,8 @@
 //! }
 //! ```
 
+use bevy::ecs::lifecycle::HookContext;
+use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
@@ -28,8 +30,9 @@ use crate::expr::Expr;
 
 /// A single boolean requirement over attributes.
 ///
-/// The expression is compiled lazily on first [`met`](Self::met) call using
-/// the global [`Interner`](crate::attribute_id::Interner).
+/// The expression is compiled eagerly when [`AttributeRequirements`] is added
+/// to an entity (via a component hook), or lazily on first [`met`](Self::met)
+/// call as a fallback.
 #[derive(Clone, Debug)]
 pub struct AttributeRequirement {
     source: String,
@@ -39,7 +42,8 @@ pub struct AttributeRequirement {
 impl AttributeRequirement {
     /// Create a new requirement from an expression string.
     ///
-    /// The expression is stored but not compiled until first evaluation.
+    /// The expression is stored but not compiled until [`compile`](Self::compile)
+    /// is called (typically by the component hook) or first evaluation.
     pub fn new(source: impl Into<String>) -> Self {
         Self {
             source: source.into(),
@@ -47,28 +51,28 @@ impl AttributeRequirement {
         }
     }
 
-    /// Check whether this requirement is satisfied against the given attributes.
-    ///
-    /// The expression is compiled on first call (using the global interner)
-    /// and cached for subsequent evaluations. Returns `true` if the expression
-    /// evaluates to a non-zero value (truthy).
-    pub fn met(&mut self, attrs: &Attributes) -> bool {
-        let expr = match &self.compiled {
-            Some(expr) => expr,
-            None => {
-                match Expr::compile(&self.source, None) {
-                    Ok(expr) => {
-                        self.compiled = Some(expr);
-                        self.compiled.as_ref().unwrap()
-                    }
-                    Err(err) => {
-                        warn!("AttributeRequirement compile error for '{}': {}", self.source, err);
-                        return false;
-                    }
-                }
+    /// Compile the expression eagerly. Called by the component hook.
+    pub fn compile(&mut self) {
+        if self.compiled.is_some() { return; }
+        match Expr::compile(&self.source, None) {
+            Ok(expr) => { self.compiled = Some(expr); }
+            Err(err) => {
+                warn!("AttributeRequirement compile error for '{}': {}", self.source, err);
             }
-        };
-        expr.evaluate(&attrs.context) != 0.0
+        }
+    }
+
+    /// Check whether this requirement is satisfied.
+    ///
+    /// Panics if the expression hasn't been compiled yet.
+    pub fn met(&self, attrs: &Attributes) -> bool {
+        match &self.compiled {
+            Some(expr) => expr.evaluate(&attrs.context) != 0.0,
+            None => {
+                warn!("AttributeRequirement::check called before compile for '{}'", self.source);
+                false
+            }
+        }
     }
 
     /// Get the source expression string.
@@ -89,9 +93,19 @@ impl<S: Into<String>> From<S> for AttributeRequirement {
 
 /// A component holding one or more boolean attribute requirements.
 ///
-/// All requirements must be satisfied for [`met`](Self::met) to return `true`.
+/// All requirements must be satisfied for [`check`](Self::check) to return `true`.
+/// Expressions are compiled eagerly via a component hook when this is added to
+/// an entity.
 #[derive(Component, Debug, Default, Clone)]
+#[component(on_add = compile_requirements_hook)]
 pub struct AttributeRequirements(pub Vec<AttributeRequirement>);
+
+fn compile_requirements_hook(mut world: DeferredWorld, ctx: HookContext) {
+    let Some(mut reqs) = world.get_mut::<AttributeRequirements>(ctx.entity) else { return; };
+    for req in reqs.0.iter_mut() {
+        req.compile();
+    }
+}
 
 impl AttributeRequirements {
     pub fn new() -> Self {
@@ -111,8 +125,8 @@ impl AttributeRequirements {
     /// Check whether **all** requirements are satisfied.
     ///
     /// Returns `true` if the list is empty (vacuous truth).
-    pub fn met(&mut self, attrs: &Attributes) -> bool {
-        self.0.iter_mut().all(|req| req.met(attrs))
+    pub fn met(&self, attrs: &Attributes) -> bool {
+        self.0.iter().all(|req| req.met(attrs))
     }
 
     pub fn len(&self) -> usize {
@@ -190,7 +204,7 @@ mod tests {
     fn single_requirement_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0)]);
-        let mut req = AttributeRequirement::new("Strength >= 10");
+        let req = AttributeRequirement::new("Strength >= 10");
         assert!(req.met(&attrs));
     }
 
@@ -198,7 +212,7 @@ mod tests {
     fn single_requirement_not_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 5.0)]);
-        let mut req = AttributeRequirement::new("Strength >= 10");
+        let req = AttributeRequirement::new("Strength >= 10");
         assert!(!req.met(&attrs));
     }
 
@@ -206,7 +220,7 @@ mod tests {
     fn requirements_all_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 10.0)]);
-        let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+        let reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
         assert!(reqs.met(&attrs));
     }
 
@@ -214,14 +228,14 @@ mod tests {
     fn requirements_partial_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 3.0)]);
-        let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+        let reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
         assert!(!reqs.met(&attrs));
     }
 
     #[test]
     fn empty_requirements_are_met() {
         let attrs = Attributes::new();
-        let mut reqs = AttributeRequirements::new();
+        let reqs = AttributeRequirements::new();
         assert!(reqs.met(&attrs));
     }
 
@@ -229,7 +243,7 @@ mod tests {
     fn le_zero_check() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("ProjectileLife", 0.0)]);
-        let mut req = AttributeRequirement::new("ProjectileLife <= 0");
+        let req = AttributeRequirement::new("ProjectileLife <= 0");
         assert!(req.met(&attrs));
     }
 
