@@ -54,11 +54,15 @@ struct AttrsEntityCommand {
 }
 
 impl EntityCommand for AttrsEntityCommand {
+    type Out = ();
     fn apply(self, entity_world: EntityWorldMut<'_>) {
         let entity = entity_world.id();
         let world = entity_world.into_world_mut();
         let mut state = SystemState::<AttributesMut>::new(world);
-        let mut attrs_mut = state.get_mut(world);
+        let Ok(mut attrs_mut) = state.get_mut(world) else {
+            debug!("could not get attributes for {entity}. skipping...");
+            return;
+        };
         let mut bound = BoundAttributesMut {
             entity,
             attrs: &mut attrs_mut,
