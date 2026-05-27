@@ -44,6 +44,7 @@ pub enum Op {
     Sub,
     Mul,
     Div,
+    Pow,
     // Unary (pops one, pushes one)
     Neg,
     // Comparison (pops two, pushes 1.0 or 0.0)
@@ -191,6 +192,7 @@ enum Token {
     Ident(String), // attribute name or function name
     Plus,
     Minus,
+    StarStar,     // ** for raising to the power
     Star,
     Slash,
     LParen,
@@ -245,6 +247,9 @@ impl Tokenizer {
         match ch {
             '+' => { self.pos += 1; Ok(Token::Plus) }
             '-' => { self.pos += 1; Ok(Token::Minus) }
+            '*' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1] == '*' => {
+                self.pos += 2; Ok(Token::StarStar)
+            }
             '*' => { self.pos += 1; Ok(Token::Star) }
             '/' => { self.pos += 1; Ok(Token::Slash) }
             '(' => { self.pos += 1; Ok(Token::LParen) }
@@ -389,6 +394,7 @@ impl<'a> Parser<'a> {
                 Token::Minus => (Op::Sub, 7, 8),
                 Token::Star => (Op::Mul, 9, 10),
                 Token::Slash => (Op::Div, 9, 10),
+                Token::StarStar => (Op::Pow, 12, 11),
                 _ => break,
             };
 
@@ -770,6 +776,21 @@ impl Expr {
                     };
                     sp += 1;
                 }
+                Op::Pow => {
+                    sp -= 1;
+                    let b = stack[sp];
+                    sp -= 1;
+                    stack[sp] = {
+                        let res = stack[sp].powf(b);
+                        if res.is_finite() {
+                            res
+                        } else {
+                            // if NaN or infinite, reset to 0
+                            0.0
+                        }
+                    };
+                    sp += 1;
+                }
                 Op::Neg => {
                     stack[sp - 1] = -stack[sp - 1];
                 }
@@ -912,6 +933,7 @@ mod tests {
         assert_eq!(eval("10.0 - 4.0", &ctx), 6.0);
         assert_eq!(eval("3.0 * 4.0", &ctx), 12.0);
         assert_eq!(eval("10.0 / 4.0", &ctx), 2.5);
+        assert_eq!(eval("3.0 ** 2.0", &ctx), 9.0);
     }
 
     #[test]
@@ -922,6 +944,8 @@ mod tests {
         assert_eq!(eval("2.0 + 3.0 * 4.0", &ctx), 14.0);
         // (2 + 3) * 4 = 20
         assert_eq!(eval("(2.0 + 3.0) * 4.0", &ctx), 20.0);
+        // 3 * (4 ** (2 ** -1)) = 6 (b/c 3 * sqrt(4) == 3 * 2 == 6)
+        assert_eq!(eval("3.0 * 4.0 ** 2.0 ** -1.0", &ctx), 6.0);
     }
 
     #[test]
