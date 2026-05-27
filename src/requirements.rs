@@ -51,13 +51,34 @@ impl AttributeRequirement {
         }
     }
 
+    #[cfg(test)]
+    fn compiled(source: impl Into<String>) -> Self {
+        let source = source.into();
+        Self {
+            compiled: Self::compile_internal(source.as_str()),
+            source,
+        }
+    }
+
     /// Compile the expression eagerly. Called by the component hook.
     pub fn compile(&mut self) {
-        if self.compiled.is_some() { return; }
-        match Expr::compile(&self.source, None) {
-            Ok(expr) => { self.compiled = Some(expr); }
+        if self.compiled.is_some() {
+            return;
+        }
+        if let Some(expr) = Self::compile_internal(&self.source) {
+            self.compiled = Some(expr);
+        }
+    }
+
+    fn compile_internal(source: &str) -> Option<Expr> {
+        match Expr::compile(source, None) {
+            Ok(expr) => Some(expr),
             Err(err) => {
-                warn!("AttributeRequirement compile error for '{}': {}", self.source, err);
+                warn!(
+                    "AttributeRequirement compile error for '{}': {}",
+                    source, err
+                );
+                None
             }
         }
     }
@@ -69,7 +90,10 @@ impl AttributeRequirement {
         match &self.compiled {
             Some(expr) => expr.evaluate(&attrs.context) != 0.0,
             None => {
-                warn!("AttributeRequirement::check called before compile for '{}'", self.source);
+                warn!(
+                    "AttributeRequirement::check called before compile for '{}'",
+                    self.source
+                );
                 false
             }
         }
@@ -101,10 +125,10 @@ impl<S: Into<String>> From<S> for AttributeRequirement {
 pub struct AttributeRequirements(pub Vec<AttributeRequirement>);
 
 fn compile_requirements_hook(mut world: DeferredWorld, ctx: HookContext) {
-    let Some(mut reqs) = world.get_mut::<AttributeRequirements>(ctx.entity) else { return; };
-    for req in reqs.0.iter_mut() {
-        req.compile();
-    }
+    let Some(mut reqs) = world.get_mut::<AttributeRequirements>(ctx.entity) else {
+        return;
+    };
+    reqs.compile();
 }
 
 impl AttributeRequirements {
@@ -120,6 +144,13 @@ impl AttributeRequirements {
     /// Merge requirements from another set into this one.
     pub fn combine(&mut self, other: &AttributeRequirements) {
         self.0.extend(other.0.iter().cloned());
+    }
+
+    /// Compile each [`AttributeRequirement`] eagerly. Called by the component hook.
+    pub fn compile(&mut self) {
+        for req in self.0.iter_mut() {
+            req.compile();
+        }
     }
 
     /// Check whether **all** requirements are satisfied.
@@ -204,7 +235,7 @@ mod tests {
     fn single_requirement_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0)]);
-        let req = AttributeRequirement::new("Strength >= 10");
+        let req = AttributeRequirement::compiled("Strength >= 10");
         assert!(req.met(&attrs));
     }
 
@@ -212,7 +243,7 @@ mod tests {
     fn single_requirement_not_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 5.0)]);
-        let req = AttributeRequirement::new("Strength >= 10");
+        let req = AttributeRequirement::compiled("Strength >= 10");
         assert!(!req.met(&attrs));
     }
 
@@ -220,7 +251,11 @@ mod tests {
     fn requirements_all_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 10.0)]);
-        let reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+        let reqs = {
+            let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+            reqs.compile();
+            reqs
+        };
         assert!(reqs.met(&attrs));
     }
 
@@ -228,7 +263,11 @@ mod tests {
     fn requirements_partial_met() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("Strength", 25.0), ("Level", 3.0)]);
-        let reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+        let reqs = {
+            let mut reqs = AttributeRequirements::from(vec!["Strength >= 10", "Level >= 5"]);
+            reqs.compile();
+            reqs
+        };
         assert!(!reqs.met(&attrs));
     }
 
@@ -243,7 +282,7 @@ mod tests {
     fn le_zero_check() {
         let interner = test_interner();
         let attrs = make_attrs(&interner, &[("ProjectileLife", 0.0)]);
-        let req = AttributeRequirement::new("ProjectileLife <= 0");
+        let req = AttributeRequirement::compiled("ProjectileLife <= 0");
         assert!(req.met(&attrs));
     }
 
