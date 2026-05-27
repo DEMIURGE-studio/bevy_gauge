@@ -198,7 +198,7 @@ fn equip(
 ) {
     let wielder_name = q_name.get(wielder).map(|n| n.as_str()).unwrap_or("???");
 
-    let Ok((item_name, mut state, mods, mut reqs)) = q_equipment.get_mut(item) else {
+    let Ok((item_name, mut state, mods, reqs)) = q_equipment.get_mut(item) else {
         println!("  Item has no equipment components!");
         return;
     };
