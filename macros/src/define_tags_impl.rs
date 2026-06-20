@@ -50,7 +50,7 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
 
-        ::inventory::submit! {
+        ::bevy_gauge::inventory::submit! {
             bevy_gauge::tags::TagRegistration {
                 register_fn: |resolver| {
                     #struct_name_ident::register(resolver);

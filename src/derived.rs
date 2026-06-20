@@ -403,7 +403,7 @@ macro_rules! register_init_to {
 #[macro_export]
 macro_rules! _register_attribute {
     (attribute_derived, $ty:ty) => {
-        ::inventory::submit! {
+        $crate::inventory::submit! {
             $crate::derived::AttributeRegistration {
 
                 register_fn: |app| {
@@ -422,7 +422,7 @@ macro_rules! _register_attribute {
         }
     };
     (write_back, $ty:ty) => {
-        ::inventory::submit! {
+        $crate::inventory::submit! {
             $crate::derived::AttributeRegistration {
 
                 register_fn: |app| {
@@ -441,7 +441,7 @@ macro_rules! _register_attribute {
         }
     };
     (init_to, $ty:ty) => {
-        ::inventory::submit! {
+        $crate::inventory::submit! {
             $crate::derived::AttributeRegistration {
 
                 register_fn: |app| {
@@ -453,7 +453,7 @@ macro_rules! _register_attribute {
         }
     };
     (init_from, $ty:ty) => {
-        ::inventory::submit! {
+        $crate::inventory::submit! {
             $crate::derived::AttributeRegistration {
 
                 register_fn: |app| {

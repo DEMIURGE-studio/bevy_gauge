@@ -426,7 +426,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_reads {
             registrations.push(quote! {
-                ::inventory::submit! {
+                ::bevy_gauge::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
@@ -448,7 +448,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_writes {
             registrations.push(quote! {
-                ::inventory::submit! {
+                ::bevy_gauge::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
@@ -470,7 +470,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_init_to {
             registrations.push(quote! {
-                ::inventory::submit! {
+                ::bevy_gauge::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
@@ -485,7 +485,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_init_from {
             registrations.push(quote! {
-                ::inventory::submit! {
+                ::bevy_gauge::inventory::submit! {
                     ::bevy_gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {

@@ -22,6 +22,10 @@ pub mod avian;
 #[doc(hidden)]
 pub mod macros;
 
+// Re-export `inventory` so the macros can submit registrations through
+#[doc(hidden)]
+pub use inventory;
+
 // Re-export proc macros at crate root for reliable resolution in dependents
 pub use bevy_gauge_macros::AttributeComponent;
 pub use bevy_gauge_macros::AttributeResolvable;
