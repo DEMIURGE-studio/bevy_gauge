@@ -11,11 +11,11 @@ default = []
 avian3d = ["dep:avian3d"]
 
 [dependencies]
-bevy = { version = "0.19.0-rc.2", default-features = false, features = ["bevy_log"] }
+bevy = { version = "0.19.0", default-features = false, features = ["bevy_log"] }
 lasso = { version = "0.7", features = ["multi-threaded"] }
 inventory = "0.3"
 bevy_gauge_macros = { path = "./macros", version = "0.4.3" }
-avian3d = { version = "0.6", optional = true }
+avian3d = { version = "0.7", default-features = false, features = ["3d", "f32", "parry-f32"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
