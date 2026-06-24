@@ -416,7 +416,7 @@ impl ModifierSet {
 ///     },
 /// ));
 /// ```
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Default)]
 #[require(crate::prelude::Attributes)]
 pub struct AttributeInitializer(pub ModifierSet);
 
