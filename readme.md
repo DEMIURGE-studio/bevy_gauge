@@ -74,6 +74,10 @@ enchant.remove(sword, &mut attributes);
 | ----- | ----- |
 | 0.18  | 0.4   |
 
+## Future goals
+
+- Resolve the crate path in the derive macros (`AttributeComponent`, `define_tags!`) via `proc-macro-crate` instead of hardcoding `bevy_gauge::`, so umbrella crates can re-export gauge and downstream users don't need to depend on it directly.
+
 ## License
 
 MIT OR Apache-2.0
