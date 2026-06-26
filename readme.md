@@ -72,6 +72,7 @@ enchant.remove(sword, &mut attributes);
 
 | Bevy  | Gauge |
 | ----- | ----- |
+| 0.19  | 0.5   |
 | 0.18  | 0.4   |
 
 ## Future goals
