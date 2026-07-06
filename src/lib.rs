@@ -1,3 +1,8 @@
+// Lets the crate name itself, so derive macros can emit `::bevy_gauge::…` paths
+// that resolve inside the crate (and in its examples/tests) exactly as they do
+// downstream.
+extern crate self as bevy_gauge;
+
 pub mod attribute_id;
 pub mod commands;
 pub mod expr;

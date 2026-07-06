@@ -22,12 +22,14 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let args = parse_macro_input!(input as MacroArgs);
     let struct_name_ident = &args.struct_name;
 
+    let gauge = crate::path::gauge_root();
+
     let mut counter = 0u32;
     let mut const_defs = Vec::new();
     let mut register_calls = Vec::new();
 
     for tag_node in &args.categories {
-        gen_constants(tag_node, &mut counter, &mut const_defs, &mut register_calls);
+        gen_constants(&gauge, tag_node, &mut counter, &mut const_defs, &mut register_calls);
     }
 
     let struct_name_str = struct_name_ident.to_string();
@@ -44,19 +46,22 @@ pub fn define_tags(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             /// Tags are registered both as short names (e.g., `"FIRE"`) and
             /// namespaced names (e.g., `"Tags::FIRE"`). If a short name
             /// collides with another namespace, the namespaced form must be used.
-            pub fn register(resolver: &mut bevy_gauge::tags::TagResolver) {
+            pub fn register(resolver: &mut #gauge::tags::TagResolver) {
                 let _ns = #struct_name_str;
                 #(#register_calls)*
             }
         }
 
-        ::bevy_gauge::inventory::submit! {
-            bevy_gauge::tags::TagRegistration {
-                register_fn: |resolver| {
-                    #struct_name_ident::register(resolver);
+        const _: () = {
+            use #gauge as _gauge;
+            _gauge::inventory::submit! {
+                _gauge::tags::TagRegistration {
+                    register_fn: |resolver| {
+                        #struct_name_ident::register(resolver);
+                    }
                 }
             }
-        }
+        };
     };
 
     expanded.into()
@@ -88,6 +93,7 @@ impl Parse for Tag {
 /// Returns the `TokenStream` expression for this node's mask value (used by
 /// parent group nodes to OR children together).
 fn gen_constants(
+    gauge: &proc_macro2::TokenStream,
     tag_node: &Tag,
     counter: &mut u32,
     const_defs: &mut Vec<proc_macro2::TokenStream>,
@@ -101,22 +107,22 @@ fn gen_constants(
     if tag_node.children.is_empty() {
         let bit_index = *counter;
         *counter += 1;
-        mask_expr = quote! { bevy_gauge::tags::TagMask::bit(#bit_index) };
+        mask_expr = quote! { #gauge::tags::TagMask::bit(#bit_index) };
     } else {
         let child_exprs: Vec<_> = tag_node
             .children
             .iter()
-            .map(|child| gen_constants(child, counter, const_defs, register_calls))
+            .map(|child| gen_constants(gauge, child, counter, const_defs, register_calls))
             .collect();
 
         // OR together via raw u64 bits so the result is a const expression.
         mask_expr = quote! {
-            bevy_gauge::tags::TagMask::new(#(#child_exprs .0)|*)
+            #gauge::tags::TagMask::new(#(#child_exprs .0)|*)
         };
     }
 
     const_defs.push(quote! {
-        pub const #const_ident: bevy_gauge::tags::TagMask = #mask_expr;
+        pub const #const_ident: #gauge::tags::TagMask = #mask_expr;
     });
 
     register_calls.push(quote! {

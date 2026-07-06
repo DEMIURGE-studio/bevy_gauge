@@ -203,7 +203,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     }
                 },
                 FieldKind::Composite => quote! {
-                    if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+                    if _gauge::resolvable::AttributeResolvable::should_resolve(
                         &self.#name, #path, attrs,
                     ) {
                         return true;
@@ -230,7 +230,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     self.#name = (#val_expr) != 0.0;
                 },
                 FieldKind::Composite => quote! {
-                    ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+                    _gauge::resolvable::AttributeResolvable::resolve(
                         &mut self.#name, #path, attrs,
                     );
                 },
@@ -238,10 +238,10 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }).collect();
 
         quote! {
-            impl ::bevy_gauge::derived::AttributeDerived for #struct_name {
+            impl _gauge::derived::AttributeDerived for #struct_name {
                 fn should_update(
                     &self,
-                    attrs: &::bevy_gauge::attributes::Attributes,
+                    attrs: &_gauge::attributes::Attributes,
                 ) -> bool {
                     #(#should_update_checks)*
                     false
@@ -249,7 +249,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
                 fn update_from_attributes(
                     &mut self,
-                    attrs: &::bevy_gauge::attributes::Attributes,
+                    attrs: &_gauge::attributes::Attributes,
                 ) {
                     #(#update_assignments)*
                 }
@@ -293,7 +293,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     }
                 },
                 FieldKind::Composite => quote! {
-                    if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+                    if _gauge::resolvable::AttributeResolvable::should_resolve(
                         &self.#name, #path, attrs,
                     ) {
                         return true;
@@ -325,10 +325,10 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }).collect();
 
         quote! {
-            impl ::bevy_gauge::derived::WriteBack for #struct_name {
+            impl _gauge::derived::WriteBack for #struct_name {
                 fn should_write_back(
                     &self,
-                    attrs: &::bevy_gauge::attributes::Attributes,
+                    attrs: &_gauge::attributes::Attributes,
                 ) -> bool {
                     #(#should_writeback_checks)*
                     false
@@ -337,7 +337,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 fn write_back<F: ::bevy::ecs::query::QueryFilter>(
                     &self,
                     entity: ::bevy::prelude::Entity,
-                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut<'_, '_, F>,
+                    attributes: &mut _gauge::attributes_mut::AttributesMut<'_, '_, F>,
                 ) {
                     #(#writeback_assignments)*
                 }
@@ -368,11 +368,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }).collect();
 
         quote! {
-            impl ::bevy_gauge::derived::InitTo for #struct_name {
+            impl _gauge::derived::InitTo for #struct_name {
                 fn init_to_attributes<F: ::bevy::ecs::query::QueryFilter>(
                     &self,
                     entity: ::bevy::prelude::Entity,
-                    attributes: &mut ::bevy_gauge::attributes_mut::AttributesMut<'_, '_, F>,
+                    attributes: &mut _gauge::attributes_mut::AttributesMut<'_, '_, F>,
                 ) {
                     #(#seed_assignments)*
                 }
@@ -400,7 +400,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     self.#name = attrs.value(#path) != 0.0;
                 },
                 FieldKind::Composite => quote! {
-                    ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+                    _gauge::resolvable::AttributeResolvable::resolve(
                         &mut self.#name, #path, attrs,
                     );
                 },
@@ -408,10 +408,10 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }).collect();
 
         quote! {
-            impl ::bevy_gauge::derived::InitFrom for #struct_name {
+            impl _gauge::derived::InitFrom for #struct_name {
                 fn init_from_attributes(
                     &mut self,
-                    attrs: &::bevy_gauge::attributes::Attributes,
+                    attrs: &_gauge::attributes::Attributes,
                 ) {
                     #(#init_assignments)*
                 }
@@ -426,19 +426,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_reads {
             registrations.push(quote! {
-                ::bevy_gauge::inventory::submit! {
-                    ::bevy_gauge::derived::AttributeRegistration {
+                _gauge::inventory::submit! {
+                    _gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
-                            use ::bevy_gauge::derived::AttributesAppExt;
+                            use _gauge::derived::AttributesAppExt;
                             app.register_attribute_derived::<#struct_name>();
                         },
                         register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
-                                ::bevy_gauge::derived::update_attribute_derived::<#struct_name>
-                                    .in_set(::bevy_gauge::derived::AttributeDerivedSet),
+                                _gauge::derived::update_attribute_derived::<#struct_name>
+                                    .in_set(_gauge::derived::AttributeDerivedSet),
                             );
                         }),
                     }
@@ -448,19 +448,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_writes {
             registrations.push(quote! {
-                ::bevy_gauge::inventory::submit! {
-                    ::bevy_gauge::derived::AttributeRegistration {
+                _gauge::inventory::submit! {
+                    _gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
-                            use ::bevy_gauge::derived::AttributesAppExt;
+                            use _gauge::derived::AttributesAppExt;
                             app.register_write_back::<#struct_name>();
                         },
                         register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
-                                ::bevy_gauge::derived::update_write_back::<#struct_name>
-                                    .in_set(::bevy_gauge::derived::WriteBackSet),
+                                _gauge::derived::update_write_back::<#struct_name>
+                                    .in_set(_gauge::derived::WriteBackSet),
                             );
                         }),
                     }
@@ -470,11 +470,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_init_to {
             registrations.push(quote! {
-                ::bevy_gauge::inventory::submit! {
-                    ::bevy_gauge::derived::AttributeRegistration {
+                _gauge::inventory::submit! {
+                    _gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
-                            use ::bevy_gauge::derived::AttributesAppExt;
+                            use _gauge::derived::AttributesAppExt;
                             app.register_init_to::<#struct_name>();
                         },
                         register_in_schedule_fn: None,
@@ -485,19 +485,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         if has_init_from {
             registrations.push(quote! {
-                ::bevy_gauge::inventory::submit! {
-                    ::bevy_gauge::derived::AttributeRegistration {
+                _gauge::inventory::submit! {
+                    _gauge::derived::AttributeRegistration {
 
                         register_fn: |app| {
-                            use ::bevy_gauge::derived::AttributesAppExt;
+                            use _gauge::derived::AttributesAppExt;
                             app.register_init_from::<#struct_name>();
                         },
                         register_in_schedule_fn: Some(|app, schedule| {
                             use ::bevy::prelude::*;
                             app.add_systems(
                                 schedule,
-                                ::bevy_gauge::derived::apply_init_from::<#struct_name>
-                                    .in_set(::bevy_gauge::derived::InitFromSet),
+                                _gauge::derived::apply_init_from::<#struct_name>
+                                    .in_set(_gauge::derived::InitFromSet),
                             );
                         }),
                     }
@@ -508,12 +508,16 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! { #(#registrations)* }
     };
 
+    let gauge = crate::path::gauge_root();
     Ok(quote! {
-        #attribute_derived_impl
-        #write_back_impl
-        #init_to_impl
-        #init_from_impl
-        #inventory_submits
+        const _: () = {
+            use #gauge as _gauge;
+            #attribute_derived_impl
+            #write_back_impl
+            #init_to_impl
+            #init_from_impl
+            #inventory_submits
+        };
     })
 }
 

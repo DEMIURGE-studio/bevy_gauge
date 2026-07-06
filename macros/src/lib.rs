@@ -1,5 +1,6 @@
 mod attribute_component_impl;
 mod define_tags_impl;
+mod path;
 mod resolvable_impl;
 
 /// Declare a unit struct with [`TagMask`] associated constants for a tag

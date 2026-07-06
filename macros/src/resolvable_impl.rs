@@ -64,7 +64,7 @@ fn gen_should_resolve(field: &ResolvableField, path_expr: &TokenStream) -> Token
             }
         },
         FieldKind::Composite => quote! {
-            if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+            if _gauge::resolvable::AttributeResolvable::should_resolve(
                 &self.#name, #path_expr, attrs,
             ) {
                 return true;
@@ -90,7 +90,7 @@ fn gen_resolve(field: &ResolvableField, path_expr: &TokenStream) -> TokenStream 
             self.#name = attrs.value(#path_expr) != 0.0;
         },
         FieldKind::Composite => quote! {
-            ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+            _gauge::resolvable::AttributeResolvable::resolve(
                 &mut self.#name, #path_expr, attrs,
             );
         },
@@ -121,7 +121,7 @@ fn gen_should_resolve_binding(
             }
         },
         FieldKind::Composite => quote! {
-            if ::bevy_gauge::resolvable::AttributeResolvable::should_resolve(
+            if _gauge::resolvable::AttributeResolvable::should_resolve(
                 #binding, #path_expr, attrs,
             ) {
                 return true;
@@ -147,7 +147,7 @@ fn gen_resolve_binding(
             *#binding = attrs.value(#path_expr) != 0.0;
         },
         FieldKind::Composite => quote! {
-            ::bevy_gauge::resolvable::AttributeResolvable::resolve(
+            _gauge::resolvable::AttributeResolvable::resolve(
                 #binding, #path_expr, attrs,
             );
         },
@@ -168,14 +168,24 @@ fn field_path_expr(field_name: &str, transparent: bool) -> TokenStream {
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = &input.ident;
 
-    match &input.data {
-        syn::Data::Struct(data) => derive_struct(name, &data.fields),
-        syn::Data::Enum(data) => derive_enum(name, data),
-        syn::Data::Union(_) => Err(syn::Error::new_spanned(
-            name,
-            "AttributeResolvable cannot be derived on unions",
-        )),
-    }
+    let inner = match &input.data {
+        syn::Data::Struct(data) => derive_struct(name, &data.fields)?,
+        syn::Data::Enum(data) => derive_enum(name, data)?,
+        syn::Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "AttributeResolvable cannot be derived on unions",
+            ))
+        }
+    };
+
+    let gauge = crate::path::gauge_root();
+    Ok(quote! {
+        const _: () = {
+            use #gauge as _gauge;
+            #inner
+        };
+    })
 }
 
 fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
@@ -211,11 +221,11 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
                 .collect();
 
             Ok(quote! {
-                impl ::bevy_gauge::resolvable::AttributeResolvable for #name {
+                impl _gauge::resolvable::AttributeResolvable for #name {
                     fn should_resolve(
                         &self,
                         prefix: &str,
-                        attrs: &::bevy_gauge::attributes::Attributes,
+                        attrs: &_gauge::attributes::Attributes,
                     ) -> bool {
                         #(#should_checks)*
                         false
@@ -224,7 +234,7 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
                     fn resolve(
                         &mut self,
                         prefix: &str,
-                        attrs: &::bevy_gauge::attributes::Attributes,
+                        attrs: &_gauge::attributes::Attributes,
                     ) {
                         #(#resolve_stmts)*
                     }
@@ -250,11 +260,11 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
             );
 
             Ok(quote! {
-                impl ::bevy_gauge::resolvable::AttributeResolvable for #name {
+                impl _gauge::resolvable::AttributeResolvable for #name {
                     fn should_resolve(
                         &self,
                         prefix: &str,
-                        attrs: &::bevy_gauge::attributes::Attributes,
+                        attrs: &_gauge::attributes::Attributes,
                     ) -> bool {
                         let _inner = &self.0;
                         #should_body
@@ -264,7 +274,7 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
                     fn resolve(
                         &mut self,
                         prefix: &str,
-                        attrs: &::bevy_gauge::attributes::Attributes,
+                        attrs: &_gauge::attributes::Attributes,
                     ) {
                         let _inner = &mut self.0;
                         #resolve_body
@@ -281,11 +291,11 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
         Fields::Unit => {
             // Unit struct — always no-op
             Ok(quote! {
-                impl ::bevy_gauge::resolvable::AttributeResolvable for #name {
+                impl _gauge::resolvable::AttributeResolvable for #name {
                     fn should_resolve(
                         &self,
                         _prefix: &str,
-                        _attrs: &::bevy_gauge::attributes::Attributes,
+                        _attrs: &_gauge::attributes::Attributes,
                     ) -> bool {
                         false
                     }
@@ -293,7 +303,7 @@ fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
                     fn resolve(
                         &mut self,
                         _prefix: &str,
-                        _attrs: &::bevy_gauge::attributes::Attributes,
+                        _attrs: &_gauge::attributes::Attributes,
                     ) {}
                 }
             })
@@ -418,11 +428,11 @@ fn derive_enum(name: &Ident, data: &syn::DataEnum) -> syn::Result<TokenStream> {
     }
 
     Ok(quote! {
-        impl ::bevy_gauge::resolvable::AttributeResolvable for #name {
+        impl _gauge::resolvable::AttributeResolvable for #name {
             fn should_resolve(
                 &self,
                 prefix: &str,
-                attrs: &::bevy_gauge::attributes::Attributes,
+                attrs: &_gauge::attributes::Attributes,
             ) -> bool {
                 match self {
                     #(#should_arms)*
@@ -433,7 +443,7 @@ fn derive_enum(name: &Ident, data: &syn::DataEnum) -> syn::Result<TokenStream> {
             fn resolve(
                 &mut self,
                 prefix: &str,
-                attrs: &::bevy_gauge::attributes::Attributes,
+                attrs: &_gauge::attributes::Attributes,
             ) {
                 match self {
                     #(#resolve_arms)*
