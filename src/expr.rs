@@ -151,6 +151,10 @@ pub enum CompileError {
     /// A tag name is ambiguous - it was registered by multiple namespaces.
     /// The `Vec<String>` contains the fully-qualified alternatives.
     AmbiguousTag(String, Vec<String>),
+    /// The expression needs more evaluation stack than the VM provides.
+    /// Deeply right-nested expressions hit this; the same math written
+    /// left-folded stays shallow.
+    ExpressionTooDeep { required: usize, max: usize },
 }
 
 impl fmt::Display for CompileError {
@@ -175,6 +179,13 @@ impl fmt::Display for CompileError {
                 "ambiguous tag '{}' - registered by multiple namespaces, use one of: {}",
                 name,
                 alternatives.join(", ")
+            ),
+            CompileError::ExpressionTooDeep { required, max } => write!(
+                f,
+                "expression needs {} value-stack slots (max {}) - restructure \
+                 right-nested expressions into left-folded form, e.g. \
+                 `a * (1 + b) * (1 + c)` instead of `a * (1 + b * (1 + c))`",
+                required, max
             ),
         }
     }
@@ -661,6 +672,40 @@ impl<'a> Parser<'a> {
 // Expr implementation
 // ---------------------------------------------------------------------------
 
+/// Relative float comparison used for change detection and the expression
+/// `==`/`!=` ops. Scales the tolerance with magnitude so large values still
+/// register small changes correctly (an absolute `f32::EPSILON` comparison
+/// is meaningless above ~2.0).
+pub(crate) fn approx_eq(a: f32, b: f32) -> bool {
+    (a - b).abs() <= f32::EPSILON * a.abs().max(b.abs()).max(1.0)
+}
+
+/// Size of the fixed evaluation stack. Expressions whose peak stack depth
+/// exceeds this fail to compile with [`CompileError::ExpressionTooDeep`].
+pub const MAX_EVAL_STACK: usize = 16;
+
+/// Simulate the ops' stack effects and return the peak stack depth.
+fn max_stack_depth(ops: &[Op]) -> usize {
+    let mut depth: usize = 0;
+    let mut peak: usize = 0;
+    for op in ops {
+        match op {
+            // Pushes
+            Op::Const(_) | Op::Load(_) | Op::LoadSource { .. } | Op::LoadSourceTagged { .. } => {
+                depth += 1;
+                peak = peak.max(depth);
+            }
+            // Pop one, push one - no net change
+            Op::Neg | Op::Abs => {}
+            // Pop three, push one
+            Op::Clamp => depth = depth.saturating_sub(2),
+            // All remaining ops are binary: pop two, push one
+            _ => depth = depth.saturating_sub(1),
+        }
+    }
+    peak
+}
+
 impl Expr {
     /// Compile an expression string into bytecode.
     ///
@@ -714,6 +759,18 @@ impl Expr {
             )));
         }
 
+        // Reject expressions that would overflow the fixed-size eval stack.
+        // Catching this here surfaces the error at the authoring site instead
+        // of panicking at eval time, possibly during propagation triggered by
+        // an unrelated attribute change.
+        let required = max_stack_depth(&parser.ops);
+        if required > MAX_EVAL_STACK {
+            return Err(CompileError::ExpressionTooDeep {
+                required,
+                max: MAX_EVAL_STACK,
+            });
+        }
+
         Ok(Self {
             ops: parser.ops,
             dependencies: parser.dependencies,
@@ -726,8 +783,11 @@ impl Expr {
     /// Cross-entity `LoadSource` ops read from the local context via their
     /// pre-computed `cache_key`. The caller must ensure source values are
     /// cached under those composite keys (e.g., `"Strength@Wielder"`).
+    ///
+    /// The stack cannot overflow: `compile` rejects expressions whose peak
+    /// depth exceeds [`MAX_EVAL_STACK`].
     pub fn evaluate(&self, context: &AttributeContext) -> f32 {
-        let mut stack = [0.0f32; 16];
+        let mut stack = [0.0f32; MAX_EVAL_STACK];
         let mut sp: usize = 0;
 
         for op in &self.ops {
@@ -817,12 +877,12 @@ impl Expr {
                 }
                 Op::Eq => {
                     sp -= 1; let b = stack[sp];
-                    sp -= 1; stack[sp] = if (stack[sp] - b).abs() < f32::EPSILON { 1.0 } else { 0.0 };
+                    sp -= 1; stack[sp] = if approx_eq(stack[sp], b) { 1.0 } else { 0.0 };
                     sp += 1;
                 }
                 Op::Ne => {
                     sp -= 1; let b = stack[sp];
-                    sp -= 1; stack[sp] = if (stack[sp] - b).abs() >= f32::EPSILON { 1.0 } else { 0.0 };
+                    sp -= 1; stack[sp] = if !approx_eq(stack[sp], b) { 1.0 } else { 0.0 };
                     sp += 1;
                 }
                 // Logical

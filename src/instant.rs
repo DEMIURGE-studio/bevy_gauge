@@ -300,8 +300,28 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
         roles: RoleMap,
         target_entity: Entity,
     ) -> Vec<EvaluatedInstantEntry> {
+        // Register roles as temporary source aliases - but never clobber an
+        // alias that already exists on the target. Only aliases we actually
+        // registered are unregistered afterwards.
+        let mut registered: Vec<&str> = Vec::new();
         for &(role_name, role_entity) in roles {
-            self.register_source(target_entity, role_name, role_entity);
+            match self.resolve_source(target_entity, role_name) {
+                Some(existing) if existing != role_entity => {
+                    warn!(
+                        "bevy_gauge: instant role '{role_name}' collides with an \
+                         existing source alias on {target_entity:?} (currently -> \
+                         {existing:?}); keeping the existing alias. Consider \
+                         prefixing instant role names, e.g. '_{role_name}'."
+                    );
+                }
+                Some(_) => {
+                    // Already points at the role entity; leave it in place.
+                }
+                None => {
+                    self.register_source(target_entity, role_name, role_entity);
+                    registered.push(role_name);
+                }
+            }
         }
 
         let mut out = Vec::with_capacity(instant.entries.len());
@@ -338,7 +358,7 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
             });
         }
 
-        for &(role_name, _) in roles {
+        for role_name in registered {
             self.unregister_source(target_entity, role_name);
         }
 
@@ -358,21 +378,26 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
                 (InstantOp::Set, None) => {
                     self.set_base(target_entity, &entry.attribute, entry.value);
                 }
+                // Add/Sub adjust the FLAT BASE (the modifiers that set_base
+                // replaces), not the fully-evaluated value. For a Sum node
+                // this makes the final value exactly `old_total ± delta`.
+                // Reading the evaluated value here would bake expression
+                // modifiers into the base and count them twice.
                 (InstantOp::Add, Some(tag)) => {
-                    let current = self.evaluate_tagged(target_entity, &entry.attribute, tag);
-                    self.set_base_tagged(target_entity, &entry.attribute, current + entry.value, tag);
+                    let base = self.flat_base(target_entity, &entry.attribute, tag);
+                    self.set_base_tagged(target_entity, &entry.attribute, base + entry.value, tag);
                 }
                 (InstantOp::Add, None) => {
-                    let current = self.evaluate(target_entity, &entry.attribute);
-                    self.set_base(target_entity, &entry.attribute, current + entry.value);
+                    let base = self.flat_base(target_entity, &entry.attribute, TagMask::NONE);
+                    self.set_base(target_entity, &entry.attribute, base + entry.value);
                 }
                 (InstantOp::Sub, Some(tag)) => {
-                    let current = self.evaluate_tagged(target_entity, &entry.attribute, tag);
-                    self.set_base_tagged(target_entity, &entry.attribute, current - entry.value, tag);
+                    let base = self.flat_base(target_entity, &entry.attribute, tag);
+                    self.set_base_tagged(target_entity, &entry.attribute, base - entry.value, tag);
                 }
                 (InstantOp::Sub, None) => {
-                    let current = self.evaluate(target_entity, &entry.attribute);
-                    self.set_base(target_entity, &entry.attribute, current - entry.value);
+                    let base = self.flat_base(target_entity, &entry.attribute, TagMask::NONE);
+                    self.set_base(target_entity, &entry.attribute, base - entry.value);
                 }
             }
         }

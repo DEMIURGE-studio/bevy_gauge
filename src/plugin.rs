@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
+use crate::attributes_mut::AttributesMut;
 use crate::derived::{AttributeRegistration, AttributeDerivedSet, InitFromSet, WriteBackSet};
 use crate::graph::DependencyGraph;
 use crate::modifier_set::apply_initial_attributes;
@@ -53,11 +54,13 @@ impl Plugin for AttributesPlugin {
 }
 
 /// Observer that fires when an entity with `Attributes` is removed/despawned.
-/// Cleans up all dependency edges in the global graph.
+///
+/// Cleans up all dependency edges and aliases involving the entity, then
+/// re-evaluates attributes on other entities that depended on it (their
+/// cross-entity reads become 0.0, consistent with `unregister_source`).
 fn on_attributes_removed(
     trigger: On<Remove, Attributes>,
-    mut graph: ResMut<DependencyGraph>,
+    mut attributes: AttributesMut,
 ) {
-    let entity = trigger.entity;
-    graph.remove_entity(entity);
+    attributes.handle_entity_removal(trigger.entity);
 }

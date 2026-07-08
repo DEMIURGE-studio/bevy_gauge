@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
@@ -89,6 +89,16 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         let modifier = modifier.into();
         let attribute_id = self.intern(attribute);
 
+        // Add the modifier to the node first. If the entity has no
+        // `Attributes` component, bail out before touching the graph so we
+        // don't leave orphaned edges behind.
+        if let Ok(mut attrs) = self.query.get_mut(entity) {
+            let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
+            node.add_tagged_modifier(modifier.clone(), tag);
+        } else {
+            return;
+        }
+
         // Register dependencies if this is an expression modifier
         if let Modifier::Expr(expr) = &modifier {
             // Ensure any tag-query dependencies are materialized before
@@ -99,14 +109,6 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                 }
             }
             register_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
-        }
-
-        // Add the modifier to the node
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
-            node.add_tagged_modifier(modifier, tag);
-        } else {
-            return;
         }
 
         // Cache source values for any cross-entity refs, then evaluate
@@ -137,6 +139,15 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         let modifier = modifier.into();
         let attribute_id = self.intern(attribute);
 
+        // Node first; bail before registering graph edges if the entity has
+        // no `Attributes` component (see `add_modifier_tagged`).
+        if let Ok(mut attrs) = self.query.get_mut(entity) {
+            let node = attrs.ensure_node(attribute_id, reduce);
+            node.add_tagged_modifier(modifier.clone(), tag);
+        } else {
+            return;
+        }
+
         if let Modifier::Expr(expr) = &modifier {
             for dep in expr.dependencies() {
                 if let Dependency::TagQuery { attribute, mask, .. } = dep {
@@ -144,13 +155,6 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                 }
             }
             register_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
-        }
-
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            let node = attrs.ensure_node(attribute_id, reduce);
-            node.add_tagged_modifier(modifier, tag);
-        } else {
-            return;
         }
 
         self.cache_source_values(entity, attribute_id);
@@ -201,13 +205,21 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ) {
         let attribute_id = self.intern(attribute);
 
-        if let Modifier::Expr(expr) = modifier {
-            unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
-        }
+        let removed = if let Ok(mut attrs) = self.query.get_mut(entity) {
+            attrs
+                .nodes
+                .get_mut(&attribute_id)
+                .map(|node| node.remove_modifier(modifier))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            if let Some(node) = attrs.nodes.get_mut(&attribute_id) {
-                node.remove_modifier(modifier);
+        // Only unregister edges if a modifier was actually removed - edge
+        // refcounts must stay in sync with the modifiers that contributed them.
+        if removed {
+            if let Modifier::Expr(expr) = modifier {
+                unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
             }
         }
 
@@ -224,13 +236,19 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ) {
         let attribute_id = self.intern(attribute);
 
-        if let Modifier::Expr(expr) = modifier {
-            unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
-        }
+        let removed = if let Ok(mut attrs) = self.query.get_mut(entity) {
+            attrs
+                .nodes
+                .get_mut(&attribute_id)
+                .map(|node| node.remove_tagged_modifier(modifier, tag))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            if let Some(node) = attrs.nodes.get_mut(&attribute_id) {
-                node.remove_tagged_modifier(modifier, tag);
+        if removed {
+            if let Modifier::Expr(expr) = modifier {
+                unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
             }
         }
 
@@ -259,13 +277,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
-            node.modifiers.retain(|tm| {
-                !(tm.tag.is_empty() && matches!(tm.modifier, Modifier::Flat(_)))
-            });
-            node.modifiers
-                .push(crate::modifier::TaggedModifier::global(Modifier::Flat(
-                    value,
-                )));
+            node.set_flat_base(TagMask::NONE, value);
         }
 
         self.evaluate_and_propagate(entity, attribute_id);
@@ -291,13 +303,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
-            node.modifiers.retain(|tm| {
-                !(tm.tag == tag && matches!(tm.modifier, Modifier::Flat(_)))
-            });
-            node.modifiers.push(crate::modifier::TaggedModifier::new(
-                Modifier::Flat(value),
-                tag,
-            ));
+            node.set_flat_base(tag, value);
         }
 
         self.evaluate_and_propagate(entity, attribute_id);
@@ -531,11 +537,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         let attribute_id = self.intern(attribute);
 
-        // Lazy template materialization: if this attribute has a tagged-attribute
-        // template and we haven't seen this tag combo yet, generate the
-        // tagged expression modifier now.
-        self.maybe_materialize_template(entity, attribute_id, query);
-
+        // `ensure_tag_query` handles lazy template materialization for
+        // tagged attributes created via `tagged_attribute`.
         let synthetic_id = self.ensure_tag_query(entity, attribute_id, query);
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
@@ -550,10 +553,14 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // -----------------------------------------------------------------------
 
     /// If `attribute_id` has a tagged-attribute template and `mask` hasn't been
-    /// materialized yet, generate and add the tagged expression modifier.
+    /// materialized yet, generate the combo's expression and attach it to the
+    /// combo's **own synthetic node**.
     ///
-    /// This is called from `evaluate_tagged` to provide lazy materialization
-    /// of tag combos - the user never needs to enumerate them up front.
+    /// Each materialized combo is an independent node evaluating its own
+    /// expression (e.g. `Damage.added{FIRE|SWORD} * ...`). Combos are NOT
+    /// stored as tagged modifiers on the parent: under subset matching, a
+    /// query for `FIRE|SWORD` would also match a previously-materialized
+    /// `FIRE` combo modifier and double-count it.
     fn maybe_materialize_template(
         &mut self,
         entity: Entity,
@@ -586,19 +593,40 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             return; // can't decompose - skip silently
         };
 
-        // Qualify the expression with the tag suffix
-        let part_strs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
-        let qualified = qualify_expression(&name, &part_strs, &expression, Some(&tag_suffix));
+        // Compute the combo's synthetic id (same naming as ensure_tag_query).
+        let synthetic_name = format!("\0tag:{}:{}", name, mask.0);
+        let synthetic_id = self.intern(&synthetic_name);
 
-        // Add the tagged expression modifier (compiles, registers deps, evaluates)
-        let _ = self.add_expr_modifier_tagged(entity, &name, &qualified, mask);
-
-        // Mark this combo as materialized
         if let Ok(mut attrs) = self.query.get_mut(entity) {
+            // If a filtered-view tag query was already registered for this
+            // combo (e.g. an expression used `Damage{FIRE}` before the
+            // template existed), convert it into a normal node: drop the
+            // filtered-view mapping and its parent -> synthetic edge.
+            let was_filtered_view = attrs.tag_queries.remove(&synthetic_id).is_some();
+
+            attrs.register_template_query(attribute_id, mask, synthetic_id);
+
+            // Mark materialized BEFORE compiling the expression, so re-entry
+            // through ensure_tag_query during compilation is a no-op.
             if let Some(tmpl) = attrs.templates.get_mut(&attribute_id) {
                 tmpl.materialized.insert(mask);
             }
+
+            if was_filtered_view {
+                self.graph.remove_edge(
+                    DepNode::new(entity, attribute_id),
+                    DepNode::new(entity, synthetic_id),
+                );
+            }
+        } else {
+            return;
         }
+
+        // Qualify the expression with the tag suffix and attach it to the
+        // synthetic node itself (compiles, registers part deps, evaluates).
+        let part_strs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
+        let qualified = qualify_expression(&name, &part_strs, &expression, Some(&tag_suffix));
+        let _ = self.add_expr_modifier(entity, &synthetic_name, &qualified);
     }
 
     // -----------------------------------------------------------------------
@@ -607,12 +635,21 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
     /// Ensure a materialized tag-query node exists for (parent_attribute, mask).
     /// Returns the synthetic AttributeId. Idempotent - no-ops if already registered.
+    ///
+    /// For attributes created via [`tagged_attribute`](Self::tagged_attribute),
+    /// this materializes the combo from the template as its own node. For
+    /// plain attributes, it registers a filtered view of the parent's
+    /// modifiers.
     pub(crate) fn ensure_tag_query(
         &mut self,
         entity: Entity,
         parent_attribute_id: AttributeId,
         mask: TagMask,
     ) -> AttributeId {
+        // Template attributes materialize the combo as its own node (no-op
+        // for non-template attributes or already-materialized combos).
+        self.maybe_materialize_template(entity, parent_attribute_id, mask);
+
         // Check if already registered
         if let Ok(attrs) = self.query.get(entity) {
             if let Some(existing) = attrs.tag_query_synthetic_id(parent_attribute_id, mask) {
@@ -654,18 +691,43 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     pub fn cache_expr_source_values(&mut self, entity: Entity, expr: &Expr) {
         for (alias_id, attribute_id, cache_key, tag_mask) in expr.source_cache_keys() {
             let source_entity = self.graph.resolve_alias(entity, alias_id);
-            let value = source_entity
-                .and_then(|se| self.query.get(se).ok())
-                .map(|attrs| match tag_mask {
-                    Some(mask) => attrs.get_tagged(attribute_id, mask),
-                    None => attrs.get(attribute_id),
-                })
-                .unwrap_or(0.0);
+            let value = match (source_entity, tag_mask) {
+                (Some(se), Some(mask)) => self.read_source_tagged(se, attribute_id, mask),
+                (Some(se), None) => self
+                    .query
+                    .get(se)
+                    .map(|attrs| attrs.get(attribute_id))
+                    .unwrap_or(0.0),
+                (None, _) => 0.0,
+            };
 
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.context.set(cache_key, value);
             }
         }
+    }
+
+    /// Read a tag-filtered value from a source entity, materializing the tag
+    /// query on the source if it doesn't exist yet.
+    ///
+    /// This is what makes cross-entity tagged refs (`Damage{FIRE}@weapon`)
+    /// work without the source having evaluated that tag combo itself: the
+    /// first read registers the query on the source, evaluates it, and wires
+    /// it into the graph so later changes propagate.
+    fn read_source_tagged(
+        &mut self,
+        source: Entity,
+        attribute_id: AttributeId,
+        mask: TagMask,
+    ) -> f32 {
+        if self.query.get(source).is_err() {
+            return 0.0;
+        }
+        let synthetic = self.ensure_tag_query(source, attribute_id, mask);
+        self.query
+            .get(source)
+            .map(|attrs| attrs.get(synthetic))
+            .unwrap_or(0.0)
     }
 
     // -----------------------------------------------------------------------
@@ -678,13 +740,8 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         let cache_entries: Vec<(AttributeId, AttributeId, AttributeId, Option<TagMask>)> = {
             let Ok(attrs) = self.query.get(entity) else { return };
             let Some(node) = attrs.nodes.get(&attribute_id) else { return };
-            node.modifiers
-                .iter()
-                .filter_map(|tm| match &tm.modifier {
-                    Modifier::Expr(expr) => Some(expr.source_cache_keys()),
-                    _ => None,
-                })
-                .flatten()
+            node.expressions()
+                .flat_map(|expr| expr.source_cache_keys())
                 .collect()
         };
 
@@ -694,13 +751,15 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         for (alias, source_attribute, cache_key, tag_mask) in cache_entries {
             let source_entity = self.graph.resolve_alias(entity, alias);
-            let value = source_entity
-                .and_then(|se| self.query.get(se).ok())
-                .map(|attrs| match tag_mask {
-                    Some(mask) => attrs.get_tagged(source_attribute, mask),
-                    None => attrs.get(source_attribute),
-                })
-                .unwrap_or(0.0);
+            let value = match (source_entity, tag_mask) {
+                (Some(se), Some(mask)) => self.read_source_tagged(se, source_attribute, mask),
+                (Some(se), None) => self
+                    .query
+                    .get(se)
+                    .map(|attrs| attrs.get(source_attribute))
+                    .unwrap_or(0.0),
+                (None, _) => 0.0,
+            };
 
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.context.set(cache_key, value);
@@ -715,15 +774,11 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             let Ok(attrs) = self.query.get(entity) else { return };
             attrs.nodes.values()
                 .flat_map(|node| {
-                    node.modifiers.iter().filter_map(|tm| match &tm.modifier {
-                        Modifier::Expr(expr) => Some(
-                            expr.source_cache_keys()
-                                .filter(|(a, _, _, _)| *a == alias_id)
-                                .map(|(_, _, ck, _)| ck)
-                        ),
-                        _ => None,
+                    node.expressions().flat_map(|expr| {
+                        expr.source_cache_keys()
+                            .filter(|(a, _, _, _)| *a == alias_id)
+                            .map(|(_, _, ck, _)| ck)
                     })
-                    .flatten()
                 })
                 .collect()
         };
@@ -739,34 +794,155 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // Internal: evaluation and propagation
     // -----------------------------------------------------------------------
 
+    /// Re-evaluate `root` and propagate changes through the dependency graph
+    /// in **topological order**, so every node is evaluated exactly once and
+    /// only after all of its (in-subgraph) sources have settled. This is what
+    /// makes diamond dependencies (A -> B, A -> C, B+C -> D) recompute
+    /// correctly: D evaluates once, after both B and C.
     fn evaluate_and_propagate(&mut self, entity: Entity, attribute_id: AttributeId) {
-        let mut visited = HashSet::new();
         let root = DepNode::new(entity, attribute_id);
-        // (node_to_evaluate, entity_of_parent_that_triggered_this)
-        let mut stack: Vec<(DepNode, Entity)> = vec![(root, entity)];
 
-        while let Some((node, source_entity)) = stack.pop() {
-            if !visited.insert(node) {
-                continue;
-            }
-
-            if node.entity != source_entity {
-                self.cache_source_values(node.entity, node.attribute);
-            }
-
-            let changed = if let Ok(mut attrs) = self.query.get_mut(node.entity) {
-                let old = attrs.context.get(node.attribute);
-                let new = attrs.evaluate_and_cache(node.attribute);
-                (old - new).abs() > f32::EPSILON
-            } else {
-                false
-            };
-
-            if changed {
-                for &dep in self.graph.dependents(node) {
-                    stack.push((dep, node.entity));
+        // 1. Collect the downstream subgraph (closed under `dependents`) and
+        //    a local copy of its adjacency, so we don't hold graph borrows
+        //    while evaluating.
+        let mut subgraph: HashSet<DepNode> = HashSet::new();
+        subgraph.insert(root);
+        let mut edges: HashMap<DepNode, Vec<DepNode>> = HashMap::new();
+        let mut discovery = vec![root];
+        while let Some(node) = discovery.pop() {
+            let deps: Vec<DepNode> = self.graph.dependents(node).collect();
+            for &dep in &deps {
+                if subgraph.insert(dep) {
+                    discovery.push(dep);
                 }
             }
+            edges.insert(node, deps);
+        }
+
+        // Fast path: no dependents.
+        if subgraph.len() == 1 {
+            self.re_evaluate(root);
+            return;
+        }
+
+        // 2. In-degree of each node, counting only edges within the subgraph.
+        let mut in_degree: HashMap<DepNode, usize> =
+            subgraph.iter().map(|n| (*n, 0)).collect();
+        for deps in edges.values() {
+            for dep in deps {
+                *in_degree.get_mut(dep).expect("dep is in subgraph") += 1;
+            }
+        }
+
+        // 3. Kahn's algorithm. A node is re-evaluated only if it's the root or
+        //    at least one of its sources changed value.
+        let mut ready: Vec<DepNode> = in_degree
+            .iter()
+            .filter(|(_, d)| **d == 0)
+            .map(|(n, _)| *n)
+            .collect();
+        let mut dirty: HashSet<DepNode> = HashSet::new();
+        dirty.insert(root);
+        let mut processed = 0usize;
+
+        while let Some(node) = ready.pop() {
+            processed += 1;
+
+            if dirty.contains(&node) && self.re_evaluate(node) {
+                for &dep in &edges[&node] {
+                    dirty.insert(dep);
+                }
+            }
+
+            for &dep in &edges[&node] {
+                let d = in_degree.get_mut(&dep).expect("dep is in subgraph");
+                *d -= 1;
+                if *d == 0 {
+                    ready.push(dep);
+                }
+            }
+        }
+
+        // 4. Cycle backstop: nodes on a dependency cycle never reach
+        //    in-degree 0. Evaluate each of them once so they at least pick
+        //    up this mutation, and tell the user - cyclic attribute graphs
+        //    produce order-dependent values and are considered an authoring
+        //    error.
+        if processed < subgraph.len() {
+            bevy::log::warn_once!(
+                "bevy_gauge: dependency cycle detected while propagating \
+                 {:?}; attributes on a cycle re-evaluate in arbitrary order \
+                 and their values are unreliable. Break the cycle in your \
+                 attribute definitions. (This warning is only logged once.)",
+                self.resolve_id(attribute_id),
+            );
+            let leftover: Vec<DepNode> = in_degree
+                .iter()
+                .filter(|(_, d)| **d > 0)
+                .map(|(n, _)| *n)
+                .collect();
+            for node in leftover {
+                self.re_evaluate(node);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal: entity removal
+    // -----------------------------------------------------------------------
+
+    /// Clean up after an entity with `Attributes` is despawned.
+    ///
+    /// Removes all graph data involving the entity, zeroes cached source
+    /// values for aliases that pointed at it (consistent with
+    /// [`unregister_source`](Self::unregister_source)), and re-evaluates
+    /// attributes on other entities that depended on it.
+    pub(crate) fn handle_entity_removal(&mut self, entity: Entity) {
+        let cleanup = self.graph.remove_entity(entity);
+
+        for (owner, alias_id) in cleanup.dangling_aliases {
+            if owner != entity {
+                self.clear_source_cache(owner, alias_id);
+            }
+        }
+
+        for dep in cleanup.dependents {
+            if dep.entity != entity {
+                self.evaluate_and_propagate(dep.entity, dep.attribute);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal: instant support
+    // -----------------------------------------------------------------------
+
+    /// Sum of the flat modifiers on an attribute that `set_base` /
+    /// `set_base_tagged` would replace: untagged flats when `tag` is empty,
+    /// exact-tag flats otherwise. Returns 0.0 if the attribute doesn't exist.
+    pub(crate) fn flat_base(&self, entity: Entity, attribute: &str, tag: TagMask) -> f32 {
+        let Some(attribute_id) = self.try_intern(attribute) else {
+            return 0.0;
+        };
+        self.query
+            .get(entity)
+            .ok()
+            .and_then(|attrs| attrs.nodes.get(&attribute_id))
+            .map(|node| node.flat_base(tag))
+            .unwrap_or(0.0)
+    }
+
+    /// Refresh a node's cross-entity source caches, re-evaluate it, and
+    /// report whether its cached value changed.
+    fn re_evaluate(&mut self, node: DepNode) -> bool {
+        self.cache_source_values(node.entity, node.attribute);
+
+        if let Ok(mut attrs) = self.query.get_mut(node.entity) {
+            let old = attrs.context.get(node.attribute);
+            let new = attrs.evaluate_and_cache(node.attribute);
+            !crate::expr::approx_eq(old, new)
+        } else {
+            false
         }
     }
 }

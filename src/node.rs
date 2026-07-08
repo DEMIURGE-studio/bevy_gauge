@@ -11,6 +11,10 @@ pub enum ReduceFn {
     /// The base is 1.0; each modifier is treated as `(1 + modifier_value)`.
     Product,
     /// User-defined reduction function.
+    ///
+    /// Receives one value per **expression modifier** plus one **accumulated
+    /// value per flat tag-slot** (flat modifiers are fungible and stored
+    /// accumulated per tag, not individually - see [`AttributeNode`]).
     Custom(fn(&[f32]) -> f32),
 }
 
@@ -20,17 +24,36 @@ impl Default for ReduceFn {
     }
 }
 
+/// Accumulated flat modifiers sharing one exact [`TagMask`].
+///
+/// Flat modifiers are fungible within a tag: only the accumulated value and a
+/// contributor count are stored. `value` means `Σv` under `Sum`/`Custom`
+/// reduce and `Π(1+v)` under `Product` reduce. When `count` returns to zero
+/// the slot is dropped, so accumulated float drift can never outlive the
+/// modifiers that caused it.
+#[derive(Clone, Debug)]
+struct FlatSlot {
+    tag: TagMask,
+    value: f32,
+    count: u32,
+}
+
 /// A attribute node - the fundamental unit of the attribute graph.
 ///
-/// Holds a collection of tagged modifiers and a reduce function that combines
-/// them into a single value. Each modifier carries a [`TagMask`] indicating
-/// which attribute/damage types it applies to; see [`TaggedModifier`].
+/// Stores modifiers in two forms:
+/// - **Expression modifiers** are kept individually (each re-evaluates
+///   dynamically against the context).
+/// - **Flat modifiers** are accumulated per exact tag into [`FlatSlot`]s.
+///   Adding `Flat(5.0)` is `+= 5.0` on the slot; removing it is `-= 5.0`.
+///   There is no per-modifier identity for flats - they are fungible.
 #[derive(Clone, Debug)]
 pub struct AttributeNode {
     /// How modifiers are combined.
     pub reduce: ReduceFn,
-    /// Active tagged modifiers on this node.
-    pub modifiers: Vec<TaggedModifier>,
+    /// Expression modifiers, stored individually.
+    exprs: Vec<TaggedModifier>,
+    /// Flat modifiers, accumulated per exact tag.
+    flats: Vec<FlatSlot>,
 }
 
 impl AttributeNode {
@@ -38,7 +61,8 @@ impl AttributeNode {
     pub fn new(reduce: ReduceFn) -> Self {
         Self {
             reduce,
-            modifiers: Vec::new(),
+            exprs: Vec::new(),
+            flats: Vec::new(),
         }
     }
 
@@ -54,45 +78,142 @@ impl AttributeNode {
 
     /// Add a modifier to this node (untagged - applies to every tag query).
     pub fn add_modifier(&mut self, modifier: Modifier) {
-        self.modifiers.push(TaggedModifier::global(modifier));
+        self.add_tagged_modifier(modifier, TagMask::NONE);
     }
 
     /// Add a tagged modifier to this node.
     pub fn add_tagged_modifier(&mut self, modifier: Modifier, tag: TagMask) {
-        self.modifiers.push(TaggedModifier::new(modifier, tag));
+        match modifier {
+            Modifier::Flat(v) => self.accumulate_flat(tag, v),
+            expr => self.exprs.push(TaggedModifier::new(expr, tag)),
+        }
     }
 
-    /// Remove the first modifier whose value matches (ignoring tags).
-    /// Returns true if found and removed.
+    /// Remove a modifier from this node. Returns true if something was removed.
+    ///
+    /// - `Flat(v)` subtracts `v` from the **untagged** slot (flats are
+    ///   fungible; there is no per-modifier lookup). Use
+    ///   [`remove_tagged_modifier`](Self::remove_tagged_modifier) for tagged
+    ///   flats.
+    /// - `Expr` removes the first equal expression modifier, ignoring tags.
     pub fn remove_modifier(&mut self, modifier: &Modifier) -> bool {
-        if let Some(pos) = self
-            .modifiers
-            .iter()
-            .position(|tm| &tm.modifier == modifier)
-        {
-            self.modifiers.remove(pos);
-            true
-        } else {
-            false
+        match modifier {
+            Modifier::Flat(v) => self.un_accumulate_flat(TagMask::NONE, *v),
+            expr => {
+                if let Some(pos) = self.exprs.iter().position(|tm| &tm.modifier == expr) {
+                    self.exprs.remove(pos);
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
-    /// Remove the first modifier that matches both value and tag.
-    /// Returns true if found and removed.
+    /// Remove a modifier matching both value and tag.
+    /// Returns true if something was removed.
     pub fn remove_tagged_modifier(&mut self, modifier: &Modifier, tag: TagMask) -> bool {
-        let target = TaggedModifier::new(modifier.clone(), tag);
-        if let Some(pos) = self.modifiers.iter().position(|tm| tm == &target) {
-            self.modifiers.remove(pos);
-            true
-        } else {
-            false
+        match modifier {
+            Modifier::Flat(v) => self.un_accumulate_flat(tag, *v),
+            expr => {
+                if let Some(pos) = self
+                    .exprs
+                    .iter()
+                    .position(|tm| tm.tag == tag && &tm.modifier == expr)
+                {
+                    self.exprs.remove(pos);
+                    true
+                } else {
+                    false
+                }
+            }
         }
+    }
+
+    /// The "equivalent single flat" for a tag slot: the value `v` such that
+    /// replacing the slot with one `Flat(v)` leaves the node unchanged.
+    /// This is what `set_base` / `set_base_tagged` replace.
+    pub fn flat_base(&self, tag: TagMask) -> f32 {
+        match self.flats.iter().find(|s| s.tag == tag) {
+            Some(slot) => match self.reduce {
+                ReduceFn::Product => slot.value - 1.0,
+                _ => slot.value,
+            },
+            None => 0.0,
+        }
+    }
+
+    /// Replace a tag's flat slot with a single flat modifier of `value`.
+    pub fn set_flat_base(&mut self, tag: TagMask, value: f32) {
+        let slot_value = match self.reduce {
+            ReduceFn::Product => 1.0 + value,
+            _ => value,
+        };
+        if let Some(slot) = self.flats.iter_mut().find(|s| s.tag == tag) {
+            slot.value = slot_value;
+            slot.count = 1;
+        } else {
+            self.flats.push(FlatSlot { tag, value: slot_value, count: 1 });
+        }
+    }
+
+    /// Iterate over the expression modifiers (used for dependency/source
+    /// bookkeeping).
+    pub(crate) fn expressions(&self) -> impl Iterator<Item = &crate::expr::Expr> {
+        self.exprs.iter().filter_map(|tm| match &tm.modifier {
+            Modifier::Expr(e) => Some(e),
+            _ => None,
+        })
+    }
+
+    fn accumulate_flat(&mut self, tag: TagMask, v: f32) {
+        let is_product = matches!(self.reduce, ReduceFn::Product);
+        if let Some(slot) = self.flats.iter_mut().find(|s| s.tag == tag) {
+            if is_product {
+                slot.value *= 1.0 + v;
+            } else {
+                slot.value += v;
+            }
+            slot.count += 1;
+        } else {
+            self.flats.push(FlatSlot {
+                tag,
+                value: if is_product { 1.0 + v } else { v },
+                count: 1,
+            });
+        }
+    }
+
+    fn un_accumulate_flat(&mut self, tag: TagMask, v: f32) -> bool {
+        let is_product = matches!(self.reduce, ReduceFn::Product);
+        let Some(pos) = self.flats.iter().position(|s| s.tag == tag && s.count > 0) else {
+            return false;
+        };
+        let slot = &mut self.flats[pos];
+        slot.count -= 1;
+        if slot.count == 0 {
+            // Exact reset: drift (and un-invertible x0 factors) can't outlive
+            // the modifiers that caused them.
+            self.flats.swap_remove(pos);
+        } else if is_product {
+            let divisor = 1.0 + v;
+            // A modifier of exactly -1.0 zeroed the slot; it can't be divided
+            // back out. The slot stays 0 until its count drains, then resets.
+            if divisor != 0.0 {
+                slot.value /= divisor;
+            }
+        } else {
+            slot.value -= v;
+        }
+        true
     }
 
     /// Evaluate this node: evaluate **all** modifiers (ignoring tags), then reduce.
     pub fn evaluate(&self, context: &AttributeContext) -> f32 {
-        let iter = self.modifiers.iter().map(|tm| tm.modifier.evaluate(context));
-        self.reduce_iter(iter)
+        self.combine(
+            self.exprs.iter().map(|tm| tm.modifier.evaluate(context)),
+            self.flats.iter().map(|s| s.value),
+        )
     }
 
     /// Evaluate only modifiers whose tags match the given query, then reduce.
@@ -100,24 +221,34 @@ impl AttributeNode {
     /// A modifier matches if its tag is NONE (global) or its tag bits are a
     /// subset of `query`. See [`TagMask::matches_query`].
     pub fn evaluate_tagged(&self, context: &AttributeContext, query: TagMask) -> f32 {
-        let iter = self
-            .modifiers
-            .iter()
-            .filter(|tm| tm.tag.matches_query(query))
-            .map(|tm| tm.modifier.evaluate(context));
-        self.reduce_iter(iter)
+        self.combine(
+            self.exprs
+                .iter()
+                .filter(|tm| tm.tag.matches_query(query))
+                .map(|tm| tm.modifier.evaluate(context)),
+            self.flats
+                .iter()
+                .filter(|s| s.tag.matches_query(query))
+                .map(|s| s.value),
+        )
     }
 
-    /// Reduce an iterator of evaluated modifier values using this node's reduce function.
+    /// Reduce evaluated expression values and flat-slot values.
     ///
-    /// Sum and Product fold directly without allocating. Custom still requires
-    /// collecting into a Vec because its function signature takes `&[f32]`.
-    fn reduce_iter(&self, iter: impl Iterator<Item = f32>) -> f32 {
+    /// Flat slots already carry the reduce-appropriate representation:
+    /// `Σv` for Sum/Custom, `Π(1+v)` for Product.
+    fn combine(
+        &self,
+        exprs: impl Iterator<Item = f32>,
+        flats: impl Iterator<Item = f32>,
+    ) -> f32 {
         match &self.reduce {
-            ReduceFn::Sum => iter.sum(),
-            ReduceFn::Product => iter.map(|v| 1.0 + v).product(),
+            ReduceFn::Sum => exprs.sum::<f32>() + flats.sum::<f32>(),
+            ReduceFn::Product => {
+                exprs.map(|v| 1.0 + v).product::<f32>() * flats.product::<f32>()
+            }
             ReduceFn::Custom(f) => {
-                let values: Vec<f32> = iter.collect();
+                let values: Vec<f32> = exprs.chain(flats).collect();
                 if values.is_empty() { 0.0 } else { f(&values) }
             }
         }
@@ -173,15 +304,61 @@ mod tests {
     }
 
     #[test]
+    fn remove_flat_from_empty_slot_is_noop() {
+        let ctx = AttributeContext::new();
+        let mut node = AttributeNode::sum();
+        assert!(!node.remove_modifier(&Modifier::Flat(10.0)));
+        node.add_modifier(Modifier::Flat(5.0));
+        assert!(node.remove_modifier(&Modifier::Flat(5.0)));
+        // Slot drained - removal reports false and the value stays exact.
+        assert!(!node.remove_modifier(&Modifier::Flat(5.0)));
+        assert_eq!(node.evaluate(&ctx), 0.0);
+    }
+
+    #[test]
+    fn drained_slot_resets_exactly() {
+        let ctx = AttributeContext::new();
+        let mut node = AttributeNode::sum();
+        node.add_modifier(Modifier::Flat(1e8));
+        node.add_modifier(Modifier::Flat(0.25));
+        // 0.25 is absorbed by 1e8 in f32 - but draining the slot resets it.
+        node.remove_modifier(&Modifier::Flat(1e8));
+        node.remove_modifier(&Modifier::Flat(0.25));
+        assert_eq!(node.evaluate(&ctx), 0.0);
+    }
+
+    #[test]
+    fn product_remove_divides_back_out() {
+        let ctx = AttributeContext::new();
+        let mut node = AttributeNode::product();
+        node.add_modifier(Modifier::Flat(0.5)); // 1.5x
+        node.add_modifier(Modifier::Flat(0.3)); // 1.3x
+        assert!(node.remove_modifier(&Modifier::Flat(0.3)));
+        let result = node.evaluate(&ctx);
+        assert!((result - 1.5).abs() < 1e-5);
+    }
+
+    #[test]
     fn custom_reduce() {
         let ctx = AttributeContext::new();
+        let fire = TagMask::bit(0);
+        let physical = TagMask::bit(1);
+
         let mut node = AttributeNode::new(ReduceFn::Custom(|vals| {
             vals.iter().copied().fold(f32::NEG_INFINITY, f32::max)
         }));
-        node.add_modifier(Modifier::Flat(3.0));
-        node.add_modifier(Modifier::Flat(7.0));
+        // Custom reduce sees one accumulated value PER TAG SLOT, not one per
+        // flat modifier: flats sharing a tag are fungible and pre-summed.
+        node.add_tagged_modifier(Modifier::Flat(3.0), fire);
+        node.add_tagged_modifier(Modifier::Flat(7.0), physical);
         node.add_modifier(Modifier::Flat(1.0));
         assert_eq!(node.evaluate(&ctx), 7.0);
+
+        // Same-tag flats accumulate before the custom fn sees them.
+        node.add_tagged_modifier(Modifier::Flat(2.0), fire); // fire slot: 5.0
+        assert_eq!(node.evaluate(&ctx), 7.0);
+        node.add_tagged_modifier(Modifier::Flat(4.0), fire); // fire slot: 9.0
+        assert_eq!(node.evaluate(&ctx), 9.0);
     }
 
     // --- Tagged modifier tests ---
@@ -229,5 +406,26 @@ mod tests {
         // Remove only the FIRE-tagged one
         assert!(node.remove_tagged_modifier(&Modifier::Flat(10.0), fire));
         assert_eq!(node.evaluate(&ctx), 10.0); // global remains
+    }
+
+    #[test]
+    fn flat_base_and_set_flat_base() {
+        let ctx = AttributeContext::new();
+        let mut node = AttributeNode::sum();
+        node.add_modifier(Modifier::Flat(10.0));
+        node.add_modifier(Modifier::Flat(5.0));
+        assert_eq!(node.flat_base(TagMask::NONE), 15.0);
+
+        node.set_flat_base(TagMask::NONE, 42.0);
+        assert_eq!(node.evaluate(&ctx), 42.0);
+        assert_eq!(node.flat_base(TagMask::NONE), 42.0);
+
+        // Product: flat_base is the equivalent single flat.
+        let mut prod = AttributeNode::product();
+        prod.add_modifier(Modifier::Flat(0.5));
+        prod.add_modifier(Modifier::Flat(0.3));
+        assert!((prod.flat_base(TagMask::NONE) - 0.95).abs() < 1e-5); // 1.95 - 1
+        prod.set_flat_base(TagMask::NONE, 0.5);
+        assert!((prod.evaluate(&ctx) - 1.5).abs() < 1e-5);
     }
 }

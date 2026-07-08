@@ -170,6 +170,21 @@ impl Attributes {
         self.tag_query_ids.insert((parent_id, mask), synthetic_id);
     }
 
+    /// Register the reverse lookup for a **template-materialized** tag query.
+    ///
+    /// Unlike [`register_tag_query`](Self::register_tag_query), the synthetic
+    /// id is NOT added to `tag_queries`, so `evaluate_and_cache` treats it as
+    /// a normal node (evaluating its own expression modifier) rather than a
+    /// filtered view of the parent's modifiers.
+    pub(crate) fn register_template_query(
+        &mut self,
+        parent_id: AttributeId,
+        mask: TagMask,
+        synthetic_id: AttributeId,
+    ) {
+        self.tag_query_ids.insert((parent_id, mask), synthetic_id);
+    }
+
     /// Check if a tag query is already registered.
     pub(crate) fn tag_query_synthetic_id(
         &self,
