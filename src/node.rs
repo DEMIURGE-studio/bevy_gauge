@@ -15,6 +15,10 @@ pub enum ReduceFn {
     /// Receives one value per **expression modifier** plus one **accumulated
     /// value per flat tag-slot** (flat modifiers are fungible and stored
     /// accumulated per tag, not individually - see [`AttributeNode`]).
+    ///
+    /// Called with an empty slice when the node has no matching modifiers,
+    /// so the function decides its own identity value (Sum's is 0, Product's
+    /// is 1). Handle the empty case rather than indexing unconditionally.
     Custom(fn(&[f32]) -> f32),
 }
 
@@ -266,7 +270,7 @@ impl AttributeNode {
             }
             ReduceFn::Custom(f) => {
                 let values: Vec<f32> = exprs.chain(flats).collect();
-                if values.is_empty() { 0.0 } else { f(&values) }
+                f(&values)
             }
         }
     }
@@ -275,6 +279,19 @@ impl AttributeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_reduce_sees_empty_input() {
+        fn floor_ten(values: &[f32]) -> f32 {
+            values.iter().copied().fold(10.0, f32::max)
+        }
+        let ctx = AttributeContext::default();
+        let mut node = AttributeNode::new(ReduceFn::Custom(floor_ten));
+        assert_eq!(node.evaluate(&ctx), 10.0, "identity comes from the function");
+        node.add_modifier(Modifier::Flat(25.0));
+        assert_eq!(node.evaluate(&ctx), 25.0);
+        assert_eq!(node.evaluate_tagged(&ctx, TagMask::bit(3)), 25.0, "global flat matches");
+    }
 
     #[test]
     fn sum_node() {

@@ -61,7 +61,7 @@ pub trait AttributeResolvable {
 
 impl AttributeResolvable for f32 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix)).abs() > f32::EPSILON
+        !crate::expr::approx_eq(*self, attrs.value(prefix))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
@@ -71,7 +71,8 @@ impl AttributeResolvable for f32 {
 
 impl AttributeResolvable for f64 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix) as f64).abs() > f64::EPSILON
+        // Attribute values are f32; compare at f32 precision.
+        !crate::expr::approx_eq(*self as f32, attrs.value(prefix))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
@@ -117,15 +118,17 @@ impl AttributeResolvable for bool {
 // Terminal impls — Duration
 // ---------------------------------------------------------------------------
 
+/// Resolves from seconds. Zero is a valid duration; only negative or
+/// non-finite values are ignored (a `Duration` can't represent them).
 impl AttributeResolvable for Duration {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
         let secs = attrs.value(prefix);
-        secs > 0.0 && (self.as_secs_f32() - secs).abs() > f32::EPSILON
+        secs >= 0.0 && secs.is_finite() && !crate::expr::approx_eq(self.as_secs_f32(), secs)
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
         let secs = attrs.value(prefix);
-        if secs > 0.0 {
+        if secs >= 0.0 && secs.is_finite() {
             *self = Duration::from_secs_f32(secs);
         }
     }

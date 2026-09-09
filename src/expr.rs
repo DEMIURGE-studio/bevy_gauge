@@ -537,7 +537,7 @@ impl<'a> Parser<'a> {
         } else if let Some(mask) = tag_mask {
             // Local tagged reference: Damage.Added{FIRE|SPELL}
             let attribute_id = self.interner.get_or_intern(&full_name);
-            let synthetic_name = format!("\0tag:{}:{}", full_name, mask.0);
+            let synthetic_name = crate::graph::tag_query_synthetic_name(&full_name, mask);
             let synthetic_id = self.interner.get_or_intern(&synthetic_name);
             self.dependencies.push(Dependency::TagQuery {
                 attribute: attribute_id,

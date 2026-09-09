@@ -375,9 +375,9 @@ impl ModifierSet {
         self.builders.extend(other.builders.iter().map(|b| b.clone_box()));
     }
 
-    /// Number of modifier entries in this set (excludes builders).
+    /// Number of modifier entries plus builders in this set.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len() + self.builders.len()
     }
 
     /// Whether this set has no entries and no builders.

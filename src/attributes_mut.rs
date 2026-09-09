@@ -620,8 +620,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             return;
         };
 
-        // Compute the combo's synthetic id (same naming as ensure_tag_query).
-        let synthetic_name = format!("\0tag:{}:{}", name, mask.0);
+        let synthetic_name = crate::graph::tag_query_synthetic_name(&name, mask);
         let synthetic_id = self.intern(&synthetic_name);
 
         if let Ok(mut attrs) = self.query.get_mut(entity) {
@@ -691,7 +690,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         // Create synthetic AttributeId
         let parent_name = self.resolve_id(parent_attribute_id);
-        let synthetic_name = format!("\0tag:{parent_name}:{}", mask.0);
+        let synthetic_name = crate::graph::tag_query_synthetic_name(parent_name, mask);
         let synthetic_id = self.intern(&synthetic_name);
 
         // Register in Attributes

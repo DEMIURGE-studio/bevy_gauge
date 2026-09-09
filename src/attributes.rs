@@ -123,8 +123,26 @@ impl Attributes {
         self.nodes.contains_key(&id)
     }
 
-    /// Iterate over all (AttributeId, current_value) pairs.
+    /// Iterate over the entity's attributes as `(AttributeId, current_value)`.
+    ///
+    /// Yields one entry per attribute node - the names you defined. Internal
+    /// entries (synthetic tag-query nodes and cached `Attr@Alias` source
+    /// values) are skipped; use [`iter_raw`](Self::iter_raw) to see those.
     pub fn iter(&self) -> impl Iterator<Item = (AttributeId, f32)> + '_ {
+        let rodeo = global_rodeo();
+        self.nodes.keys().filter_map(move |&id| {
+            let name = rodeo.resolve(&id.0);
+            if crate::graph::is_tag_query_synthetic_name(name) {
+                None
+            } else {
+                Some((id, self.context.get(id)))
+            }
+        })
+    }
+
+    /// Iterate over every cached value, including synthetic tag-query nodes
+    /// and cross-entity source caches. Intended for debugging.
+    pub fn iter_raw(&self) -> impl Iterator<Item = (AttributeId, f32)> + '_ {
         self.context.iter()
     }
 
@@ -221,6 +239,28 @@ mod tests {
         let val = attrs.evaluate_and_cache(id);
         assert_eq!(val, 25.0);
         assert_eq!(attrs.get(id), 25.0);
+    }
+
+    #[test]
+    fn iter_skips_internal_entries() {
+        Interner::new().set_global();
+        let interner = global_rodeo();
+        let mut attrs = Attributes::new();
+        let fire = TagMask::bit(0);
+        let damage_id = AttributeId(interner.get_or_intern("Damage"));
+        let synthetic_name = crate::graph::tag_query_synthetic_name("Damage", fire);
+        let synthetic_id = AttributeId(interner.get_or_intern(&synthetic_name));
+        let source_key = AttributeId(interner.get_or_intern("Strength@Wielder"));
+
+        attrs.ensure_node(damage_id, ReduceFn::Sum).add_tagged_modifier(Modifier::Flat(5.0), fire);
+        attrs.register_tag_query(damage_id, fire, synthetic_id);
+        attrs.evaluate_and_cache(damage_id);
+        attrs.evaluate_and_cache(synthetic_id);
+        attrs.context.set(source_key, 42.0);
+
+        let visible: Vec<_> = attrs.iter().collect();
+        assert_eq!(visible, vec![(damage_id, 5.0)]);
+        assert_eq!(attrs.iter_raw().count(), 3);
     }
 
     #[test]

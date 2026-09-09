@@ -19,14 +19,27 @@ impl DepNode {
     }
 }
 
-/// Compute the synthetic [`AttributeId`] for a tag query on `attribute`.
+/// The interned name of the synthetic node for a tag query on `attribute_name`.
 ///
-/// Must stay in sync with the naming used by the expression parser and
-/// `AttributesMut::ensure_tag_query`: `"\0tag:{name}:{mask_bits}"`.
+/// This is the single definition of the format. The expression parser,
+/// `AttributesMut`, and [`tag_query_synthetic_id`] all build the name here so
+/// they can never disagree (a mismatch would make tagged queries read 0.0
+/// with no error). The leading NUL keeps it out of the user name space.
+pub(crate) fn tag_query_synthetic_name(attribute_name: &str, mask: TagMask) -> String {
+    format!("\0tag:{}:{}", attribute_name, mask.0)
+}
+
+/// True if `name` is a synthetic tag-query node name (see
+/// [`tag_query_synthetic_name`]).
+pub(crate) fn is_tag_query_synthetic_name(name: &str) -> bool {
+    name.starts_with("\0tag:")
+}
+
+/// Compute the synthetic [`AttributeId`] for a tag query on `attribute`.
 pub(crate) fn tag_query_synthetic_id(attribute: AttributeId, mask: TagMask) -> AttributeId {
     let rodeo = global_rodeo();
     let name = rodeo.resolve(&attribute.0);
-    let synthetic_name = format!("\0tag:{}:{}", name, mask.0);
+    let synthetic_name = tag_query_synthetic_name(name, mask);
     AttributeId(rodeo.get_or_intern(&synthetic_name))
 }
 
