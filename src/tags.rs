@@ -146,19 +146,37 @@ impl TagResolver {
         let upper_ns = namespace.to_uppercase();
         let namespaced = format!("{}::{}", upper_ns, upper_name);
 
-        self.tags.insert(namespaced, mask);
+        self.tags.insert(namespaced.clone(), mask);
 
-        if let Some(existing_ns) = self.short_name_owner.get(&upper_name) {
-            if *existing_ns != upper_ns {
-                self.ambiguous.insert(upper_name.clone());
+        // Whether the short name can be used on its own after this call.
+        let short_ok = match self.short_name_owner.get(&upper_name) {
+            Some(existing_ns) if *existing_ns != upper_ns => {
+                // The short name just became ambiguous. Any reverse entry
+                // (bit -> name) that still hands out the bare short name
+                // must switch to the owner's namespaced form, otherwise
+                // `tag_suffix` would emit a name `resolve` refuses.
+                let owner_qualified = format!("{}::{}", existing_ns, upper_name);
+                if self.ambiguous.insert(upper_name.clone()) {
+                    for name in self.reverse_tags.values_mut() {
+                        if *name == upper_name {
+                            *name = owner_qualified.clone();
+                        }
+                    }
+                }
+                false
             }
-        } else {
-            self.short_name_owner.insert(upper_name.clone(), upper_ns);
-            self.tags.insert(upper_name.clone(), mask);
-        }
+            Some(_) => true,
+            None => {
+                self.short_name_owner.insert(upper_name.clone(), upper_ns);
+                self.tags.insert(upper_name.clone(), mask);
+                true
+            }
+        };
 
         if mask.0.count_ones() == 1 {
-            self.reverse_tags.insert(mask.0.trailing_zeros(), upper_name);
+            let bit = mask.0.trailing_zeros();
+            let reverse_name = if short_ok { upper_name } else { namespaced };
+            self.reverse_tags.insert(bit, reverse_name);
         }
     }
 
@@ -207,6 +225,10 @@ impl TagResolver {
     ///
     /// Returns `None` if any set bit in the mask doesn't have a registered
     /// single-bit name. Returns an empty `Vec` for [`TagMask::NONE`].
+    ///
+    /// Every returned name is accepted by [`resolve`](Self::resolve): a tag
+    /// whose short name is ambiguous across namespaces comes back in its
+    /// `NAMESPACE::TAG` form.
     ///
     /// # Example
     ///
@@ -509,6 +531,25 @@ mod tests {
         assert_eq!(resolver.resolve("SWORD"), Some(TagMask::bit(4)));
         assert!(resolver.ambiguous_alternatives("FIRE").is_none());
         assert!(resolver.ambiguous_alternatives("SWORD").is_none());
+    }
+
+    #[test]
+    fn ambiguous_short_name_decomposes_to_namespaced_form() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        // Before the collision the short name round-trips.
+        assert_eq!(resolver.tag_suffix(TagMask::bit(0)), Some("{FIRE}".into()));
+
+        resolver.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        // Both bits now decompose to names that `resolve` accepts.
+        for mask in [TagMask::bit(0), TagMask::bit(4)] {
+            let names = resolver.decompose(mask).unwrap();
+            assert_eq!(names.len(), 1);
+            assert_eq!(resolver.resolve(names[0]), Some(mask), "{}", names[0]);
+        }
+        assert_eq!(resolver.tag_suffix(TagMask::bit(0)), Some("{ELEMENT::FIRE}".into()));
+        assert_eq!(resolver.tag_suffix(TagMask::bit(4)), Some("{WEAPON::FIRE}".into()));
     }
 
     #[test]

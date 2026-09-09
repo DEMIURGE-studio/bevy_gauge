@@ -31,11 +31,16 @@ impl Default for ReduceFn {
 /// reduce and `Π(1+v)` under `Product` reduce. When `count` returns to zero
 /// the slot is dropped, so accumulated float drift can never outlive the
 /// modifiers that caused it.
+///
+/// A slot written by [`AttributeNode::set_flat_base`] is marked `base`. A
+/// base slot is never dropped by removals: `set_base` establishes a value
+/// that later modifier removals subtract from, not one they can wipe.
 #[derive(Clone, Debug)]
 struct FlatSlot {
     tag: TagMask,
     value: f32,
     count: u32,
+    base: bool,
 }
 
 /// A attribute node - the fundamental unit of the attribute graph.
@@ -143,7 +148,14 @@ impl AttributeNode {
         }
     }
 
-    /// Replace a tag's flat slot with a single flat modifier of `value`.
+    /// Replace a tag's flat slot with a base value of `value`.
+    ///
+    /// The slot becomes a **base slot**: its accumulated value is replaced,
+    /// but the contributor count is preserved, so modifiers that were added
+    /// before the call can still be removed (subtracting their value) and
+    /// removal never drops the slot. Without this, `set_base` followed by
+    /// removing one of the earlier contributors would drain the slot and
+    /// wipe the base entirely.
     pub fn set_flat_base(&mut self, tag: TagMask, value: f32) {
         let slot_value = match self.reduce {
             ReduceFn::Product => 1.0 + value,
@@ -151,9 +163,9 @@ impl AttributeNode {
         };
         if let Some(slot) = self.flats.iter_mut().find(|s| s.tag == tag) {
             slot.value = slot_value;
-            slot.count = 1;
+            slot.base = true;
         } else {
-            self.flats.push(FlatSlot { tag, value: slot_value, count: 1 });
+            self.flats.push(FlatSlot { tag, value: slot_value, count: 0, base: true });
         }
     }
 
@@ -180,18 +192,23 @@ impl AttributeNode {
                 tag,
                 value: if is_product { 1.0 + v } else { v },
                 count: 1,
+                base: false,
             });
         }
     }
 
     fn un_accumulate_flat(&mut self, tag: TagMask, v: f32) -> bool {
         let is_product = matches!(self.reduce, ReduceFn::Product);
-        let Some(pos) = self.flats.iter().position(|s| s.tag == tag && s.count > 0) else {
+        let Some(pos) = self
+            .flats
+            .iter()
+            .position(|s| s.tag == tag && (s.count > 0 || s.base))
+        else {
             return false;
         };
         let slot = &mut self.flats[pos];
-        slot.count -= 1;
-        if slot.count == 0 {
+        slot.count = slot.count.saturating_sub(1);
+        if slot.count == 0 && !slot.base {
             // Exact reset: drift (and un-invertible x0 factors) can't outlive
             // the modifiers that caused them.
             self.flats.swap_remove(pos);

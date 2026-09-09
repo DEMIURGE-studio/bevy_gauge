@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::ecs::query::QueryFilter;
-use bevy::ecs::system::SystemParam;
+use bevy::ecs::system::{SystemParam, SystemState};
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
@@ -19,11 +19,25 @@ use crate::tags::{TagMask, TagResolver};
 /// through the global `DependencyGraph`.
 ///
 /// Reading attributes does NOT require this - use `&Attributes` directly.
+///
+/// # Query filters
+///
+/// `F` narrows which entities this parameter can touch, which is useful for
+/// avoiding access conflicts with another `Attributes` query in the same
+/// system. Propagation does not stop at the filter: when a change needs to
+/// reach an entity the filter hides, that entity's re-evaluation is queued as
+/// a command and runs with an unfiltered `AttributesMut` at the next command
+/// flush. Within the filtered system itself, values on hidden entities are
+/// left as they were (never zeroed).
 #[derive(SystemParam)]
 pub struct AttributesMut<'w, 's, F: QueryFilter + 'static = ()> {
     query: Query<'w, 's, &'static mut Attributes, F>,
+    /// Unfiltered membership check, so "hidden by `F`" can be told apart from
+    /// "has no `Attributes`" without conflicting with `query`.
+    with_attributes: Query<'w, 's, (), With<Attributes>>,
     graph: ResMut<'w, DependencyGraph>,
     tag_resolver: Res<'w, TagResolver>,
+    commands: Commands<'w, 's>,
 }
 
 impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
@@ -395,6 +409,13 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         parts: &[(&str, ReduceFn)],
         expression: &str,
     ) -> Result<(), crate::expr::CompileError> {
+        // Validate the template now, before touching the entity. Combos are
+        // materialized lazily, and a template that fails to compile then
+        // would only show up as an error log and a permanently-zero value.
+        let part_names: Vec<&str> = parts.iter().map(|(n, _)| *n).collect();
+        let untagged = qualify_expression(name, &part_names, expression, None);
+        Expr::compile(&untagged, Some(&self.tag_resolver))?;
+
         for (part_name, reduce) in parts {
             let attribute_name = format!("{}.{}", name, part_name);
             let attribute_id = self.intern(&attribute_name);
@@ -590,7 +611,13 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         // Build the tag suffix (e.g., "{FIRE|MELEE}")
         let Some(tag_suffix) = self.tag_resolver.tag_suffix(mask) else {
-            return; // can't decompose - skip silently
+            bevy::log::error!(
+                "bevy_gauge: cannot materialize tagged attribute {name:?} for tag mask \
+                 {:#b}: one or more bits have no registered single-bit tag name. \
+                 The query will read 0.0.",
+                mask.0,
+            );
+            return;
         };
 
         // Compute the combo's synthetic id (same naming as ensure_tag_query).
@@ -626,7 +653,12 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         // synthetic node itself (compiles, registers part deps, evaluates).
         let part_strs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
         let qualified = qualify_expression(&name, &part_strs, &expression, Some(&tag_suffix));
-        let _ = self.add_expr_modifier(entity, &synthetic_name, &qualified);
+        if let Err(err) = self.add_expr_modifier(entity, &synthetic_name, &qualified) {
+            bevy::log::error!(
+                "bevy_gauge: failed to materialize tagged attribute {name:?} for {tag_suffix}: \
+                 {err} (generated expression: {qualified:?}). The query will read 0.0.",
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -691,20 +723,71 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     pub fn cache_expr_source_values(&mut self, entity: Entity, expr: &Expr) {
         for (alias_id, attribute_id, cache_key, tag_mask) in expr.source_cache_keys() {
             let source_entity = self.graph.resolve_alias(entity, alias_id);
-            let value = match (source_entity, tag_mask) {
-                (Some(se), Some(mask)) => self.read_source_tagged(se, attribute_id, mask),
-                (Some(se), None) => self
-                    .query
-                    .get(se)
-                    .map(|attrs| attrs.get(attribute_id))
-                    .unwrap_or(0.0),
-                (None, _) => 0.0,
+            let value = match source_entity {
+                Some(se) => match self.read_source(se, attribute_id, tag_mask) {
+                    Some(v) => v,
+                    None => {
+                        bevy::log::warn_once!(
+                            "bevy_gauge: {:?}@{:?} reads an entity hidden by this \
+                             AttributesMut's query filter; its cached value is left \
+                             unchanged. (This warning is only logged once.)",
+                            self.resolve_id(attribute_id),
+                            self.resolve_id(alias_id),
+                        );
+                        continue;
+                    }
+                },
+                None => 0.0,
             };
 
             if let Ok(mut attrs) = self.query.get_mut(entity) {
                 attrs.context.set(cache_key, value);
             }
         }
+    }
+
+    /// Read a source attribute value (optionally tag-filtered) for caching.
+    ///
+    /// Returns `None` when `source` has `Attributes` but is hidden by the
+    /// query filter `F`, so the caller can keep its existing cached value
+    /// instead of overwriting it with 0.0. A source with no `Attributes` at
+    /// all reads as `Some(0.0)`, consistent with `unregister_source`.
+    fn read_source(
+        &mut self,
+        source: Entity,
+        attribute_id: AttributeId,
+        tag_mask: Option<TagMask>,
+    ) -> Option<f32> {
+        if self.is_filtered_out(source) {
+            return None;
+        }
+        Some(match tag_mask {
+            Some(mask) => self.read_source_tagged(source, attribute_id, mask),
+            None => self
+                .query
+                .get(source)
+                .map(|attrs| attrs.get(attribute_id))
+                .unwrap_or(0.0),
+        })
+    }
+
+    /// True when `entity` has `Attributes` but the query filter `F` hides it.
+    /// Always false for the default unfiltered `AttributesMut`.
+    fn is_filtered_out(&self, entity: Entity) -> bool {
+        self.with_attributes.contains(entity) && self.query.get(entity).is_err()
+    }
+
+    /// Queue a re-evaluation of `node` for the next command flush, where it
+    /// runs with an unfiltered `AttributesMut`. Used when propagation needs to
+    /// reach an entity the query filter `F` hides.
+    fn defer_propagation(&mut self, node: DepNode) {
+        self.commands.queue(move |world: &mut World| {
+            let mut state = SystemState::<AttributesMut>::new(world);
+            if let Ok(mut attributes) = state.get_mut(world) {
+                attributes.evaluate_and_propagate(node.entity, node.attribute);
+            }
+            state.apply(world);
+        });
     }
 
     /// Read a tag-filtered value from a source entity, materializing the tag
@@ -749,16 +832,23 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             return;
         }
 
+        let mut deferred = false;
         for (alias, source_attribute, cache_key, tag_mask) in cache_entries {
             let source_entity = self.graph.resolve_alias(entity, alias);
-            let value = match (source_entity, tag_mask) {
-                (Some(se), Some(mask)) => self.read_source_tagged(se, source_attribute, mask),
-                (Some(se), None) => self
-                    .query
-                    .get(se)
-                    .map(|attrs| attrs.get(source_attribute))
-                    .unwrap_or(0.0),
-                (None, _) => 0.0,
+            let value = match source_entity {
+                Some(se) => match self.read_source(se, source_attribute, tag_mask) {
+                    Some(v) => v,
+                    None => {
+                        // Source hidden by the filter: keep the cached value
+                        // and refresh this node once the filter is gone.
+                        if !deferred {
+                            self.defer_propagation(DepNode::new(entity, attribute_id));
+                            deferred = true;
+                        }
+                        continue;
+                    }
+                },
+                None => 0.0,
             };
 
             if let Ok(mut attrs) = self.query.get_mut(entity) {
@@ -799,6 +889,14 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// only after all of its (in-subgraph) sources have settled. This is what
     /// makes diamond dependencies (A -> B, A -> C, B+C -> D) recompute
     /// correctly: D evaluates once, after both B and C.
+    ///
+    /// This can be re-entered: re-evaluating a node may trigger lazy template
+    /// materialization on a source entity, which adds a modifier and starts a
+    /// nested pass. That is sound because the nested pass is complete over
+    /// the graph at that moment and this pass dirties dependents by comparing
+    /// old and new cached values, so anything the nested pass already settled
+    /// is seen as unchanged here. The `template_registered_after_cross_entity_
+    /// reference_converges` regression test pins this.
     fn evaluate_and_propagate(&mut self, entity: Entity, attribute_id: AttributeId) {
         let root = DepNode::new(entity, attribute_id);
 
@@ -874,7 +972,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
                  {:?}; attributes on a cycle re-evaluate in arbitrary order \
                  and their values are unreliable. Break the cycle in your \
                  attribute definitions. (This warning is only logged once.)",
-                self.resolve_id(attribute_id),
+                self.resolve_id(root.attribute),
             );
             let leftover: Vec<DepNode> = in_degree
                 .iter()
@@ -934,6 +1032,12 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
     /// Refresh a node's cross-entity source caches, re-evaluate it, and
     /// report whether its cached value changed.
+    ///
+    /// If the query filter `F` hides the node's entity, the node can't be
+    /// evaluated here; its re-evaluation is deferred to the next command
+    /// flush and this returns `false` (its cached value is unchanged, so its
+    /// dependents are not dirtied by this pass - the deferred pass reaches
+    /// them).
     fn re_evaluate(&mut self, node: DepNode) -> bool {
         self.cache_source_values(node.entity, node.attribute);
 
@@ -942,6 +1046,9 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             let new = attrs.evaluate_and_cache(node.attribute);
             !crate::expr::approx_eq(old, new)
         } else {
+            if self.is_filtered_out(node.entity) {
+                self.defer_propagation(node);
+            }
             false
         }
     }

@@ -469,3 +469,199 @@ fn expression_depth_checked_at_compile_time() {
     }
     assert!(Expr::compile(&flat, None).is_ok());
 }
+
+// ---------------------------------------------------------------------------
+// set_base keeps earlier contributors removable
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_base_survives_later_modifier_removal() {
+    let mut app = test_app();
+    let e = spawn_attrs(&mut app);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.add_modifier(e, "Damage", 10.0);
+            attributes.add_modifier(e, "Damage", 5.0);
+            assert_eq!(attributes.evaluate(e, "Damage"), 15.0);
+
+            // An instant-style rewrite of the flat base.
+            attributes.set_base(e, "Damage", 18.0);
+            assert_eq!(attributes.evaluate(e, "Damage"), 18.0);
+
+            // Removing the earlier contributors subtracts them; it must not
+            // drain the slot and wipe the base.
+            attributes.remove_modifier(e, "Damage", &Modifier::Flat(10.0));
+            assert_eq!(attributes.evaluate(e, "Damage"), 8.0);
+            attributes.remove_modifier(e, "Damage", &Modifier::Flat(5.0));
+            assert_eq!(attributes.evaluate(e, "Damage"), 3.0);
+
+            // And the base still stacks with new modifiers afterwards.
+            attributes.add_modifier(e, "Damage", 4.0);
+            assert_eq!(attributes.evaluate(e, "Damage"), 7.0);
+            attributes.remove_modifier(e, "Damage", &Modifier::Flat(4.0));
+            assert_eq!(attributes.evaluate(e, "Damage"), 3.0);
+        })
+        .unwrap();
+    assert_eq!(cached_value(&app, e, "Damage"), 3.0);
+}
+
+// ---------------------------------------------------------------------------
+// Re-entrant propagation via lazy template materialization
+// ---------------------------------------------------------------------------
+
+/// A reader references `Damage{FIRE}@weapon` before the weapon has `Damage`
+/// as a tagged (template) attribute. The first propagation through the
+/// reader after that converts the filtered view into a template node, which
+/// adds a modifier *during* the propagation pass and starts a nested pass
+/// over a graph the outer pass has already snapshotted. Every value must
+/// still converge, both immediately and on later changes.
+#[test]
+fn template_registered_after_cross_entity_reference_converges() {
+    let mut app = test_app();
+    let fire = TagMask::bit(0);
+    register_tags(&mut app, &[("FIRE", fire)]);
+    let weapon = spawn_attrs(&mut app);
+    let reader = spawn_attrs(&mut app);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.add_modifier_tagged(weapon, "Damage", 10.0, fire);
+            attributes.register_source(reader, "weapon", weapon);
+            attributes
+                .add_expr_modifier(reader, "X", "Damage{FIRE}@weapon * 2")
+                .unwrap();
+            assert_eq!(attributes.evaluate(reader, "X"), 20.0);
+
+            // Now Damage becomes a template attribute; the existing filtered
+            // view the reader uses is stale until the next propagation.
+            attributes
+                .tagged_attribute(
+                    weapon,
+                    "Damage",
+                    &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
+                    "added * (1 + increased)",
+                )
+                .unwrap();
+            attributes.add_modifier_tagged(weapon, "Damage.added", 5.0, fire);
+
+            // Propagate from the parent: reaches the reader, whose
+            // re-evaluation triggers the template conversion mid-pass.
+            attributes.set_base_tagged(weapon, "Damage", 12.0, fire);
+        })
+        .unwrap();
+
+    // Template semantics: Damage{FIRE} = added{FIRE} * (1 + increased{FIRE}) = 5.
+    assert_eq!(cached_value(&app, reader, "X"), 10.0);
+
+    // The converted node is wired to its parts: further changes propagate.
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.add_modifier_tagged(weapon, "Damage.increased", 1.0, fire);
+        })
+        .unwrap();
+    assert_eq!(cached_value(&app, reader, "X"), 20.0);
+}
+
+// ---------------------------------------------------------------------------
+// Filtered AttributesMut
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+struct Player;
+
+/// Propagation from a filtered `AttributesMut` must still reach entities the
+/// filter hides (deferred to the command flush) and must never zero a cached
+/// cross-entity value just because the source is hidden.
+#[test]
+fn filtered_attributes_mut_propagates_after_flush() {
+    let mut app = test_app();
+    let player = app.world_mut().spawn((Attributes::new(), Player)).id();
+    let minion = spawn_attrs(&mut app);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.set(player, "Aura", 1.0);
+            attributes.register_source(minion, "owner", player);
+            attributes.add_expr_modifier(minion, "Power", "Aura@owner * 2").unwrap();
+
+            attributes.set(minion, "Threat", 7.0);
+            attributes.register_source(player, "pet", minion);
+        })
+        .unwrap();
+    assert_eq!(cached_value(&app, minion, "Power"), 2.0);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut<With<Player>>| {
+            // Downstream of the change is hidden by the filter.
+            attributes.set_base(player, "Aura", 5.0);
+
+            // A new expression on a visible entity reads a hidden source.
+            attributes.add_expr_modifier(player, "PetThreat", "Threat@pet").unwrap();
+
+            // Inside the filtered system the hidden entity is untouched.
+            assert_eq!(attributes.value(minion, "Power"), 0.0, "hidden by filter");
+        })
+        .unwrap();
+
+    // After the flush both sides are current.
+    assert_eq!(cached_value(&app, minion, "Power"), 10.0);
+    assert_eq!(cached_value(&app, player, "PetThreat"), 7.0);
+}
+
+// ---------------------------------------------------------------------------
+// Tag names that are ambiguous across namespaces still materialize
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ambiguous_short_tag_name_materializes_template() {
+    let mut app = test_app();
+    let element_fire = TagMask::bit(0);
+    let weapon_fire = TagMask::bit(4);
+    {
+        let mut resolver = app.world_mut().resource_mut::<TagResolver>();
+        resolver.register_namespaced("Element", "FIRE", element_fire);
+        resolver.register_namespaced("Weapon", "FIRE", weapon_fire);
+        assert_eq!(resolver.resolve("FIRE"), None, "short name is ambiguous");
+    }
+    let e = spawn_attrs(&mut app);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes
+                .tagged_attribute(e, "Damage", &[("added", ReduceFn::Sum)], "added")
+                .unwrap();
+            attributes.add_modifier_tagged(e, "Damage.added", 10.0, element_fire);
+            attributes.add_modifier_tagged(e, "Damage.added", 3.0, weapon_fire);
+
+            // Materialization builds `Damage.added{ELEMENT::FIRE}`; the bare
+            // `{FIRE}` would fail to compile and read as 0.
+            assert_eq!(attributes.evaluate_tagged(e, "Damage", element_fire), 10.0);
+            assert_eq!(attributes.evaluate_tagged(e, "Damage", weapon_fire), 3.0);
+            assert_eq!(
+                attributes.evaluate_tagged(e, "Damage", element_fire | weapon_fire),
+                13.0
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn tagged_attribute_rejects_broken_template() {
+    let mut app = test_app();
+    let e = spawn_attrs(&mut app);
+
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            let result = attributes.tagged_attribute(
+                e,
+                "Damage",
+                &[("added", ReduceFn::Sum)],
+                "added * (1 +",
+            );
+            assert!(result.is_err(), "broken template must be rejected up front");
+            // Nothing was set up for it.
+            assert_eq!(attributes.evaluate(e, "Damage.added"), 0.0);
+        })
+        .unwrap();
+}
