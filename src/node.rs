@@ -110,18 +110,48 @@ impl AttributeNode {
 
     /// Reduce an iterator of evaluated modifier values using this node's reduce function.
     ///
-    /// Sum and Product fold directly without allocating. Custom still requires
-    /// collecting into a Vec because its function signature takes `&[f32]`.
+    /// The values are put in a canonical order (`f32::total_cmp`) before they are folded, so the
+    /// result depends only on which modifiers the node holds, never on the order they were added
+    /// in: floating-point addition is not associative, and `0.1 + 1e8 - 1e8` and
+    /// `-1e8 + 1e8 + 0.1` differ. That is what lets two machines that applied the same modifiers in
+    /// different orders agree bit for bit. Up to [`INLINE_VALUES`] values are sorted on the stack;
+    /// more spill to a `Vec`. Custom reducers receive the values in the same order.
     fn reduce_iter(&self, iter: impl Iterator<Item = f32>) -> f32 {
-        match &self.reduce {
-            ReduceFn::Sum => iter.sum(),
-            ReduceFn::Product => iter.map(|v| 1.0 + v).product(),
+        with_canonical_order(iter, |values| match &self.reduce {
+            ReduceFn::Sum => values.iter().sum(),
+            ReduceFn::Product => values.iter().map(|v| 1.0 + v).product(),
             ReduceFn::Custom(f) => {
-                let values: Vec<f32> = iter.collect();
-                if values.is_empty() { 0.0 } else { f(&values) }
+                if values.is_empty() { 0.0 } else { f(values) }
             }
+        })
+    }
+}
+
+/// How many evaluated values [`AttributeNode::reduce_iter`] orders on the stack before spilling.
+const INLINE_VALUES: usize = 16;
+
+/// Collects `iter`, sorts it by `f32::total_cmp`, and hands the result to `reduce`.
+///
+/// `total_cmp` is a total order on the bit patterns, so equal values are bit-identical and an
+/// unstable sort is as canonical as a stable one.
+fn with_canonical_order<R>(iter: impl Iterator<Item = f32>, reduce: impl FnOnce(&[f32]) -> R) -> R {
+    let mut inline = [0.0_f32; INLINE_VALUES];
+    let mut len = 0;
+    let mut spilled: Vec<f32> = Vec::new();
+    for value in iter {
+        if spilled.is_empty() && len < INLINE_VALUES {
+            inline[len] = value;
+            len += 1;
+        } else {
+            if spilled.is_empty() {
+                spilled.extend_from_slice(&inline[..len]);
+            }
+            spilled.push(value);
         }
     }
+    let values: &mut [f32] = if spilled.is_empty() { &mut inline[..len] } else { &mut spilled };
+    values.sort_unstable_by(f32::total_cmp);
+    reduce(values)
 }
 
 #[cfg(test)]
@@ -182,6 +212,79 @@ mod tests {
         node.add_modifier(Modifier::Flat(7.0));
         node.add_modifier(Modifier::Flat(1.0));
         assert_eq!(node.evaluate(&ctx), 7.0);
+    }
+
+    /// Every permutation of `values` added to a fresh node of `reduce`, evaluated, as bits.
+    fn evaluations(reduce: fn() -> AttributeNode, values: &[f32]) -> Vec<u32> {
+        fn permutations(values: &[f32]) -> Vec<Vec<f32>> {
+            if values.len() <= 1 {
+                return vec![values.to_vec()];
+            }
+            let mut out = Vec::new();
+            for i in 0..values.len() {
+                let mut rest = values.to_vec();
+                let first = rest.remove(i);
+                for mut tail in permutations(&rest) {
+                    tail.insert(0, first);
+                    out.push(tail);
+                }
+            }
+            out
+        }
+        let ctx = AttributeContext::new();
+        permutations(values)
+            .into_iter()
+            .map(|order| {
+                let mut node = reduce();
+                for value in order {
+                    node.add_modifier(Modifier::Flat(value));
+                }
+                node.evaluate(&ctx).to_bits()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sum_is_the_same_in_any_order() {
+        // In arrival order, 0.1 + 1e8 - 1e8 is 0 while -1e8 + 1e8 + 0.1 is 0.1.
+        let bits = evaluations(AttributeNode::sum, &[0.1, 1.0e8, -1.0e8, 3.7]);
+        assert!(bits.iter().all(|b| *b == bits[0]), "{bits:?}");
+    }
+
+    #[test]
+    fn a_product_is_the_same_in_any_order() {
+        let bits = evaluations(AttributeNode::product, &[0.1, 1.0e7, -0.999_999, 0.3]);
+        assert!(bits.iter().all(|b| *b == bits[0]), "{bits:?}");
+    }
+
+    #[test]
+    fn more_values_than_fit_inline_are_still_ordered() {
+        let ctx = AttributeContext::new();
+        // 0.1 is lost to 1e8 forwards and kept backwards; the zeros push it past the inline buffer.
+        let mut values = vec![0.1_f32, 1.0e8, -1.0e8];
+        values.resize(INLINE_VALUES + 5, 0.0);
+        let mut forward = AttributeNode::sum();
+        let mut backward = AttributeNode::sum();
+        for value in &values {
+            forward.add_modifier(Modifier::Flat(*value));
+        }
+        for value in values.iter().rev() {
+            backward.add_modifier(Modifier::Flat(*value));
+        }
+        assert_eq!(
+            forward.evaluate(&ctx).to_bits(),
+            backward.evaluate(&ctx).to_bits()
+        );
+    }
+
+    #[test]
+    fn a_custom_reducer_sees_the_values_in_order() {
+        let ctx = AttributeContext::new();
+        let mut node = AttributeNode::new(ReduceFn::Custom(|vals| vals[0]));
+        node.add_modifier(Modifier::Flat(3.0));
+        node.add_modifier(Modifier::Flat(-7.0));
+        node.add_modifier(Modifier::Flat(1.0));
+        assert_eq!(node.evaluate(&ctx), -7.0);
     }
 
     // --- Tagged modifier tests ---
