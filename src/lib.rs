@@ -39,7 +39,7 @@ pub use bevy_gauge_macros::define_tags;
 pub mod prelude {
     pub use crate::expr::{Expr, CompileError};
     pub use crate::modifier::Modifier;
-    pub use crate::modifier_set::{ModifierSet, ModifierValue, AttributeInitializer, AttributeBuilder, ComplexAttribute};
+    pub use crate::modifier_set::{ModifierSet, ModifierValue, AttributeInitializer, AttributeBuilder, ComplexAttribute, TaggedAttribute};
     pub use crate::node::ReduceFn;
     pub use crate::tags::{TagMask, TagResolver};
     pub use crate::attributes::Attributes;
