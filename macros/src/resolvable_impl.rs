@@ -45,21 +45,22 @@ fn is_skip(field: &syn::Field) -> bool {
 fn gen_should_resolve(field: &ResolvableField, path_expr: &TokenStream) -> TokenStream {
     let name = &field.name;
     match field.kind {
+        // Unset attributes never trigger a resolve (see `resolvable.rs`).
         FieldKind::Float => quote! {
-            if (self.#name - attrs.value(#path_expr)).abs() > f32::EPSILON {
+            if attrs.try_value(#path_expr).is_some_and(|v| (self.#name - v).abs() > f32::EPSILON) {
                 return true;
             }
         },
         FieldKind::Integer => {
             let ty = &field.ty;
             quote! {
-                if self.#name != attrs.value(#path_expr).round() as #ty {
+                if attrs.try_value(#path_expr).is_some_and(|v| self.#name != v.round() as #ty) {
                     return true;
                 }
             }
         }
         FieldKind::Bool => quote! {
-            if self.#name != (attrs.value(#path_expr) != 0.0) {
+            if attrs.try_value(#path_expr).is_some_and(|v| self.#name != (v != 0.0)) {
                 return true;
             }
         },
@@ -77,17 +78,24 @@ fn gen_should_resolve(field: &ResolvableField, path_expr: &TokenStream) -> Token
 fn gen_resolve(field: &ResolvableField, path_expr: &TokenStream) -> TokenStream {
     let name = &field.name;
     match field.kind {
+        // Unset attributes leave the field as authored.
         FieldKind::Float => quote! {
-            self.#name = attrs.value(#path_expr);
+            if let Some(v) = attrs.try_value(#path_expr) {
+                self.#name = v;
+            }
         },
         FieldKind::Integer => {
             let ty = &field.ty;
             quote! {
-                self.#name = attrs.value(#path_expr).round() as #ty;
+                if let Some(v) = attrs.try_value(#path_expr) {
+                    self.#name = v.round() as #ty;
+                }
             }
         }
         FieldKind::Bool => quote! {
-            self.#name = attrs.value(#path_expr) != 0.0;
+            if let Some(v) = attrs.try_value(#path_expr) {
+                self.#name = v != 0.0;
+            }
         },
         FieldKind::Composite => quote! {
             _gauge::resolvable::AttributeResolvable::resolve(
@@ -105,18 +113,19 @@ fn gen_should_resolve_binding(
     path_expr: &TokenStream,
 ) -> TokenStream {
     match kind {
+        // Unset attributes never trigger a resolve (see `resolvable.rs`).
         FieldKind::Float => quote! {
-            if (*#binding - attrs.value(#path_expr)).abs() > f32::EPSILON {
+            if attrs.try_value(#path_expr).is_some_and(|v| (*#binding - v).abs() > f32::EPSILON) {
                 return true;
             }
         },
         FieldKind::Integer => quote! {
-            if *#binding != attrs.value(#path_expr).round() as #ty {
+            if attrs.try_value(#path_expr).is_some_and(|v| *#binding != v.round() as #ty) {
                 return true;
             }
         },
         FieldKind::Bool => quote! {
-            if *#binding != (attrs.value(#path_expr) != 0.0) {
+            if attrs.try_value(#path_expr).is_some_and(|v| *#binding != (v != 0.0)) {
                 return true;
             }
         },
@@ -137,14 +146,21 @@ fn gen_resolve_binding(
     path_expr: &TokenStream,
 ) -> TokenStream {
     match kind {
+        // Unset attributes leave the field as authored.
         FieldKind::Float => quote! {
-            *#binding = attrs.value(#path_expr);
+            if let Some(v) = attrs.try_value(#path_expr) {
+                *#binding = v;
+            }
         },
         FieldKind::Integer => quote! {
-            *#binding = attrs.value(#path_expr).round() as #ty;
+            if let Some(v) = attrs.try_value(#path_expr) {
+                *#binding = v.round() as #ty;
+            }
         },
         FieldKind::Bool => quote! {
-            *#binding = attrs.value(#path_expr) != 0.0;
+            if let Some(v) = attrs.try_value(#path_expr) {
+                *#binding = v != 0.0;
+            }
         },
         FieldKind::Composite => quote! {
             _gauge::resolvable::AttributeResolvable::resolve(

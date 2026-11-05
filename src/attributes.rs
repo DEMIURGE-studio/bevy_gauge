@@ -118,6 +118,14 @@ impl Attributes {
         }
     }
 
+    /// Read an attribute by name, or `None` if it doesn't exist on this entity.
+    ///
+    /// Unlike [`value`](Self::value), this distinguishes "unset" from "0.0".
+    pub fn try_value(&self, name: &str) -> Option<f32> {
+        let id = AttributeId(global_rodeo().get(name)?);
+        self.has_attribute(id).then(|| self.context.get(id))
+    }
+
     /// Check if a attribute node exists.
     pub fn has_attribute(&self, id: AttributeId) -> bool {
         self.nodes.contains_key(&id)

@@ -59,23 +59,32 @@ pub trait AttributeResolvable {
 // Terminal impls — floats
 // ---------------------------------------------------------------------------
 
+// Terminals only change when their attribute exists: a field with no
+// attribute keeps its authored value instead of being reset to 0. That lets a
+// caller drive one field of a composite (e.g. a gatherer's `count`) without
+// clobbering its siblings.
+
 impl AttributeResolvable for f32 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix)).abs() > f32::EPSILON
+        attrs.try_value(prefix).is_some_and(|v| (*self - v).abs() > f32::EPSILON)
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix);
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v;
+        }
     }
 }
 
 impl AttributeResolvable for f64 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix) as f64).abs() > f64::EPSILON
+        attrs.try_value(prefix).is_some_and(|v| (*self - v as f64).abs() > f64::EPSILON)
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix) as f64;
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v as f64;
+        }
     }
 }
 
@@ -87,11 +96,13 @@ macro_rules! impl_resolvable_int {
     ($($ty:ty),*) => {$(
         impl AttributeResolvable for $ty {
             fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-                *self != attrs.value(prefix).round() as $ty
+                attrs.try_value(prefix).is_some_and(|v| *self != v.round() as $ty)
             }
 
             fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-                *self = attrs.value(prefix).round() as $ty;
+                if let Some(v) = attrs.try_value(prefix) {
+                    *self = v.round() as $ty;
+                }
             }
         }
     )*};
@@ -105,11 +116,13 @@ impl_resolvable_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 
 impl AttributeResolvable for bool {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        *self != (attrs.value(prefix) != 0.0)
+        attrs.try_value(prefix).is_some_and(|v| *self != (v != 0.0))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix) != 0.0;
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v != 0.0;
+        }
     }
 }
 
