@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 

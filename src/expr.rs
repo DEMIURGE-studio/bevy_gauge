@@ -144,9 +144,8 @@ pub enum CompileError {
     UnknownTag(String),
     /// Empty expression.
     EmptyExpression,
-    /// A [`TagMask`](crate::tags::TagMask) could not be decomposed into named
-    /// tags for expression generation (some bits have no registered name in
-    /// the [`TagResolver`](crate::tags::TagResolver)).
+    /// A [`TagMask`] could not be decomposed into named tags for expression
+    /// generation (some bits have no registered name in the [`TagResolver`]).
     UnresolvableTagMask(crate::tags::TagMask),
     /// A tag name is ambiguous - it was registered by multiple namespaces.
     /// The `Vec<String>` contains the fully-qualified alternatives.
@@ -717,7 +716,13 @@ impl Expr {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy_gauge::prelude::*;
+    /// # fn main() -> Result<(), CompileError> {
+    /// # bevy_gauge::attribute_id::Interner::new().set_global();
+    /// # let mut tag_resolver = TagResolver::new();
+    /// # tag_resolver.register("FIRE", TagMask::bit(0));
+    /// # tag_resolver.register("SPELL", TagMask::bit(1));
     /// let expr = Expr::compile("Strength / 10.0", None)?;
     /// let expr = Expr::compile("Strength@Wielder * 2.0", None)?;
     /// let expr = Expr::compile("max(Health, 0.0)", None)?;
@@ -725,6 +730,8 @@ impl Expr {
     ///     "Damage.Added{FIRE|SPELL} * 2.0",
     ///     Some(&tag_resolver),
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn compile(
         source: &str,
@@ -787,6 +794,13 @@ impl Expr {
     /// The stack cannot overflow: `compile` rejects expressions whose peak
     /// depth exceeds [`MAX_EVAL_STACK`].
     pub fn evaluate(&self, context: &AttributeContext) -> f32 {
+        self.evaluate_with(|id| context.get(id))
+    }
+
+    /// Evaluate with a custom value lookup. `load` receives every id the
+    /// expression reads: attribute ids, tag-query synthetic ids, and source
+    /// cache keys.
+    pub(crate) fn evaluate_with(&self, load: impl Fn(AttributeId) -> f32) -> f32 {
         let mut stack = [0.0f32; MAX_EVAL_STACK];
         let mut sp: usize = 0;
 
@@ -797,32 +811,32 @@ impl Expr {
                     sp += 1;
                 }
                 Op::Load(id) => {
-                    stack[sp] = context.get(*id);
+                    stack[sp] = load(*id);
                     sp += 1;
                 }
                 Op::LoadSource { cache_key, .. } | Op::LoadSourceTagged { cache_key, .. } => {
-                    stack[sp] = context.get(*cache_key);
+                    stack[sp] = load(*cache_key);
                     sp += 1;
                 }
                 Op::Add => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] + b;
+                    stack[sp] += b;
                     sp += 1;
                 }
                 Op::Sub => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] - b;
+                    stack[sp] -= b;
                     sp += 1;
                 }
                 Op::Mul => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] * b;
+                    stack[sp] *= b;
                     sp += 1;
                 }
                 Op::Div => {

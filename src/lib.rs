@@ -54,7 +54,7 @@ pub mod prelude {
         AttributeQueries, InstantExt,
     };
     pub use crate::commands::AttributeCommandsExt;
-    pub use crate::writer::{AttributeWriter, BoundAttributesMut};
+    pub use crate::writer::BoundAttributesMut;
     pub use crate::resolvable::AttributeResolvable;
     pub use crate::requirements::AttributeRequirements;
     pub use crate::plugin::AttributesPlugin;
@@ -64,6 +64,8 @@ pub mod prelude {
     pub use crate::requires;
     pub use crate::register_derived;
     pub use crate::register_write_back;
+    pub use crate::register_init_to;
+    pub use crate::register_init_from;
     pub use bevy_gauge_macros::AttributeComponent;
     pub use bevy_gauge_macros::AttributeResolvable;
     pub use bevy_gauge_macros::define_tags;

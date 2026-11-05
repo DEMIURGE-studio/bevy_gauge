@@ -665,3 +665,70 @@ fn tagged_attribute_rejects_broken_template() {
         })
         .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Reads through AttributesMut don't trip change detection
+// ---------------------------------------------------------------------------
+
+#[derive(Resource, Default)]
+struct ChangedCount(usize);
+
+#[derive(Resource)]
+struct Target(Entity);
+
+#[test]
+fn evaluating_an_up_to_date_attribute_does_not_mark_changed() {
+    fn read(mut attributes: AttributesMut, target: Res<Target>) {
+        attributes.evaluate(target.0, "Damage");
+        attributes.evaluate_tagged(target.0, "Damage", TagMask::bit(0));
+    }
+    fn count(changed: Query<(), Changed<Attributes>>, mut out: ResMut<ChangedCount>) {
+        out.0 = changed.iter().count();
+    }
+
+    let mut app = test_app();
+    register_tags(&mut app, &[("FIRE", TagMask::bit(0))]);
+    let e = spawn_attrs(&mut app);
+    app.insert_resource(Target(e))
+        .init_resource::<ChangedCount>()
+        .add_systems(Update, (read, count).chain());
+    app.world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.add_modifier(e, "Damage", 10.0);
+        })
+        .unwrap();
+
+    // First frame: the entity is new and the tag query gets registered.
+    app.update();
+    // After that, reading alone must not mark Attributes changed.
+    app.update();
+    assert_eq!(app.world().resource::<ChangedCount>().0, 0);
+    app.update();
+    assert_eq!(app.world().resource::<ChangedCount>().0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Requirements compile against the app's tag resolver
+// ---------------------------------------------------------------------------
+
+#[test]
+fn requirements_component_can_use_tags() {
+    let mut app = test_app();
+    let fire = TagMask::bit(0);
+    register_tags(&mut app, &[("FIRE", fire)]);
+    let e = app
+        .world_mut()
+        .spawn((
+            attributes! { "Resist" [fire] => 30.0, "Resist" => 5.0 },
+            requires! { "Resist{FIRE} >= 30" },
+        ))
+        .id();
+    let met = app
+        .world_mut()
+        .run_system_once(move |attributes: Query<(&Attributes, &AttributeRequirements)>| {
+            let (attrs, reqs) = attributes.get(e).unwrap();
+            reqs.met(attrs)
+        })
+        .unwrap();
+    assert!(met, "{{FIRE}} resolves: 30 + 5 >= 30");
+}

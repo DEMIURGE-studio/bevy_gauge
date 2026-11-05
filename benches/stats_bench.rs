@@ -319,11 +319,16 @@ pub fn bench_stats_update_propagation(c: &mut Criterion) {
                 app.update();
 
                 let deps_read = dependents.clone();
+                // A new base each iteration, so every iteration propagates a
+                // real change without growing the node's modifier list.
+                let mut base = 10.0_f32;
                 b.iter(|| {
+                    base += 1.0;
+                    let value = base;
                     // Mutate the central entity - propagation happens synchronously
                     app.world_mut()
                         .run_system_once(move |mut stats: AttributesMut| {
-                            stats.add_modifier(central, "Aura.base", 1.0);
+                            stats.set_base(central, "Aura.base", value);
                         })
                         .unwrap();
                     app.update();
@@ -686,10 +691,15 @@ pub fn bench_propagation_mutation(c: &mut Criterion) {
                     .unwrap();
                 app.update();
 
+                // A new base each iteration, so every iteration propagates a
+                // real change without growing the node's modifier list.
+                let mut base = 10.0_f32;
                 b.iter(|| {
+                    base += 1.0;
+                    let value = base;
                     app.world_mut()
                         .run_system_once(move |mut stats: AttributesMut| {
-                            stats.add_modifier(central, "Aura.base", 1.0);
+                            stats.set_base(central, "Aura.base", value);
                         })
                         .unwrap();
                 });

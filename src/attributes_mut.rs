@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::{SystemParam, SystemState};
@@ -100,34 +100,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         modifier: impl Into<Modifier>,
         tag: TagMask,
     ) {
-        let modifier = modifier.into();
-        let attribute_id = self.intern(attribute);
-
-        // Add the modifier to the node first. If the entity has no
-        // `Attributes` component, bail out before touching the graph so we
-        // don't leave orphaned edges behind.
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            let node = attrs.ensure_node(attribute_id, ReduceFn::Sum);
-            node.add_tagged_modifier(modifier.clone(), tag);
-        } else {
-            return;
-        }
-
-        // Register dependencies if this is an expression modifier
-        if let Modifier::Expr(expr) = &modifier {
-            // Ensure any tag-query dependencies are materialized before
-            // registering edges (so the synthetic nodes exist in the graph).
-            for dep in expr.dependencies() {
-                if let Dependency::TagQuery { attribute, mask, .. } = dep {
-                    self.ensure_tag_query(entity, *attribute, *mask);
-                }
-            }
-            register_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
-        }
-
-        // Cache source values for any cross-entity refs, then evaluate
-        self.cache_source_values(entity, attribute_id);
-        self.evaluate_and_propagate(entity, attribute_id);
+        self.add_modifier_tagged_with_reduce(entity, attribute, modifier, tag, ReduceFn::Sum);
     }
 
     /// Add a modifier to a attribute that uses a specific reduce function.
@@ -153,8 +126,10 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         let modifier = modifier.into();
         let attribute_id = self.intern(attribute);
 
-        // Node first; bail before registering graph edges if the entity has
-        // no `Attributes` component (see `add_modifier_tagged`).
+        // Add the modifier to the node first. If the entity has no
+        // `Attributes` component, bail out before touching the graph so we
+        // don't leave orphaned edges behind. `reduce` only applies when this
+        // creates the node.
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             let node = attrs.ensure_node(attribute_id, reduce);
             node.add_tagged_modifier(modifier.clone(), tag);
@@ -162,6 +137,9 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             return;
         }
 
+        // Register dependencies if this is an expression modifier. Tag-query
+        // dependencies are materialized first so their synthetic nodes exist
+        // in the graph.
         if let Modifier::Expr(expr) = &modifier {
             for dep in expr.dependencies() {
                 if let Dependency::TagQuery { attribute, mask, .. } = dep {
@@ -171,6 +149,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             register_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
         }
 
+        // Cache source values for any cross-entity refs, then evaluate
         self.cache_source_values(entity, attribute_id);
         self.evaluate_and_propagate(entity, attribute_id);
     }
@@ -231,11 +210,10 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
 
         // Only unregister edges if a modifier was actually removed - edge
         // refcounts must stay in sync with the modifiers that contributed them.
-        if removed {
-            if let Modifier::Expr(expr) = modifier {
+        if removed
+            && let Modifier::Expr(expr) = modifier {
                 unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
             }
-        }
 
         self.evaluate_and_propagate(entity, attribute_id);
     }
@@ -260,11 +238,10 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             false
         };
 
-        if removed {
-            if let Modifier::Expr(expr) = modifier {
+        if removed
+            && let Modifier::Expr(expr) = modifier {
                 unregister_expr_deps(&mut self.graph, entity, attribute_id, expr.dependencies());
             }
-        }
 
         self.evaluate_and_propagate(entity, attribute_id);
     }
@@ -333,10 +310,19 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// This is the simplest attribute type: a Sum-reducing node with one flat
     /// modifier. Equivalent to gauge's `Flat` attribute type.
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy::prelude::*;
+    /// # use bevy_gauge::prelude::*;
+    /// # use bevy::ecs::system::RunSystemOnce;
+    /// # let mut app = App::new();
+    /// # app.add_plugins(AttributesPlugin);
+    /// # let entity = app.world_mut().spawn(Attributes::new()).id();
+    /// # app.world_mut().run_system_once(move |mut attributes: AttributesMut| {
     /// attributes.flat_attribute(entity, "Health", 100.0);
     /// // Later:
     /// attributes.add_modifier(entity, "Health", 20.0); // now 120
+    /// # assert_eq!(attributes.evaluate(entity, "Health"), 120.0);
+    /// # }).unwrap();
     /// ```
     pub fn flat_attribute(&mut self, entity: Entity, name: &str, value: f32) {
         self.add_modifier(entity, name, value);
@@ -352,13 +338,25 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy::prelude::*;
+    /// # use bevy_gauge::prelude::*;
+    /// # use bevy::ecs::system::RunSystemOnce;
+    /// # let mut app = App::new();
+    /// # app.add_plugins(AttributesPlugin);
+    /// # let entity = app.world_mut().spawn(Attributes::new()).id();
+    /// # app.world_mut().run_system_once(move |mut attributes: AttributesMut| -> Result<(), CompileError> {
     /// attributes.complex_attribute(
     ///     entity,
     ///     "Damage",
     ///     &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)],
     ///     "base * (1 + increased) * more",
     /// )?;
+    /// # attributes.add_modifier(entity, "Damage.base", 10.0);
+    /// # attributes.add_modifier(entity, "Damage.increased", 0.5);
+    /// # assert_eq!(attributes.evaluate(entity, "Damage"), 15.0);
+    /// # Ok(())
+    /// # }).unwrap().unwrap();
     /// ```
     pub fn complex_attribute(
         &mut self,
@@ -392,7 +390,18 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy::prelude::*;
+    /// # use bevy_gauge::prelude::*;
+    /// # use bevy::ecs::system::RunSystemOnce;
+    /// # let mut app = App::new();
+    /// # app.add_plugins(AttributesPlugin);
+    /// # const PHYSICAL: TagMask = TagMask::bit(0);
+    /// # const MELEE: TagMask = TagMask::bit(1);
+    /// # app.world_mut().resource_mut::<TagResolver>().register("PHYSICAL", PHYSICAL);
+    /// # app.world_mut().resource_mut::<TagResolver>().register("MELEE", MELEE);
+    /// # let entity = app.world_mut().spawn(Attributes::new()).id();
+    /// # app.world_mut().run_system_once(move |mut attributes: AttributesMut| -> Result<(), CompileError> {
     /// attributes.tagged_attribute(
     ///     entity,
     ///     "Damage",
@@ -401,6 +410,9 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// )?;
     ///
     /// attributes.add_modifier_tagged(entity, "Damage.added", 25.0, PHYSICAL | MELEE);
+    /// # assert_eq!(attributes.evaluate_tagged(entity, "Damage", PHYSICAL | MELEE), 25.0);
+    /// # Ok(())
+    /// # }).unwrap().unwrap();
     /// ```
     pub fn tagged_attribute(
         &mut self,
@@ -434,7 +446,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
             expression: expression.to_string(),
             parts: parts.iter().map(|(n, _)| n.to_string()).collect(),
             name: name.to_string(),
-            materialized: std::collections::HashSet::new(),
+            materialized: HashSet::new(),
         };
         if let Ok(mut attrs) = self.query.get_mut(entity) {
             attrs.templates.insert(parent_id, template);
@@ -503,14 +515,12 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     // -----------------------------------------------------------------------
 
     /// Force re-evaluation of a attribute and return its value.
+    ///
+    /// Only an actual change to the cached value marks `Attributes` as changed,
+    /// so read-shaped calls don't trip `Changed<Attributes>` filters.
     pub fn evaluate(&mut self, entity: Entity, attribute: &str) -> f32 {
         let attribute_id = self.intern(attribute);
-
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            attrs.evaluate_and_cache(attribute_id)
-        } else {
-            0.0
-        }
+        self.refresh_cached(entity, attribute_id)
     }
 
     /// Re-evaluate a known attribute by name using a read-only interner lookup.
@@ -527,11 +537,20 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
     /// Re-evaluate a attribute by its pre-resolved [`AttributeId`], bypassing
     /// string lookup entirely.
     pub fn evaluate_id(&mut self, entity: Entity, attribute_id: AttributeId) -> f32 {
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            attrs.evaluate_and_cache(attribute_id)
-        } else {
-            0.0
+        self.refresh_cached(entity, attribute_id)
+    }
+
+    /// Recompute a attribute and update the cache, taking the mutable borrow
+    /// (which marks `Attributes` changed) only when the value differs.
+    fn refresh_cached(&mut self, entity: Entity, attribute_id: AttributeId) -> f32 {
+        let Ok(mut attrs) = self.query.get_mut(entity) else {
+            return 0.0;
+        };
+        let value = attrs.compute(attribute_id);
+        if attrs.context.get(attribute_id).to_bits() != value.to_bits() {
+            attrs.context.set(attribute_id, value);
         }
+        value
     }
 
     /// Evaluate a attribute with a tag filter and return the result.
@@ -561,12 +580,7 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         // `ensure_tag_query` handles lazy template materialization for
         // tagged attributes created via `tagged_attribute`.
         let synthetic_id = self.ensure_tag_query(entity, attribute_id, query);
-
-        if let Ok(mut attrs) = self.query.get_mut(entity) {
-            attrs.evaluate_and_cache(synthetic_id)
-        } else {
-            0.0
-        }
+        self.refresh_cached(entity, synthetic_id)
     }
 
     // -----------------------------------------------------------------------
@@ -682,11 +696,10 @@ impl<'w, 's, F: QueryFilter> AttributesMut<'w, 's, F> {
         self.maybe_materialize_template(entity, parent_attribute_id, mask);
 
         // Check if already registered
-        if let Ok(attrs) = self.query.get(entity) {
-            if let Some(existing) = attrs.tag_query_synthetic_id(parent_attribute_id, mask) {
+        if let Ok(attrs) = self.query.get(entity)
+            && let Some(existing) = attrs.tag_query_synthetic_id(parent_attribute_id, mask) {
                 return existing;
             }
-        }
 
         // Create synthetic AttributeId
         let parent_name = self.resolve_id(parent_attribute_id);

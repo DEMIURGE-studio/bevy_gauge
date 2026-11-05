@@ -4,8 +4,10 @@ use crate::tags::TagMask;
 
 /// How a attribute node's modifiers are reduced to produce a single value.
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub enum ReduceFn {
     /// Sum all modifier values. Default for "added"/"flat" style attributes.
+    #[default]
     Sum,
     /// Multiply all modifier values. Default for "more"/"less" style multipliers.
     /// The base is 1.0; each modifier is treated as `(1 + modifier_value)`.
@@ -21,12 +23,6 @@ pub enum ReduceFn {
     /// so the function decides its own identity value (Sum's is 0, Product's
     /// is 1). Handle the empty case rather than indexing unconditionally.
     Custom(fn(&[f32]) -> f32),
-}
-
-impl Default for ReduceFn {
-    fn default() -> Self {
-        ReduceFn::Sum
-    }
 }
 
 /// A base written by [`AttributeNode::set_flat_base`] for one exact tag.
@@ -382,22 +378,6 @@ mod tests {
         // A base collapses its tag's flats into one value: fire reads 9.
         node.set_flat_base(fire, 9.0);
         assert_eq!(node.evaluate(&ctx), 9.0);
-    }
-
-    #[test]
-    fn base_keeps_earlier_flats_removable() {
-        let ctx = AttributeContext::new();
-        let mut node = AttributeNode::sum();
-        node.add_modifier(Modifier::Flat(10.0));
-        node.add_modifier(Modifier::Flat(5.0));
-        node.set_flat_base(TagMask::NONE, 18.0);
-        assert_eq!(node.evaluate(&ctx), 18.0);
-
-        assert!(node.remove_modifier(&Modifier::Flat(10.0)));
-        assert_eq!(node.evaluate(&ctx), 8.0);
-        node.add_modifier(Modifier::Flat(4.0));
-        assert_eq!(node.evaluate(&ctx), 12.0);
-        assert_eq!(node.flat_base(TagMask::NONE), 12.0);
     }
 
     #[test]

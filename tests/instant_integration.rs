@@ -151,3 +151,43 @@ fn instant_then_modifier_removal_keeps_base() {
     // 90 - 20 = 70, not 0.
     assert_eq!(after_unbuff, 70.0);
 }
+
+// ---------------------------------------------------------------------------
+// Compile caching and error handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reused_instant_tracks_later_tag_registration() {
+    // The first apply compiles against a resolver without FIRE, so the
+    // tagged entry is skipped; registering FIRE must invalidate the cache.
+    let mut app = test_app();
+    let target = app.world_mut().spawn(attributes! { "Life" => 10.0 }).id();
+    let burn = instant! { "Burn{FIRE}" += 2.0, "Life" -= 1.0 };
+
+    let apply = |app: &mut App, burn: InstantModifierSet| {
+        app.world_mut()
+            .run_system_once(move |mut attributes: AttributesMut| {
+                attributes.apply_instant(&burn, &[], target);
+            })
+            .unwrap();
+    };
+
+    apply(&mut app, burn.clone());
+    assert_eq!(cached_value(&app, target, "Burn{FIRE}"), 0.0, "bad tag writes nothing");
+    assert_eq!(cached_value(&app, target, "Life"), 9.0, "other entries still apply");
+
+    app.world_mut()
+        .resource_mut::<TagResolver>()
+        .register("FIRE", TagMask::bit(0));
+    apply(&mut app, burn.clone());
+    apply(&mut app, burn);
+    let burn_fire = app
+        .world_mut()
+        .run_system_once(move |mut attributes: AttributesMut| {
+            attributes.evaluate_tagged(target, "Burn", TagMask::bit(0))
+        })
+        .unwrap();
+    assert_eq!(burn_fire, 4.0);
+    assert_eq!(cached_value(&app, target, "Life"), 7.0);
+}
+

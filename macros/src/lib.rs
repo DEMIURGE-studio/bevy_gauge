@@ -1,5 +1,6 @@
 mod attribute_component_impl;
 mod define_tags_impl;
+mod field_kind;
 mod path;
 mod resolvable_impl;
 

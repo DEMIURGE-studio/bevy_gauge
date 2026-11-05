@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -104,7 +104,11 @@ impl Attributes {
     ///
     /// Returns the cached result if the tag query has been registered (via
     /// `AttributesMut::evaluate_tagged` or an expression with `{TAG}` syntax).
-    /// Returns 0.0 if the query hasn't been registered yet.
+    /// Otherwise the query is computed from the attribute's modifiers on the
+    /// spot, without registering it. (A combo of a
+    /// [`tagged_attribute`](crate::attributes_mut::AttributesMut::tagged_attribute)
+    /// template that has never been materialized still reads 0.0: building it
+    /// needs `AttributesMut`.)
     ///
     /// If `mask` is `TagMask::NONE`, delegates to [`get`](Self::get).
     pub fn get_tagged(&self, id: AttributeId, mask: TagMask) -> f32 {
@@ -113,6 +117,10 @@ impl Attributes {
         }
         if let Some(&synthetic_id) = self.tag_query_ids.get(&(id, mask)) {
             self.context.get(synthetic_id)
+        } else if self.templates.contains_key(&id) {
+            0.0
+        } else if let Some(node) = self.nodes.get(&id) {
+            node.evaluate_tagged(&self.context, mask)
         } else {
             0.0
         }
@@ -159,7 +167,17 @@ impl Attributes {
     /// If `id` is a synthetic tag-query node, evaluates the parent's modifiers
     /// filtered by the tag mask instead of looking up a node directly.
     pub(crate) fn evaluate_and_cache(&mut self, id: AttributeId) -> f32 {
-        let value = if let Some(&(parent_id, mask)) = self.tag_queries.get(&id) {
+        let value = self.compute(id);
+        self.context.set(id, value);
+        value
+    }
+
+    /// Evaluate a attribute node from its modifiers without caching the result.
+    ///
+    /// If `id` is a synthetic tag-query node, evaluates the parent's modifiers
+    /// filtered by the tag mask instead of looking up a node directly.
+    pub(crate) fn compute(&self, id: AttributeId) -> f32 {
+        if let Some(&(parent_id, mask)) = self.tag_queries.get(&id) {
             // Synthetic tag-query node: evaluate the parent's modifiers with tag filter
             if let Some(node) = self.nodes.get(&parent_id) {
                 node.evaluate_tagged(&self.context, mask)
@@ -171,9 +189,7 @@ impl Attributes {
             node.evaluate(&self.context)
         } else {
             0.0
-        };
-        self.context.set(id, value);
-        value
+        }
     }
 
     /// Register a tag query, returning the synthetic AttributeId.
