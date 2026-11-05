@@ -93,6 +93,63 @@ impl AttributeBuilder for ComplexAttribute {
 }
 
 // ---------------------------------------------------------------------------
+// TaggedAttribute builder
+// ---------------------------------------------------------------------------
+
+/// A builder that creates a **tagged** attribute: like [`ComplexAttribute`],
+/// but evaluated per tag query via
+/// [`AttributesMut::tagged_attribute`](crate::attributes_mut::AttributesMut::tagged_attribute).
+///
+/// This lets a [`ModifierSet`] (and therefore an [`AttributeInitializer`])
+/// declare tag-filtered attributes such as PoE-style damage, so entities can be
+/// fully set up from data without a follow-up system.
+///
+/// # Example
+///
+/// ```ignore
+/// let builder = TaggedAttribute::new("Damage",
+///     &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)],
+///     "added * (1 + increased) * more",
+/// );
+/// ```
+#[derive(Clone, Debug)]
+pub struct TaggedAttribute {
+    pub name: String,
+    pub parts: Vec<(String, ReduceFn)>,
+    pub expression: String,
+}
+
+impl TaggedAttribute {
+    pub fn new(name: &str, parts: &[(&str, ReduceFn)], expression: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            parts: parts.iter().map(|(n, r)| (n.to_string(), r.clone())).collect(),
+            expression: expression.to_string(),
+        }
+    }
+}
+
+impl AttributeBuilder for TaggedAttribute {
+    fn apply(&self, entity: Entity, attributes: &mut AttributesMut) {
+        let parts: Vec<(&str, ReduceFn)> = self.parts
+            .iter()
+            .map(|(n, r)| (n.as_str(), r.clone()))
+            .collect();
+        if let Err(err) = attributes.tagged_attribute(entity, &self.name, &parts, &self.expression) {
+            warn!("TaggedAttribute '{}': {err}", self.name);
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn AttributeBuilder> {
+        Box::new(self.clone())
+    }
+
+    fn fmt_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ModifierValue
 // ---------------------------------------------------------------------------
 
