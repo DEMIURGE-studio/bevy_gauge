@@ -429,7 +429,7 @@ impl AttributeInitializer {
 
 /// Observer that applies `AttributeInitializer` when the component is added.
 pub(crate) fn apply_initial_attributes(
-    trigger: On<Add, AttributeInitializer>,
+    trigger: On<Add<AttributeInitializer>>,
     initial_query: Query<&AttributeInitializer>,
     mut attributes: AttributesMut,
     mut commands: Commands,

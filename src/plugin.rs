@@ -59,7 +59,7 @@ impl Plugin for AttributesPlugin {
 /// re-evaluates attributes on other entities that depended on it (their
 /// cross-entity reads become 0.0, consistent with `unregister_source`).
 fn on_attributes_removed(
-    trigger: On<Remove, Attributes>,
+    trigger: On<Remove<Attributes>>,
     mut attributes: AttributesMut,
 ) {
     attributes.handle_entity_removal(trigger.entity);

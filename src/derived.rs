@@ -208,10 +208,10 @@ pub fn update_write_back<T: WriteBack>(
 /// Observer that seeds attribute values from [`InitTo`] fields when the
 /// component is first added.
 ///
-/// Fires synchronously via `On<Add, T>` so that attribute values are
+/// Fires synchronously via `On<Add<T>>` so that attribute values are
 /// available immediately — no frame delay.
 pub fn observe_init_to<T: InitTo>(
-    trigger: On<Add, T>,
+    trigger: On<Add<T>>,
     query: Query<&T>,
     mut attributes: AttributesMut,
 ) {
