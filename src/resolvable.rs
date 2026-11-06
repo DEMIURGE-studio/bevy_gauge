@@ -8,7 +8,7 @@
 //! # Path convention
 //!
 //! Given:
-//! ```ignore
+//! ```
 //! struct Outer {
 //!     inner: Inner,
 //! }
@@ -25,7 +25,9 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! # use bevy_gauge::prelude::*;
+//! # struct Inner { radius: f32, count: u32 }
 //! impl AttributeResolvable for Inner {
 //!     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
 //!         self.radius.should_resolve(&format!("{prefix}.radius"), attrs)
@@ -39,8 +41,12 @@
 //! }
 //! ```
 
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 use std::time::Duration;
 
+use bevy::platform::collections::HashMap;
+
+use crate::attribute_id::{global_rodeo, AttributeId};
 use crate::attributes::Attributes;
 
 /// A type whose fields can be updated from attribute values using path-based
@@ -61,7 +67,7 @@ pub trait AttributeResolvable {
 
 impl AttributeResolvable for f32 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix)).abs() > f32::EPSILON
+        !crate::expr::approx_eq(*self, attrs.value(prefix))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
@@ -71,7 +77,8 @@ impl AttributeResolvable for f32 {
 
 impl AttributeResolvable for f64 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        (*self - attrs.value(prefix) as f64).abs() > f64::EPSILON
+        // Attribute values are f32; compare at f32 precision.
+        !crate::expr::approx_eq(*self as f32, attrs.value(prefix))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
@@ -117,15 +124,17 @@ impl AttributeResolvable for bool {
 // Terminal impls — Duration
 // ---------------------------------------------------------------------------
 
+/// Resolves from seconds. Zero is a valid duration; only negative or
+/// non-finite values are ignored (a `Duration` can't represent them).
 impl AttributeResolvable for Duration {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
         let secs = attrs.value(prefix);
-        secs > 0.0 && (self.as_secs_f32() - secs).abs() > f32::EPSILON
+        secs >= 0.0 && secs.is_finite() && !crate::expr::approx_eq(self.as_secs_f32(), secs)
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
         let secs = attrs.value(prefix);
-        if secs > 0.0 {
+        if secs >= 0.0 && secs.is_finite() {
             *self = Duration::from_secs_f32(secs);
         }
     }
@@ -148,4 +157,66 @@ impl<T: AttributeResolvable> AttributeResolvable for Option<T> {
             inner.resolve(prefix, attrs);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Support for `#[derive(AttributeResolvable)]`
+// ---------------------------------------------------------------------------
+
+/// One field's full attribute path under a given prefix, and its interned id.
+#[doc(hidden)]
+pub struct FieldPath {
+    pub path: Box<str>,
+    pub id: AttributeId,
+}
+
+type PathsByPrefix = HashMap<Box<str>, Arc<[FieldPath]>>;
+
+/// The derive's per-type cache of field paths, keyed by prefix.
+///
+/// A derived type is resolved under a handful of fixed prefixes (the attribute
+/// names its components declare), so each prefix's paths are formatted and
+/// interned once, the first time it is seen. After that a resolve reads leaf
+/// fields by id and hands composite fields a ready-made path: no `format!` and
+/// no string lookup per field per frame.
+#[doc(hidden)]
+pub struct FieldPathCache {
+    suffixes: &'static [&'static str],
+    by_prefix: OnceLock<RwLock<PathsByPrefix>>,
+}
+
+impl FieldPathCache {
+    pub const fn new(suffixes: &'static [&'static str]) -> Self {
+        Self { suffixes, by_prefix: OnceLock::new() }
+    }
+
+    /// The paths of every field under `prefix`, in declaration order.
+    pub fn get(&self, prefix: &str) -> Arc<[FieldPath]> {
+        let map = self.by_prefix.get_or_init(Default::default);
+        if let Some(paths) = map.read().unwrap_or_else(PoisonError::into_inner).get(prefix) {
+            return paths.clone();
+        }
+        let paths: Arc<[FieldPath]> = self
+            .suffixes
+            .iter()
+            .map(|suffix| {
+                let path = format!("{prefix}{suffix}");
+                let id = AttributeId(global_rodeo().get_or_intern(&path));
+                FieldPath { path: path.into_boxed_str(), id }
+            })
+            .collect();
+        map.write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(prefix.into())
+            .or_insert(paths)
+            .clone()
+    }
+}
+
+/// Whether a float field differs from its attribute value, with the same
+/// relative tolerance the hand-written terminal impls use.
+#[doc(hidden)]
+#[inline]
+pub fn float_differs(field: f32, value: f32) -> bool {
+    !crate::expr::approx_eq(field, value)
 }

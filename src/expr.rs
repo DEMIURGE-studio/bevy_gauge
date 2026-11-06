@@ -144,13 +144,16 @@ pub enum CompileError {
     UnknownTag(String),
     /// Empty expression.
     EmptyExpression,
-    /// A [`TagMask`](crate::tags::TagMask) could not be decomposed into named
-    /// tags for expression generation (some bits have no registered name in
-    /// the [`TagResolver`](crate::tags::TagResolver)).
+    /// A [`TagMask`] could not be decomposed into named tags for expression
+    /// generation (some bits have no registered name in the [`TagResolver`]).
     UnresolvableTagMask(crate::tags::TagMask),
     /// A tag name is ambiguous - it was registered by multiple namespaces.
     /// The `Vec<String>` contains the fully-qualified alternatives.
     AmbiguousTag(String, Vec<String>),
+    /// The expression needs more evaluation stack than the VM provides.
+    /// Deeply right-nested expressions hit this; the same math written
+    /// left-folded stays shallow.
+    ExpressionTooDeep { required: usize, max: usize },
 }
 
 impl fmt::Display for CompileError {
@@ -175,6 +178,13 @@ impl fmt::Display for CompileError {
                 "ambiguous tag '{}' - registered by multiple namespaces, use one of: {}",
                 name,
                 alternatives.join(", ")
+            ),
+            CompileError::ExpressionTooDeep { required, max } => write!(
+                f,
+                "expression needs {} value-stack slots (max {}) - restructure \
+                 right-nested expressions into left-folded form, e.g. \
+                 `a * (1 + b) * (1 + c)` instead of `a * (1 + b * (1 + c))`",
+                required, max
             ),
         }
     }
@@ -526,7 +536,7 @@ impl<'a> Parser<'a> {
         } else if let Some(mask) = tag_mask {
             // Local tagged reference: Damage.Added{FIRE|SPELL}
             let attribute_id = self.interner.get_or_intern(&full_name);
-            let synthetic_name = format!("\0tag:{}:{}", full_name, mask.0);
+            let synthetic_name = crate::graph::tag_query_synthetic_name(&full_name, mask);
             let synthetic_id = self.interner.get_or_intern(&synthetic_name);
             self.dependencies.push(Dependency::TagQuery {
                 attribute: attribute_id,
@@ -661,6 +671,40 @@ impl<'a> Parser<'a> {
 // Expr implementation
 // ---------------------------------------------------------------------------
 
+/// Relative float comparison used for change detection and the expression
+/// `==`/`!=` ops. Scales the tolerance with magnitude so large values still
+/// register small changes correctly (an absolute `f32::EPSILON` comparison
+/// is meaningless above ~2.0).
+pub(crate) fn approx_eq(a: f32, b: f32) -> bool {
+    (a - b).abs() <= f32::EPSILON * a.abs().max(b.abs()).max(1.0)
+}
+
+/// Size of the fixed evaluation stack. Expressions whose peak stack depth
+/// exceeds this fail to compile with [`CompileError::ExpressionTooDeep`].
+pub const MAX_EVAL_STACK: usize = 16;
+
+/// Simulate the ops' stack effects and return the peak stack depth.
+fn max_stack_depth(ops: &[Op]) -> usize {
+    let mut depth: usize = 0;
+    let mut peak: usize = 0;
+    for op in ops {
+        match op {
+            // Pushes
+            Op::Const(_) | Op::Load(_) | Op::LoadSource { .. } | Op::LoadSourceTagged { .. } => {
+                depth += 1;
+                peak = peak.max(depth);
+            }
+            // Pop one, push one - no net change
+            Op::Neg | Op::Abs => {}
+            // Pop three, push one
+            Op::Clamp => depth = depth.saturating_sub(2),
+            // All remaining ops are binary: pop two, push one
+            _ => depth = depth.saturating_sub(1),
+        }
+    }
+    peak
+}
+
 impl Expr {
     /// Compile an expression string into bytecode.
     ///
@@ -672,7 +716,13 @@ impl Expr {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy_gauge::prelude::*;
+    /// # fn main() -> Result<(), CompileError> {
+    /// # bevy_gauge::attribute_id::Interner::new().set_global();
+    /// # let mut tag_resolver = TagResolver::new();
+    /// # tag_resolver.register("FIRE", TagMask::bit(0));
+    /// # tag_resolver.register("SPELL", TagMask::bit(1));
     /// let expr = Expr::compile("Strength / 10.0", None)?;
     /// let expr = Expr::compile("Strength@Wielder * 2.0", None)?;
     /// let expr = Expr::compile("max(Health, 0.0)", None)?;
@@ -680,6 +730,8 @@ impl Expr {
     ///     "Damage.Added{FIRE|SPELL} * 2.0",
     ///     Some(&tag_resolver),
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn compile(
         source: &str,
@@ -714,6 +766,18 @@ impl Expr {
             )));
         }
 
+        // Reject expressions that would overflow the fixed-size eval stack.
+        // Catching this here surfaces the error at the authoring site instead
+        // of panicking at eval time, possibly during propagation triggered by
+        // an unrelated attribute change.
+        let required = max_stack_depth(&parser.ops);
+        if required > MAX_EVAL_STACK {
+            return Err(CompileError::ExpressionTooDeep {
+                required,
+                max: MAX_EVAL_STACK,
+            });
+        }
+
         Ok(Self {
             ops: parser.ops,
             dependencies: parser.dependencies,
@@ -726,8 +790,18 @@ impl Expr {
     /// Cross-entity `LoadSource` ops read from the local context via their
     /// pre-computed `cache_key`. The caller must ensure source values are
     /// cached under those composite keys (e.g., `"Strength@Wielder"`).
+    ///
+    /// The stack cannot overflow: `compile` rejects expressions whose peak
+    /// depth exceeds [`MAX_EVAL_STACK`].
     pub fn evaluate(&self, context: &AttributeContext) -> f32 {
-        let mut stack = [0.0f32; 16];
+        self.evaluate_with(|id| context.get(id))
+    }
+
+    /// Evaluate with a custom value lookup. `load` receives every id the
+    /// expression reads: attribute ids, tag-query synthetic ids, and source
+    /// cache keys.
+    pub(crate) fn evaluate_with(&self, load: impl Fn(AttributeId) -> f32) -> f32 {
+        let mut stack = [0.0f32; MAX_EVAL_STACK];
         let mut sp: usize = 0;
 
         for op in &self.ops {
@@ -737,32 +811,32 @@ impl Expr {
                     sp += 1;
                 }
                 Op::Load(id) => {
-                    stack[sp] = context.get(*id);
+                    stack[sp] = load(*id);
                     sp += 1;
                 }
                 Op::LoadSource { cache_key, .. } | Op::LoadSourceTagged { cache_key, .. } => {
-                    stack[sp] = context.get(*cache_key);
+                    stack[sp] = load(*cache_key);
                     sp += 1;
                 }
                 Op::Add => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] + b;
+                    stack[sp] += b;
                     sp += 1;
                 }
                 Op::Sub => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] - b;
+                    stack[sp] -= b;
                     sp += 1;
                 }
                 Op::Mul => {
                     sp -= 1;
                     let b = stack[sp];
                     sp -= 1;
-                    stack[sp] = stack[sp] * b;
+                    stack[sp] *= b;
                     sp += 1;
                 }
                 Op::Div => {
@@ -817,12 +891,12 @@ impl Expr {
                 }
                 Op::Eq => {
                     sp -= 1; let b = stack[sp];
-                    sp -= 1; stack[sp] = if (stack[sp] - b).abs() < f32::EPSILON { 1.0 } else { 0.0 };
+                    sp -= 1; stack[sp] = if approx_eq(stack[sp], b) { 1.0 } else { 0.0 };
                     sp += 1;
                 }
                 Op::Ne => {
                     sp -= 1; let b = stack[sp];
-                    sp -= 1; stack[sp] = if (stack[sp] - b).abs() >= f32::EPSILON { 1.0 } else { 0.0 };
+                    sp -= 1; stack[sp] = if !approx_eq(stack[sp], b) { 1.0 } else { 0.0 };
                     sp += 1;
                 }
                 // Logical

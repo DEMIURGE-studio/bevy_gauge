@@ -10,7 +10,22 @@
 //!
 //! Register derived components via the [`AttributesAppExt`] extension trait:
 //!
-//! ```ignore
+//! ```
+//! # use bevy::prelude::*;
+//! # use bevy_gauge::prelude::*;
+//! # use bevy::ecs::query::QueryFilter;
+//! # #[derive(Component)] struct PlayerHealth;
+//! # impl AttributeDerived for PlayerHealth {
+//! #     fn should_update(&self, _: &Attributes) -> bool { false }
+//! #     fn update_from_attributes(&mut self, _: &Attributes) {}
+//! # }
+//! # #[derive(Component)] struct PlayerInput;
+//! # impl WriteBack for PlayerInput {
+//! #     fn should_write_back(&self, _: &Attributes) -> bool { false }
+//! #     fn write_back<F: QueryFilter>(&self, _: Entity, _: &mut AttributesMut<'_, '_, F>) {}
+//! # }
+//! # let mut app = App::new();
+//! # app.add_plugins(AttributesPlugin);
 //! app.register_attribute_derived::<PlayerHealth>()
 //!     .register_write_back::<PlayerInput>();
 //! ```
@@ -54,7 +69,9 @@ pub struct InitFromSet;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
 /// #[derive(Component, Default)]
 /// struct PlayerHealth {
 ///     current: f32,
@@ -65,8 +82,7 @@ pub struct InitFromSet;
 ///     fn should_update(&self, attrs: &Attributes) -> bool {
 ///         let max = attrs.value("Health.Max");
 ///         let current = attrs.value("Health.Current");
-///         (self.max - max).abs() > f32::EPSILON
-///             || (self.current - current).abs() > f32::EPSILON
+///         self.max != max || self.current != current
 ///     }
 ///
 ///     fn update_from_attributes(&mut self, attrs: &Attributes) {
@@ -92,7 +108,9 @@ pub trait AttributeDerived: Component<Mutability = Mutable> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
 /// #[derive(Component, Default, AttributeComponent)]
 /// struct Health {
 ///     #[read("health")]
@@ -116,7 +134,9 @@ pub trait InitFrom: Component<Mutability = Mutable> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
 /// #[derive(Component, Default, AttributeComponent)]
 /// struct Controller {
 ///     #[read("RideHeight")]
@@ -124,9 +144,11 @@ pub trait InitFrom: Component<Mutability = Mutable> {
 ///     ride_height: f32,
 /// }
 ///
+/// # fn setup(mut commands: Commands) {
 /// // Spawning with a value seeds the attribute automatically:
-/// commands.spawn((Attributes::new(), Controller { ride_height: 1.0, ..default() }));
+/// commands.spawn((Attributes::new(), Controller { ride_height: 1.0 }));
 /// // No need for attributes! { "RideHeight" => 1.0 }
+/// # }
 /// ```
 pub trait InitTo: Component {
     /// Write initial field values into the attribute system. Called once when
@@ -141,7 +163,10 @@ pub trait InitTo: Component {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::query::QueryFilter;
 /// #[derive(Component)]
 /// struct CombatInput {
 ///     attack_power_override: f32,
@@ -149,12 +174,11 @@ pub trait InitTo: Component {
 ///
 /// impl WriteBack for CombatInput {
 ///     fn should_write_back(&self, attrs: &Attributes) -> bool {
-///         let current = attrs.value("AttackPower.Override");
-///         (self.attack_power_override - current).abs() > f32::EPSILON
+///         self.attack_power_override != attrs.value("AttackPower.Override")
 ///     }
 ///
 ///     fn write_back<F: QueryFilter>(&self, entity: Entity, attributes: &mut AttributesMut<'_, '_, F>) {
-///         attributes.set(entity, "AttackPower.Override", self.attack_power_override);
+///         attributes.set_base(entity, "AttackPower.Override", self.attack_power_override);
 ///     }
 /// }
 /// ```
@@ -208,25 +232,35 @@ pub fn update_write_back<T: WriteBack>(
 /// Observer that seeds attribute values from [`InitTo`] fields when the
 /// component is first added.
 ///
-/// Fires synchronously via `On<Add, T>` so that attribute values are
+/// Fires synchronously via `On<Add<T>>` so that attribute values are
 /// available immediately — no frame delay.
+///
+/// If the same spawn bundle carries an [`AttributeInitializer`](crate::modifier_set::AttributeInitializer),
+/// it is applied first, so for an attribute both of them set, the
+/// component's seeded value wins.
 pub fn observe_init_to<T: InitTo>(
-    trigger: On<Add, T>,
+    trigger: On<Add<T>>,
     query: Query<&T>,
+    mut initializers: Query<&mut crate::modifier_set::AttributeInitializer>,
     mut attributes: AttributesMut,
 ) {
     let entity = trigger.entity;
+    crate::modifier_set::apply_pending_initializer(entity, &mut initializers, &mut attributes);
     if let Ok(component) = query.get(entity) {
         component.init_to_attributes(entity, &mut attributes);
     }
 }
 
+/// `T` was just added, or `Attributes` arrived after `T`.
+type NewlyInitializable<T> = Or<(Added<T>, Added<Attributes>)>;
+
 /// Generic system that initializes [`InitFrom`] fields when the component is first added.
 ///
-/// Uses `Added<T>` to fire exactly once per entity, after all commands from
-/// the previous frame have flushed and attributes are resolved.
+/// Runs once per entity, after all commands from the previous frame have
+/// flushed and attributes are resolved: when `T` is added, or, if `T` arrived
+/// on an entity without [`Attributes`], when `Attributes` is added later.
 pub fn apply_init_from<T: InitFrom>(
-    mut query: Query<(&mut T, &Attributes), Added<T>>,
+    mut query: Query<(&mut T, &Attributes), NewlyInitializable<T>>,
 ) {
     for (mut component, attrs) in &mut query {
         component.init_from_attributes(attrs);
@@ -315,14 +349,38 @@ impl AttributesAppExt for App {
 /// `inventory::submit!`) and collected in
 /// [`AttributesPlugin::build`](crate::plugin::AttributesPlugin).
 ///
-/// The [`attribute_component!`] macro emits these automatically. For manual
-/// implementations, use the [`register_derived!`], [`register_write_back!`],
-/// or [`register_init_to!`] convenience macros:
+/// `#[derive(AttributeComponent)]` emits these automatically. For manual
+/// implementations, use the [`register_derived!`](crate::register_derived!),
+/// [`register_write_back!`](crate::register_write_back!),
+/// [`register_init_to!`](crate::register_init_to!) or
+/// [`register_init_from!`](crate::register_init_from!) convenience macros:
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::query::QueryFilter;
+/// # #[derive(Component)] struct MyCustomDerived;
+/// # impl AttributeDerived for MyCustomDerived {
+/// #     fn should_update(&self, _: &Attributes) -> bool { false }
+/// #     fn update_from_attributes(&mut self, _: &Attributes) {}
+/// # }
+/// # #[derive(Component)] struct MyCustomWriteBack;
+/// # impl WriteBack for MyCustomWriteBack {
+/// #     fn should_write_back(&self, _: &Attributes) -> bool { false }
+/// #     fn write_back<F: QueryFilter>(&self, _: Entity, _: &mut AttributesMut<'_, '_, F>) {}
+/// # }
+/// # #[derive(Component)] struct MyController;
+/// # impl InitTo for MyController {
+/// #     fn init_to_attributes<F: QueryFilter>(&self, _: Entity, _: &mut AttributesMut<'_, '_, F>) {}
+/// # }
+/// # impl InitFrom for MyController {
+/// #     fn init_from_attributes(&mut self, _: &Attributes) {}
+/// # }
 /// register_derived!(MyCustomDerived);
 /// register_write_back!(MyCustomWriteBack);
 /// register_init_to!(MyController);
+/// register_init_from!(MyController);
+/// # fn main() {}
 /// ```
 pub struct AttributeRegistration {
     /// Registers systems or observers into the default schedules
@@ -346,9 +404,17 @@ inventory::collect!(AttributeRegistration);
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::schedule::ScheduleLabel;
+/// # #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+/// # struct GearboxSchedule;
+/// # let mut app = App::new();
+/// # app.add_plugins(AttributesPlugin);
+/// # let app = &mut app;
 /// // In a gearbox plugin, add gauge sync between effects and edge checks:
-/// bevy_gauge::add_gauge_sync_to_schedule(app, GearboxSchedule);
+/// bevy_gauge::derived::add_gauge_sync_to_schedule(app, GearboxSchedule);
 /// ```
 pub fn add_gauge_sync_to_schedule(app: &mut App, schedule: impl ScheduleLabel + Clone) {
     let schedule = schedule.intern();
@@ -363,8 +429,16 @@ pub fn add_gauge_sync_to_schedule(app: &mut App, schedule: impl ScheduleLabel + 
 /// Register a [`AttributeDerived`] component via the `inventory` auto-registration
 /// system. Place this at module scope.
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # #[derive(Component)] struct PlayerHealth;
+/// # impl AttributeDerived for PlayerHealth {
+/// #     fn should_update(&self, _: &Attributes) -> bool { false }
+/// #     fn update_from_attributes(&mut self, _: &Attributes) {}
+/// # }
 /// register_derived!(PlayerHealth);
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! register_derived {
@@ -376,8 +450,17 @@ macro_rules! register_derived {
 /// Register a [`WriteBack`] component via the `inventory` auto-registration
 /// system. Place this at module scope.
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::query::QueryFilter;
+/// # #[derive(Component)] struct PlayerInput;
+/// # impl WriteBack for PlayerInput {
+/// #     fn should_write_back(&self, _: &Attributes) -> bool { false }
+/// #     fn write_back<F: QueryFilter>(&self, _: Entity, _: &mut AttributesMut<'_, '_, F>) {}
+/// # }
 /// register_write_back!(PlayerInput);
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! register_write_back {
@@ -389,13 +472,41 @@ macro_rules! register_write_back {
 /// Register an [`InitTo`] component via the `inventory` auto-registration
 /// system. Place this at module scope.
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::query::QueryFilter;
+/// # #[derive(Component)] struct MyController;
+/// # impl InitTo for MyController {
+/// #     fn init_to_attributes<F: QueryFilter>(&self, _: Entity, _: &mut AttributesMut<'_, '_, F>) {}
+/// # }
 /// register_init_to!(MyController);
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! register_init_to {
     ($ty:ty) => {
         $crate::_register_attribute!(init_to, $ty);
+    };
+}
+
+/// Register an [`InitFrom`] component via the `inventory` auto-registration
+/// system. Place this at module scope.
+///
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # #[derive(Component)] struct MyController;
+/// # impl InitFrom for MyController {
+/// #     fn init_from_attributes(&mut self, _: &Attributes) {}
+/// # }
+/// register_init_from!(MyController);
+/// # fn main() {}
+/// ```
+#[macro_export]
+macro_rules! register_init_from {
+    ($ty:ty) => {
+        $crate::_register_attribute!(init_from, $ty);
     };
 }
 
@@ -460,14 +571,10 @@ macro_rules! _register_attribute {
                     use $crate::derived::AttributesAppExt;
                     app.register_init_from::<$ty>();
                 },
-                register_in_schedule_fn: Some(|app, schedule| {
-                    use ::bevy::prelude::*;
-                    app.add_systems(
-                        schedule,
-                        $crate::derived::apply_init_from::<$ty>
-                            .in_set($crate::derived::InitFromSet),
-                    );
-                }),
+                // Not added to custom schedules: a fresh `Added<T>` system
+                // there would re-initialize every existing entity, clobbering
+                // values set since spawn. See `add_gauge_sync_to_schedule`.
+                register_in_schedule_fn: None,
             }
         }
     };

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -26,16 +26,6 @@ impl TagMask {
     /// Combine two tag masks (bitwise OR).
     pub const fn union(self, other: TagMask) -> Self {
         Self(self.0 | other.0)
-    }
-
-    /// Check if this mask satisfies a query mask.
-    ///
-    /// A modifier with `self` tags satisfies query `q` when `(self & q) == q`.
-    /// This means the modifier has at least all the bits the query asks for.
-    ///
-    /// Special case: query of NONE (0) is satisfied by everything.
-    pub const fn satisfies(self, query: TagMask) -> bool {
-        query.0 == 0 || (self.0 & query.0) == query.0
     }
 
     /// Check whether a modifier with this tag should participate in a given query.
@@ -101,8 +91,11 @@ impl std::ops::BitAnd for TagMask {
 /// This replaces the need for a global static configuration. Tag names are
 /// registered at app startup (manually or via a future `define_tags!` macro)
 /// and used at expression compile time to resolve `{FIRE|SPELL}` syntax.
-#[derive(Resource, Default, Debug)]
+#[derive(Resource, Debug)]
 pub struct TagResolver {
+    /// Which resolver this is and how many times it has changed, so things
+    /// compiled against it can tell when they are stale. See [`version`](Self::version).
+    version: ResolverVersion,
     tags: HashMap<String, TagMask>,
     /// Reverse mapping: bit position → registered tag name.
     /// Only populated for single-bit masks registered via [`register`](Self::register).
@@ -115,10 +108,41 @@ pub struct TagResolver {
     short_name_owner: HashMap<String, String>,
 }
 
+/// Identifies one state of one [`TagResolver`]: a process-unique id for the
+/// resolver and a count of the registrations made on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ResolverVersion {
+    id: u64,
+    generation: u64,
+}
+
+impl Default for TagResolver {
+    fn default() -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self {
+            version: ResolverVersion {
+                id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                generation: 0,
+            },
+            tags: HashMap::default(),
+            reverse_tags: HashMap::default(),
+            ambiguous: HashSet::default(),
+            short_name_owner: HashMap::default(),
+        }
+    }
+}
+
 impl TagResolver {
     /// Create a new empty resolver.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The resolver's current version. It changes on every registration, and
+    /// two resolvers never share one, so a value compiled against version `v`
+    /// is still valid exactly while `version()` returns `v`.
+    pub fn version(&self) -> ResolverVersion {
+        self.version
     }
 
     /// Register a tag name → mask mapping.
@@ -127,6 +151,7 @@ impl TagResolver {
     /// Single-bit masks also populate a reverse lookup (bit position → name)
     /// used by [`decompose`](Self::decompose).
     pub fn register(&mut self, name: &str, mask: TagMask) {
+        self.version.generation += 1;
         let upper = name.to_uppercase();
         self.tags.insert(upper.clone(), mask);
         // Record reverse mapping for single-bit masks
@@ -142,23 +167,42 @@ impl TagResolver {
     /// a different namespace, it is marked as ambiguous - callers must
     /// use the fully-qualified `Namespace::TAG` form in expressions.
     pub fn register_namespaced(&mut self, namespace: &str, name: &str, mask: TagMask) {
+        self.version.generation += 1;
         let upper_name = name.to_uppercase();
         let upper_ns = namespace.to_uppercase();
         let namespaced = format!("{}::{}", upper_ns, upper_name);
 
-        self.tags.insert(namespaced, mask);
+        self.tags.insert(namespaced.clone(), mask);
 
-        if let Some(existing_ns) = self.short_name_owner.get(&upper_name) {
-            if *existing_ns != upper_ns {
-                self.ambiguous.insert(upper_name.clone());
+        // Whether the short name can be used on its own after this call.
+        let short_ok = match self.short_name_owner.get(&upper_name) {
+            Some(existing_ns) if *existing_ns != upper_ns => {
+                // The short name just became ambiguous. Any reverse entry
+                // (bit -> name) that still hands out the bare short name
+                // must switch to the owner's namespaced form, otherwise
+                // `tag_suffix` would emit a name `resolve` refuses.
+                let owner_qualified = format!("{}::{}", existing_ns, upper_name);
+                if self.ambiguous.insert(upper_name.clone()) {
+                    for name in self.reverse_tags.values_mut() {
+                        if *name == upper_name {
+                            *name = owner_qualified.clone();
+                        }
+                    }
+                }
+                false
             }
-        } else {
-            self.short_name_owner.insert(upper_name.clone(), upper_ns);
-            self.tags.insert(upper_name.clone(), mask);
-        }
+            Some(_) => true,
+            None => {
+                self.short_name_owner.insert(upper_name.clone(), upper_ns);
+                self.tags.insert(upper_name.clone(), mask);
+                true
+            }
+        };
 
         if mask.0.count_ones() == 1 {
-            self.reverse_tags.insert(mask.0.trailing_zeros(), upper_name);
+            let bit = mask.0.trailing_zeros();
+            let reverse_name = if short_ok { upper_name } else { namespaced };
+            self.reverse_tags.insert(bit, reverse_name);
         }
     }
 
@@ -208,9 +252,15 @@ impl TagResolver {
     /// Returns `None` if any set bit in the mask doesn't have a registered
     /// single-bit name. Returns an empty `Vec` for [`TagMask::NONE`].
     ///
+    /// Every returned name is accepted by [`resolve`](Self::resolve): a tag
+    /// whose short name is ambiguous across namespaces comes back in its
+    /// `NAMESPACE::TAG` form.
+    ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use bevy_gauge::prelude::*;
+    /// # let mut resolver = TagResolver::new();
     /// resolver.register("FIRE", TagMask::bit(0));
     /// resolver.register("MELEE", TagMask::bit(2));
     ///
@@ -262,55 +312,6 @@ inventory::collect!(TagRegistration);
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn empty_query_matches_everything() {
-        let fire = TagMask::bit(0);
-        let sword = TagMask::bit(4);
-        let both = fire | sword;
-
-        assert!(fire.satisfies(TagMask::NONE));
-        assert!(sword.satisfies(TagMask::NONE));
-        assert!(both.satisfies(TagMask::NONE));
-        assert!(TagMask::NONE.satisfies(TagMask::NONE));
-    }
-
-    #[test]
-    fn exact_match() {
-        let fire = TagMask::bit(0);
-        assert!(fire.satisfies(fire));
-    }
-
-    #[test]
-    fn superset_satisfies_subset() {
-        let fire = TagMask::bit(0);
-        let sword = TagMask::bit(4);
-        let fire_sword = fire | sword;
-
-        // fire|sword modifier satisfies a query for just fire
-        assert!(fire_sword.satisfies(fire));
-        // fire|sword modifier satisfies a query for just sword
-        assert!(fire_sword.satisfies(sword));
-        // fire|sword modifier satisfies a query for fire|sword
-        assert!(fire_sword.satisfies(fire_sword));
-    }
-
-    #[test]
-    fn subset_does_not_satisfy_superset() {
-        let fire = TagMask::bit(0);
-        let sword = TagMask::bit(4);
-        let fire_sword = fire | sword;
-
-        // A fire-only modifier does NOT satisfy a query for fire|sword
-        assert!(!fire.satisfies(fire_sword));
-    }
-
-    #[test]
-    fn disjoint_does_not_satisfy() {
-        let fire = TagMask::bit(0);
-        let cold = TagMask::bit(1);
-        assert!(!fire.satisfies(cold));
-    }
 
     // --- matches_query tests ---
 
@@ -509,6 +510,25 @@ mod tests {
         assert_eq!(resolver.resolve("SWORD"), Some(TagMask::bit(4)));
         assert!(resolver.ambiguous_alternatives("FIRE").is_none());
         assert!(resolver.ambiguous_alternatives("SWORD").is_none());
+    }
+
+    #[test]
+    fn ambiguous_short_name_decomposes_to_namespaced_form() {
+        let mut resolver = TagResolver::new();
+        resolver.register_namespaced("Element", "FIRE", TagMask::bit(0));
+        // Before the collision the short name round-trips.
+        assert_eq!(resolver.tag_suffix(TagMask::bit(0)), Some("{FIRE}".into()));
+
+        resolver.register_namespaced("Weapon", "FIRE", TagMask::bit(4));
+
+        // Both bits now decompose to names that `resolve` accepts.
+        for mask in [TagMask::bit(0), TagMask::bit(4)] {
+            let names = resolver.decompose(mask).unwrap();
+            assert_eq!(names.len(), 1);
+            assert_eq!(resolver.resolve(names[0]), Some(mask), "{}", names[0]);
+        }
+        assert_eq!(resolver.tag_suffix(TagMask::bit(0)), Some("{ELEMENT::FIRE}".into()));
+        assert_eq!(resolver.tag_suffix(TagMask::bit(4)), Some("{WEAPON::FIRE}".into()));
     }
 
     #[test]

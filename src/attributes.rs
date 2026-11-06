@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -104,7 +104,11 @@ impl Attributes {
     ///
     /// Returns the cached result if the tag query has been registered (via
     /// `AttributesMut::evaluate_tagged` or an expression with `{TAG}` syntax).
-    /// Returns 0.0 if the query hasn't been registered yet.
+    /// Otherwise the query is computed from the attribute's modifiers on the
+    /// spot, without registering it. (A combo of a
+    /// [`tagged_attribute`](crate::attributes_mut::AttributesMut::tagged_attribute)
+    /// template that has never been materialized still reads 0.0: building it
+    /// needs `AttributesMut`.)
     ///
     /// If `mask` is `TagMask::NONE`, delegates to [`get`](Self::get).
     pub fn get_tagged(&self, id: AttributeId, mask: TagMask) -> f32 {
@@ -113,6 +117,10 @@ impl Attributes {
         }
         if let Some(&synthetic_id) = self.tag_query_ids.get(&(id, mask)) {
             self.context.get(synthetic_id)
+        } else if self.templates.contains_key(&id) {
+            0.0
+        } else if let Some(node) = self.nodes.get(&id) {
+            node.evaluate_tagged(&self.context, mask)
         } else {
             0.0
         }
@@ -123,8 +131,26 @@ impl Attributes {
         self.nodes.contains_key(&id)
     }
 
-    /// Iterate over all (AttributeId, current_value) pairs.
+    /// Iterate over the entity's attributes as `(AttributeId, current_value)`.
+    ///
+    /// Yields one entry per attribute node - the names you defined. Internal
+    /// entries (synthetic tag-query nodes and cached `Attr@Alias` source
+    /// values) are skipped; use [`iter_raw`](Self::iter_raw) to see those.
     pub fn iter(&self) -> impl Iterator<Item = (AttributeId, f32)> + '_ {
+        let rodeo = global_rodeo();
+        self.nodes.keys().filter_map(move |&id| {
+            let name = rodeo.resolve(&id.0);
+            if crate::graph::is_tag_query_synthetic_name(name) {
+                None
+            } else {
+                Some((id, self.context.get(id)))
+            }
+        })
+    }
+
+    /// Iterate over every cached value, including synthetic tag-query nodes
+    /// and cross-entity source caches. Intended for debugging.
+    pub fn iter_raw(&self) -> impl Iterator<Item = (AttributeId, f32)> + '_ {
         self.context.iter()
     }
 
@@ -141,7 +167,17 @@ impl Attributes {
     /// If `id` is a synthetic tag-query node, evaluates the parent's modifiers
     /// filtered by the tag mask instead of looking up a node directly.
     pub(crate) fn evaluate_and_cache(&mut self, id: AttributeId) -> f32 {
-        let value = if let Some(&(parent_id, mask)) = self.tag_queries.get(&id) {
+        let value = self.compute(id);
+        self.context.set(id, value);
+        value
+    }
+
+    /// Evaluate a attribute node from its modifiers without caching the result.
+    ///
+    /// If `id` is a synthetic tag-query node, evaluates the parent's modifiers
+    /// filtered by the tag mask instead of looking up a node directly.
+    pub(crate) fn compute(&self, id: AttributeId) -> f32 {
+        if let Some(&(parent_id, mask)) = self.tag_queries.get(&id) {
             // Synthetic tag-query node: evaluate the parent's modifiers with tag filter
             if let Some(node) = self.nodes.get(&parent_id) {
                 node.evaluate_tagged(&self.context, mask)
@@ -153,9 +189,7 @@ impl Attributes {
             node.evaluate(&self.context)
         } else {
             0.0
-        };
-        self.context.set(id, value);
-        value
+        }
     }
 
     /// Register a tag query, returning the synthetic AttributeId.
@@ -167,6 +201,21 @@ impl Attributes {
         synthetic_id: AttributeId,
     ) {
         self.tag_queries.insert(synthetic_id, (parent_id, mask));
+        self.tag_query_ids.insert((parent_id, mask), synthetic_id);
+    }
+
+    /// Register the reverse lookup for a **template-materialized** tag query.
+    ///
+    /// Unlike [`register_tag_query`](Self::register_tag_query), the synthetic
+    /// id is NOT added to `tag_queries`, so `evaluate_and_cache` treats it as
+    /// a normal node (evaluating its own expression modifier) rather than a
+    /// filtered view of the parent's modifiers.
+    pub(crate) fn register_template_query(
+        &mut self,
+        parent_id: AttributeId,
+        mask: TagMask,
+        synthetic_id: AttributeId,
+    ) {
         self.tag_query_ids.insert((parent_id, mask), synthetic_id);
     }
 
@@ -206,6 +255,28 @@ mod tests {
         let val = attrs.evaluate_and_cache(id);
         assert_eq!(val, 25.0);
         assert_eq!(attrs.get(id), 25.0);
+    }
+
+    #[test]
+    fn iter_skips_internal_entries() {
+        Interner::new().set_global();
+        let interner = global_rodeo();
+        let mut attrs = Attributes::new();
+        let fire = TagMask::bit(0);
+        let damage_id = AttributeId(interner.get_or_intern("Damage"));
+        let synthetic_name = crate::graph::tag_query_synthetic_name("Damage", fire);
+        let synthetic_id = AttributeId(interner.get_or_intern(&synthetic_name));
+        let source_key = AttributeId(interner.get_or_intern("Strength@Wielder"));
+
+        attrs.ensure_node(damage_id, ReduceFn::Sum).add_tagged_modifier(Modifier::Flat(5.0), fire);
+        attrs.register_tag_query(damage_id, fire, synthetic_id);
+        attrs.evaluate_and_cache(damage_id);
+        attrs.evaluate_and_cache(synthetic_id);
+        attrs.context.set(source_key, 42.0);
+
+        let visible: Vec<_> = attrs.iter().collect();
+        assert_eq!(visible, vec![(damage_id, 5.0)]);
+        assert_eq!(attrs.iter_raw().count(), 3);
     }
 
     #[test]

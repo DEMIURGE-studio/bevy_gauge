@@ -1,176 +1,154 @@
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{DeriveInput, Fields, Ident, Type};
 
-/// Classify a type as a known terminal or composite (delegates to AttributeResolvable).
-#[derive(Clone, Copy, PartialEq)]
-enum FieldKind {
-    /// f32, f64 — known terminal
-    Float,
-    /// Integer types — known terminal
-    Integer,
-    /// bool — known terminal
-    Bool,
-    /// Unknown type — delegate to AttributeResolvable
-    Composite,
-}
-
-fn classify_type(ty: &Type) -> FieldKind {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            let name = ident.to_string();
-            return match name.as_str() {
-                "f32" | "f64" => FieldKind::Float,
-                "bool" => FieldKind::Bool,
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-                | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => FieldKind::Integer,
-                _ => FieldKind::Composite,
-            };
-        }
-    }
-    FieldKind::Composite
-}
-
-struct ResolvableField {
-    name: Ident,
-    ty: Type,
-    kind: FieldKind,
-}
+use crate::field_kind::{classify_type, FieldKind};
 
 fn is_skip(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("skip"))
 }
 
-/// Generate `should_resolve` check for a single field at a given path expression.
-fn gen_should_resolve(field: &ResolvableField, path_expr: &TokenStream) -> TokenStream {
-    let name = &field.name;
-    match field.kind {
-        FieldKind::Float => quote! {
-            if (self.#name - attrs.value(#path_expr)).abs() > f32::EPSILON {
-                return true;
-            }
-        },
-        FieldKind::Integer => {
-            let ty = &field.ty;
-            quote! {
-                if self.#name != attrs.value(#path_expr).round() as #ty {
-                    return true;
-                }
-            }
+/// How generated code reaches one field's attribute.
+struct FieldAccess {
+    /// An `f32` expression: the attribute's current value.
+    value: TokenStream,
+    /// A `&str` expression: the attribute path, for delegating to a composite.
+    path: TokenStream,
+}
+
+impl FieldAccess {
+    /// The field is the whole value (a single resolvable field): use the prefix itself.
+    fn transparent() -> Self {
+        Self {
+            value: quote! { attrs.value(prefix) },
+            path: quote! { prefix },
         }
-        FieldKind::Bool => quote! {
-            if self.#name != (attrs.value(#path_expr) != 0.0) {
-                return true;
-            }
-        },
-        FieldKind::Composite => quote! {
-            if _gauge::resolvable::AttributeResolvable::should_resolve(
-                &self.#name, #path_expr, attrs,
-            ) {
-                return true;
-            }
-        },
+    }
+
+    /// The field's entry in the `__paths` slice fetched from the type's cache.
+    fn cached(index: usize) -> Self {
+        Self {
+            value: quote! { attrs.get(__paths[#index].id) },
+            path: quote! { &*__paths[#index].path },
+        }
     }
 }
 
-/// Generate `resolve` assignment for a single field at a given path expression.
-fn gen_resolve(field: &ResolvableField, path_expr: &TokenStream) -> TokenStream {
-    let name = &field.name;
-    match field.kind {
-        FieldKind::Float => quote! {
-            self.#name = attrs.value(#path_expr);
-        },
-        FieldKind::Integer => {
-            let ty = &field.ty;
-            quote! {
-                self.#name = attrs.value(#path_expr).round() as #ty;
-            }
-        }
-        FieldKind::Bool => quote! {
-            self.#name = attrs.value(#path_expr) != 0.0;
-        },
-        FieldKind::Composite => quote! {
-            _gauge::resolvable::AttributeResolvable::resolve(
-                &mut self.#name, #path_expr, attrs,
-            );
-        },
-    }
-}
-
-/// Generate should_resolve/resolve for a variant's binding name (enum match arm).
-fn gen_should_resolve_binding(
-    binding: &Ident,
-    kind: FieldKind,
-    ty: &Type,
-    path_expr: &TokenStream,
-) -> TokenStream {
+/// `should_resolve` check for one field. `target` is a place expression for
+/// the field (`self.name` or `*binding`).
+fn gen_should_resolve(target: &TokenStream, kind: FieldKind, ty: &Type, access: &FieldAccess) -> TokenStream {
+    let FieldAccess { value, path } = access;
     match kind {
         FieldKind::Float => quote! {
-            if (*#binding - attrs.value(#path_expr)).abs() > f32::EPSILON {
+            if _gauge::resolvable::float_differs(#target as f32, #value) {
                 return true;
             }
         },
         FieldKind::Integer => quote! {
-            if *#binding != attrs.value(#path_expr).round() as #ty {
+            if #target != (#value).round() as #ty {
                 return true;
             }
         },
         FieldKind::Bool => quote! {
-            if *#binding != (attrs.value(#path_expr) != 0.0) {
+            if #target != (#value != 0.0) {
                 return true;
             }
         },
         FieldKind::Composite => quote! {
-            if _gauge::resolvable::AttributeResolvable::should_resolve(
-                #binding, #path_expr, attrs,
-            ) {
+            if _gauge::resolvable::AttributeResolvable::should_resolve(&#target, #path, attrs) {
                 return true;
             }
         },
     }
 }
 
-fn gen_resolve_binding(
-    binding: &Ident,
-    kind: FieldKind,
-    ty: &Type,
-    path_expr: &TokenStream,
-) -> TokenStream {
+/// `resolve` assignment for one field. `target` as in [`gen_should_resolve`].
+fn gen_resolve(target: &TokenStream, kind: FieldKind, ty: &Type, access: &FieldAccess) -> TokenStream {
+    let FieldAccess { value, path } = access;
     match kind {
-        FieldKind::Float => quote! {
-            *#binding = attrs.value(#path_expr);
-        },
-        FieldKind::Integer => quote! {
-            *#binding = attrs.value(#path_expr).round() as #ty;
-        },
-        FieldKind::Bool => quote! {
-            *#binding = attrs.value(#path_expr) != 0.0;
-        },
+        FieldKind::Float => quote! { #target = (#value) as #ty; },
+        FieldKind::Integer => quote! { #target = (#value).round() as #ty; },
+        FieldKind::Bool => quote! { #target = #value != 0.0; },
         FieldKind::Composite => quote! {
-            _gauge::resolvable::AttributeResolvable::resolve(
-                #binding, #path_expr, attrs,
-            );
+            _gauge::resolvable::AttributeResolvable::resolve(&mut #target, #path, attrs);
         },
     }
 }
 
-/// Build the path expression for a field. If `transparent` is true (single
-/// resolvable field), use the prefix directly. Otherwise append `.field_name`.
-fn field_path_expr(field_name: &str, transparent: bool) -> TokenStream {
-    if transparent {
-        quote! { prefix }
+/// A named field that takes part in resolution.
+struct ResolvableField<'a> {
+    name: &'a Ident,
+    ty: &'a Type,
+    kind: FieldKind,
+}
+
+fn resolvable_fields(named: &syn::FieldsNamed) -> Vec<ResolvableField<'_>> {
+    named
+        .named
+        .iter()
+        .filter(|f| !is_skip(f))
+        .map(|f| ResolvableField {
+            name: f.ident.as_ref().unwrap(),
+            ty: &f.ty,
+            kind: classify_type(&f.ty),
+        })
+        .collect()
+}
+
+/// Checks and assignments for a set of named fields, plus what they need set
+/// up first.
+struct NamedFields {
+    /// A `static` path cache, when the fields need one.
+    cache: TokenStream,
+    /// Statement binding `__paths` from the cache, when the fields need one.
+    fetch: TokenStream,
+    should: Vec<TokenStream>,
+    resolve: Vec<TokenStream>,
+}
+
+/// One resolvable field reads the prefix directly; several each get
+/// `prefix.field`, cached under `cache_name`.
+fn gen_named_fields(
+    fields: &[ResolvableField],
+    cache_name: &Ident,
+    target: impl Fn(&Ident) -> TokenStream,
+) -> NamedFields {
+    let transparent = fields.len() == 1;
+    let (cache, fetch) = if transparent || fields.is_empty() {
+        (quote! {}, quote! {})
     } else {
-        let suffix = format!(".{field_name}");
-        quote! { &format!("{prefix}{}", #suffix) }
-    }
+        let suffixes = fields.iter().map(|f| format!(".{}", f.name));
+        (
+            quote! {
+                static #cache_name: _gauge::resolvable::FieldPathCache =
+                    _gauge::resolvable::FieldPathCache::new(&[#(#suffixes),*]);
+            },
+            quote! { let __paths = #cache_name.get(prefix); },
+        )
+    };
+    let access = |i: usize| {
+        if transparent { FieldAccess::transparent() } else { FieldAccess::cached(i) }
+    };
+    let should = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| gen_should_resolve(&target(f.name), f.kind, f.ty, &access(i)))
+        .collect();
+    let resolve = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| gen_resolve(&target(f.name), f.kind, f.ty, &access(i)))
+        .collect();
+    NamedFields { cache, fetch, should, resolve }
 }
 
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let inner = match &input.data {
-        syn::Data::Struct(data) => derive_struct(name, &data.fields)?,
-        syn::Data::Enum(data) => derive_enum(name, data)?,
+    let (statics, should_body, resolve_body) = match &input.data {
+        syn::Data::Struct(data) => derive_struct(&data.fields)?,
+        syn::Data::Enum(data) => derive_enum(data)?,
         syn::Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 name,
@@ -183,272 +161,138 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use #gauge as _gauge;
-            #inner
+
+            #statics
+
+            impl #impl_generics _gauge::resolvable::AttributeResolvable for #name #ty_generics #where_clause {
+                #[allow(unused_variables, clippy::unnecessary_cast)]
+                fn should_resolve(
+                    &self,
+                    prefix: &str,
+                    attrs: &_gauge::attributes::Attributes,
+                ) -> bool {
+                    #should_body
+                    false
+                }
+
+                #[allow(unused_variables, clippy::unnecessary_cast)]
+                fn resolve(
+                    &mut self,
+                    prefix: &str,
+                    attrs: &_gauge::attributes::Attributes,
+                ) {
+                    #resolve_body
+                }
+            }
         };
     })
 }
 
-fn derive_struct(name: &Ident, fields: &Fields) -> syn::Result<TokenStream> {
+/// Returns (statics, should_resolve body, resolve body).
+fn derive_struct(fields: &Fields) -> syn::Result<(TokenStream, TokenStream, TokenStream)> {
     match fields {
         Fields::Named(named) => {
-            let resolvable: Vec<ResolvableField> = named
-                .named
-                .iter()
-                .filter(|f| !is_skip(f))
-                .map(|f| ResolvableField {
-                    name: f.ident.clone().unwrap(),
-                    ty: f.ty.clone(),
-                    kind: classify_type(&f.ty),
-                })
-                .collect();
-
-            let transparent = resolvable.len() == 1;
-
-            let should_checks: Vec<TokenStream> = resolvable
-                .iter()
-                .map(|f| {
-                    let path = field_path_expr(&f.name.to_string(), transparent);
-                    gen_should_resolve(f, &path)
-                })
-                .collect();
-
-            let resolve_stmts: Vec<TokenStream> = resolvable
-                .iter()
-                .map(|f| {
-                    let path = field_path_expr(&f.name.to_string(), transparent);
-                    gen_resolve(f, &path)
-                })
-                .collect();
-
-            Ok(quote! {
-                impl _gauge::resolvable::AttributeResolvable for #name {
-                    fn should_resolve(
-                        &self,
-                        prefix: &str,
-                        attrs: &_gauge::attributes::Attributes,
-                    ) -> bool {
-                        #(#should_checks)*
-                        false
-                    }
-
-                    fn resolve(
-                        &mut self,
-                        prefix: &str,
-                        attrs: &_gauge::attributes::Attributes,
-                    ) {
-                        #(#resolve_stmts)*
-                    }
-                }
-            })
+            let fields = resolvable_fields(named);
+            let NamedFields { cache, fetch, should, resolve } =
+                gen_named_fields(&fields, &format_ident!("__GAUGE_PATHS"), |n| quote! { self.#n });
+            Ok((
+                cache,
+                quote! { #fetch #(#should)* },
+                quote! { #fetch #(#resolve)* },
+            ))
         }
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             // Newtype — transparent
-            let inner_ty = &unnamed.unnamed[0].ty;
-            let kind = classify_type(inner_ty);
-
-            let should_body = gen_should_resolve_binding(
-                &syn::parse_quote!(_inner),
-                kind,
-                inner_ty,
-                &quote! { prefix },
-            );
-            let resolve_body = gen_resolve_binding(
-                &syn::parse_quote!(_inner),
-                kind,
-                inner_ty,
-                &quote! { prefix },
-            );
-
-            Ok(quote! {
-                impl _gauge::resolvable::AttributeResolvable for #name {
-                    fn should_resolve(
-                        &self,
-                        prefix: &str,
-                        attrs: &_gauge::attributes::Attributes,
-                    ) -> bool {
-                        let _inner = &self.0;
-                        #should_body
-                        false
-                    }
-
-                    fn resolve(
-                        &mut self,
-                        prefix: &str,
-                        attrs: &_gauge::attributes::Attributes,
-                    ) {
-                        let _inner = &mut self.0;
-                        #resolve_body
-                    }
-                }
-            })
-        }
-        Fields::Unnamed(unnamed) => {
-            Err(syn::Error::new_spanned(
-                unnamed,
-                "AttributeResolvable requires named fields for multi-field structs",
+            let ty = &unnamed.unnamed[0].ty;
+            let kind = classify_type(ty);
+            let target = quote! { self.0 };
+            let access = FieldAccess::transparent();
+            Ok((
+                quote! {},
+                gen_should_resolve(&target, kind, ty, &access),
+                gen_resolve(&target, kind, ty, &access),
             ))
         }
-        Fields::Unit => {
-            // Unit struct — always no-op
-            Ok(quote! {
-                impl _gauge::resolvable::AttributeResolvable for #name {
-                    fn should_resolve(
-                        &self,
-                        _prefix: &str,
-                        _attrs: &_gauge::attributes::Attributes,
-                    ) -> bool {
-                        false
-                    }
-
-                    fn resolve(
-                        &mut self,
-                        _prefix: &str,
-                        _attrs: &_gauge::attributes::Attributes,
-                    ) {}
-                }
-            })
-        }
+        Fields::Unnamed(unnamed) => Err(syn::Error::new_spanned(
+            unnamed,
+            "AttributeResolvable requires named fields for multi-field structs",
+        )),
+        // Unit struct — always no-op
+        Fields::Unit => Ok((quote! {}, quote! {}, quote! {})),
     }
 }
 
-fn derive_enum(name: &Ident, data: &syn::DataEnum) -> syn::Result<TokenStream> {
+/// Returns (statics, should_resolve body, resolve body). Fields are matched by
+/// name; the variant name is not part of the path.
+fn derive_enum(data: &syn::DataEnum) -> syn::Result<(TokenStream, TokenStream, TokenStream)> {
+    let mut statics = Vec::new();
     let mut should_arms = Vec::new();
     let mut resolve_arms = Vec::new();
 
-    for variant in &data.variants {
+    for (index, variant) in data.variants.iter().enumerate() {
         let vname = &variant.ident;
 
         match &variant.fields {
             Fields::Unit => {
-                // Unit variant — no-op
                 should_arms.push(quote! { Self::#vname => {} });
                 resolve_arms.push(quote! { Self::#vname => {} });
             }
             Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
                 // Single-field tuple variant — transparent
-                let ty = &unnamed.unnamed[0].ty;
-                if is_skip(&unnamed.unnamed[0]) {
+                let field = &unnamed.unnamed[0];
+                if is_skip(field) {
                     should_arms.push(quote! { Self::#vname(_) => {} });
                     resolve_arms.push(quote! { Self::#vname(_) => {} });
                     continue;
                 }
-                let kind = classify_type(ty);
-                let binding: Ident = syn::parse_quote!(_v);
-
-                let should_check =
-                    gen_should_resolve_binding(&binding, kind, ty, &quote! { prefix });
-                let resolve_stmt =
-                    gen_resolve_binding(&binding, kind, ty, &quote! { prefix });
-
-                should_arms.push(quote! {
-                    Self::#vname(#binding) => { #should_check }
-                });
-                resolve_arms.push(quote! {
-                    Self::#vname(#binding) => { #resolve_stmt }
-                });
+                let kind = classify_type(&field.ty);
+                let target = quote! { *_v };
+                let access = FieldAccess::transparent();
+                let should = gen_should_resolve(&target, kind, &field.ty, &access);
+                let resolve = gen_resolve(&target, kind, &field.ty, &access);
+                should_arms.push(quote! { Self::#vname(_v) => { #should } });
+                resolve_arms.push(quote! { Self::#vname(_v) => { #resolve } });
             }
             Fields::Unnamed(unnamed) => {
                 return Err(syn::Error::new_spanned(
                     unnamed,
                     format!(
-                        "AttributeResolvable: variant `{}` has multiple unnamed fields. \
-                         Use named fields instead.",
-                        vname
+                        "AttributeResolvable: variant `{vname}` has multiple unnamed fields. \
+                         Use named fields instead."
                     ),
                 ));
             }
             Fields::Named(named) => {
-                let resolvable: Vec<(&Ident, &Type, FieldKind)> = named
+                let fields = resolvable_fields(named);
+                let NamedFields { cache, fetch, should, resolve } = gen_named_fields(
+                    &fields,
+                    &format_ident!("__GAUGE_PATHS_{}", index),
+                    |n| quote! { *#n },
+                );
+                statics.push(cache);
+
+                let pattern: Vec<TokenStream> = named
                     .named
                     .iter()
-                    .filter(|f| !is_skip(f))
                     .map(|f| {
-                        let ident = f.ident.as_ref().unwrap();
-                        (ident, &f.ty, classify_type(&f.ty))
-                    })
-                    .collect();
-
-                let skipped: Vec<&Ident> = named
-                    .named
-                    .iter()
-                    .filter(|f| is_skip(f))
-                    .map(|f| f.ident.as_ref().unwrap())
-                    .collect();
-
-                let transparent = resolvable.len() == 1;
-
-                // Build pattern bindings
-                let all_field_names: Vec<&Ident> = named
-                    .named
-                    .iter()
-                    .map(|f| f.ident.as_ref().unwrap())
-                    .collect();
-
-                let pattern_bindings: Vec<TokenStream> = all_field_names
-                    .iter()
-                    .map(|n| {
-                        if skipped.contains(n) {
-                            quote! { #n: _ }
-                        } else {
-                            quote! { #n }
-                        }
-                    })
-                    .collect();
-
-                let should_checks: Vec<TokenStream> = resolvable
-                    .iter()
-                    .map(|(field_name, ty, kind)| {
-                        let path =
-                            field_path_expr(&field_name.to_string(), transparent);
-                        gen_should_resolve_binding(field_name, *kind, ty, &path)
-                    })
-                    .collect();
-
-                let resolve_stmts: Vec<TokenStream> = resolvable
-                    .iter()
-                    .map(|(field_name, ty, kind)| {
-                        let path =
-                            field_path_expr(&field_name.to_string(), transparent);
-                        gen_resolve_binding(field_name, *kind, ty, &path)
+                        let n = f.ident.as_ref().unwrap();
+                        if is_skip(f) { quote! { #n: _ } } else { quote! { #n } }
                     })
                     .collect();
 
                 should_arms.push(quote! {
-                    Self::#vname { #(#pattern_bindings),* } => {
-                        #(#should_checks)*
-                    }
+                    Self::#vname { #(#pattern),* } => { #fetch #(#should)* }
                 });
                 resolve_arms.push(quote! {
-                    Self::#vname { #(#pattern_bindings),* } => {
-                        #(#resolve_stmts)*
-                    }
+                    Self::#vname { #(#pattern),* } => { #fetch #(#resolve)* }
                 });
             }
         }
     }
 
-    Ok(quote! {
-        impl _gauge::resolvable::AttributeResolvable for #name {
-            fn should_resolve(
-                &self,
-                prefix: &str,
-                attrs: &_gauge::attributes::Attributes,
-            ) -> bool {
-                match self {
-                    #(#should_arms)*
-                }
-                false
-            }
-
-            fn resolve(
-                &mut self,
-                prefix: &str,
-                attrs: &_gauge::attributes::Attributes,
-            ) {
-                match self {
-                    #(#resolve_arms)*
-                }
-            }
-        }
-    })
+    Ok((
+        quote! { #(#statics)* },
+        quote! { match self { #(#should_arms)* } },
+        quote! { match self { #(#resolve_arms)* } },
+    ))
 }

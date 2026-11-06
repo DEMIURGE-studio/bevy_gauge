@@ -68,10 +68,15 @@ enchant.apply(sword, &mut attributes);
 enchant.remove(sword, &mut attributes);
 ```
 
+## Optional features
+
+- `avian3d`: syncs avian's `Mass` component with a `"Mass"` attribute. The attribute is seeded from the component at spawn and drives it afterwards. `Mass` is the only physics component covered so far, and only for 3D.
+
 ## Version Table
 
 | Bevy  | Gauge |
 | ----- | ----- |
+| 0.20  | 0.6   |
 | 0.19  | 0.5   |
 | 0.18  | 0.4   |
 

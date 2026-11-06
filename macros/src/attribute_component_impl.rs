@@ -2,6 +2,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Fields, Ident, LitStr, Type};
 
+use crate::field_kind::{classify_type, FieldKind};
+
 #[derive(Clone, Copy)]
 enum Direction {
     ReadFrom,
@@ -11,36 +13,6 @@ enum Direction {
 enum AttributePath {
     Explicit(String),
     Auto,
-}
-
-/// How to convert between f32 (gauge's native type) and the field type.
-#[derive(Clone, Copy)]
-enum FieldKind {
-    /// `f32` — no conversion needed
-    Float,
-    /// Integer types (`u32`, `i32`, `usize`, `u64`, `i64`, etc.) — `.round() as T`
-    Integer,
-    /// `bool` — `!= 0.0` to read, `as u32 as f32` to write
-    Bool,
-    /// Non-terminal type — delegate to `AttributeResolvable`
-    Composite,
-}
-
-/// Classify a syn::Type into a FieldKind.
-fn classify_type(ty: &Type) -> FieldKind {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            let name = ident.to_string();
-            return match name.as_str() {
-                "f32" | "f64" => FieldKind::Float,
-                "bool" => FieldKind::Bool,
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-                | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => FieldKind::Integer,
-                _ => FieldKind::Composite,
-            };
-        }
-    }
-    FieldKind::Composite
 }
 
 struct BoundField {
@@ -119,6 +91,15 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 if matches!(direction, Direction::ReadFrom) {
                     read_path = Some(resolved_path.clone());
                 }
+                if matches!(direction, Direction::WriteTo)
+                    && classify_type(&field.ty) == FieldKind::Composite
+                {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "#[write] needs an f32, f64, integer or bool field; \
+                         composite fields are read-only (use #[read])",
+                    ));
+                }
 
                 bound_fields.push(BoundField {
                     name: field_name.clone(),
@@ -140,6 +121,12 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }
 
         if has_init_to {
+            if classify_type(&field.ty) == FieldKind::Composite {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "#[init_to] needs an f32, f64, integer or bool field",
+                ));
+            }
             let path = read_path.ok_or_else(|| {
                 syn::Error::new_spanned(
                     field_name,
@@ -178,7 +165,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 FieldKind::Float => quote! {
                     {
                         let _val = #val_expr;
-                        if (self.#name - _val).abs() > f32::EPSILON {
+                        if _gauge::resolvable::float_differs(self.#name as f32, _val) {
                             return true;
                         }
                     }
@@ -217,8 +204,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             let path = &f.path;
             let val_expr = read_value_expr(path, &f.tag_expr);
             match f.kind {
-                FieldKind::Float => quote! {
-                    self.#name = #val_expr;
+                FieldKind::Float => {
+                    let ty = &f.ty;
+                    quote! {
+                        self.#name = (#val_expr) as #ty;
+                    }
                 },
                 FieldKind::Integer => {
                     let ty = &f.ty;
@@ -268,7 +258,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 FieldKind::Float => quote! {
                     {
                         let _val = #val_expr;
-                        if (self.#name - _val).abs() > f32::EPSILON {
+                        if _gauge::resolvable::float_differs(self.#name as f32, _val) {
                             return true;
                         }
                     }
@@ -307,7 +297,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             let path = &f.path;
             match f.kind {
                 FieldKind::Float => quote! {
-                    attributes.set_base(entity, #path, self.#name);
+                    attributes.set_base(entity, #path, self.#name as f32);
                 },
                 FieldKind::Integer => quote! {
                     attributes.set_base(entity, #path, self.#name as f32);
@@ -315,12 +305,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 FieldKind::Bool => quote! {
                     attributes.set_base(entity, #path, if self.#name { 1.0 } else { 0.0 });
                 },
-                FieldKind::Composite => quote! {
-                    // Composite WriteBack is not supported — composites are read-only
-                    // via AttributeResolvable. Writing back nested structures to
-                    // attributes is not a supported pattern.
-                    compile_error!("Cannot use #[write] on a composite (non-terminal) field. Use #[read] instead.");
-                },
+                // Rejected with a spanned error while parsing the fields.
+                FieldKind::Composite => quote! {},
             }
         }).collect();
 
@@ -353,7 +339,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             let path = &f.path;
             match f.kind {
                 FieldKind::Float => quote! {
-                    attributes.set_base(entity, #path, self.#name);
+                    attributes.set_base(entity, #path, self.#name as f32);
                 },
                 FieldKind::Integer => quote! {
                     attributes.set_base(entity, #path, self.#name as f32);
@@ -361,9 +347,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 FieldKind::Bool => quote! {
                     attributes.set_base(entity, #path, if self.#name { 1.0 } else { 0.0 });
                 },
-                FieldKind::Composite => quote! {
-                    compile_error!("Cannot use #[init_to] on a composite (non-terminal) field.");
-                },
+                // Rejected with a spanned error while parsing the fields.
+                FieldKind::Composite => quote! {},
             }
         }).collect();
 
@@ -387,8 +372,11 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             let name = &f.name;
             let path = &f.path;
             match f.kind {
-                FieldKind::Float => quote! {
-                    self.#name = attrs.value(#path);
+                FieldKind::Float => {
+                    let ty = &f.ty;
+                    quote! {
+                        self.#name = attrs.value(#path) as #ty;
+                    }
                 },
                 FieldKind::Integer => {
                     let ty = &f.ty;
@@ -422,94 +410,22 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let inventory_submits = {
-        let mut registrations = Vec::new();
-
-        if has_reads {
-            registrations.push(quote! {
-                _gauge::inventory::submit! {
-                    _gauge::derived::AttributeRegistration {
-
-                        register_fn: |app| {
-                            use _gauge::derived::AttributesAppExt;
-                            app.register_attribute_derived::<#struct_name>();
-                        },
-                        register_in_schedule_fn: Some(|app, schedule| {
-                            use ::bevy::prelude::*;
-                            app.add_systems(
-                                schedule,
-                                _gauge::derived::update_attribute_derived::<#struct_name>
-                                    .in_set(_gauge::derived::AttributeDerivedSet),
-                            );
-                        }),
-                    }
-                }
-            });
-        }
-
-        if has_writes {
-            registrations.push(quote! {
-                _gauge::inventory::submit! {
-                    _gauge::derived::AttributeRegistration {
-
-                        register_fn: |app| {
-                            use _gauge::derived::AttributesAppExt;
-                            app.register_write_back::<#struct_name>();
-                        },
-                        register_in_schedule_fn: Some(|app, schedule| {
-                            use ::bevy::prelude::*;
-                            app.add_systems(
-                                schedule,
-                                _gauge::derived::update_write_back::<#struct_name>
-                                    .in_set(_gauge::derived::WriteBackSet),
-                            );
-                        }),
-                    }
-                }
-            });
-        }
-
-        if has_init_to {
-            registrations.push(quote! {
-                _gauge::inventory::submit! {
-                    _gauge::derived::AttributeRegistration {
-
-                        register_fn: |app| {
-                            use _gauge::derived::AttributesAppExt;
-                            app.register_init_to::<#struct_name>();
-                        },
-                        register_in_schedule_fn: None,
-                    }
-                }
-            });
-        }
-
-        if has_init_from {
-            registrations.push(quote! {
-                _gauge::inventory::submit! {
-                    _gauge::derived::AttributeRegistration {
-
-                        register_fn: |app| {
-                            use _gauge::derived::AttributesAppExt;
-                            app.register_init_from::<#struct_name>();
-                        },
-                        register_in_schedule_fn: Some(|app, schedule| {
-                            use ::bevy::prelude::*;
-                            app.add_systems(
-                                schedule,
-                                _gauge::derived::apply_init_from::<#struct_name>
-                                    .in_set(_gauge::derived::InitFromSet),
-                            );
-                        }),
-                    }
-                }
-            });
-        }
+        let registrations = [
+            (has_reads, quote! { attribute_derived }),
+            (has_writes, quote! { write_back }),
+            (has_init_to, quote! { init_to }),
+            (has_init_from, quote! { init_from }),
+        ]
+        .into_iter()
+        .filter(|(present, _)| *present)
+        .map(|(_, kind)| quote! { _gauge::_register_attribute!(#kind, #struct_name); });
 
         quote! { #(#registrations)* }
     };
 
     let gauge = crate::path::gauge_root();
     Ok(quote! {
+        #[allow(clippy::unnecessary_cast)]
         const _: () = {
             use #gauge as _gauge;
             #attribute_derived_impl
@@ -550,7 +466,7 @@ fn parse_path_and_tag(attr: &syn::Attribute) -> syn::Result<(AttributePath, Opti
             let mut iter = tokens.into_iter().peekable();
 
             let first = iter.next().ok_or_else(|| {
-                syn::Error::new_spanned(&list, "expected at least a path string")
+                syn::Error::new_spanned(list, "expected at least a path string")
             })?;
 
             let path = if let proc_macro2::TokenTree::Literal(_) = &first {
@@ -569,12 +485,12 @@ fn parse_path_and_tag(attr: &syn::Attribute) -> syn::Result<(AttributePath, Opti
                         return Err(syn::Error::new(p.span(), "expected `,`"));
                     }
                 } else {
-                    return Err(syn::Error::new_spanned(&list, "expected `,` after path"));
+                    return Err(syn::Error::new_spanned(list, "expected `,` after path"));
                 }
                 let rest: proc_macro2::TokenStream = iter.collect();
                 if rest.is_empty() {
                     return Err(syn::Error::new_spanned(
-                        &list,
+                        list,
                         "expected a tag expression after `,`",
                     ));
                 }
