@@ -11,7 +11,14 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! # use bevy::prelude::*;
+//! # use bevy_gauge::prelude::*;
+//! # let mut app = App::new();
+//! # app.add_plugins(AttributesPlugin);
+//! # let e = app.world_mut().spawn(Attributes::new()).id();
+//! # {
+//! # let mut commands = app.world_mut().commands();
 //! commands.entity(e).attrs(|attrs| {
 //!     attrs.flat_attribute("Strength", 50.0);
 //!     attrs.add_expr_modifier("MaxHealth", "Strength * 2.0 + 100.0").unwrap();
@@ -21,6 +28,9 @@
 //!         "base * (1 + increased)",
 //!     ).unwrap();
 //! });
+//! # }
+//! # app.world_mut().flush();
+//! # assert_eq!(app.world().get::<Attributes>(e).unwrap().value("MaxHealth"), 200.0);
 //! ```
 
 use bevy::ecs::system::SystemState;
@@ -53,21 +63,40 @@ struct AttrsEntityCommand {
     f: Box<dyn FnOnce(&mut BoundAttributesMut) + Send + 'static>,
 }
 
+/// The `AttributesMut` system state, kept between `attrs()` commands so each
+/// one doesn't rebuild its query state.
+#[derive(Resource)]
+struct AttrsCommandState(SystemState<AttributesMut<'static, 'static>>);
+
 impl EntityCommand for AttrsEntityCommand {
     type Out = ();
     fn apply(self, entity_world: EntityWorldMut<'_>) {
         let entity = entity_world.id();
         let world = entity_world.into_world_mut();
-        let mut state = SystemState::<AttributesMut>::new(world);
-        let Ok(mut attrs_mut) = state.get_mut(world) else {
-            debug!("could not get attributes for {entity}. skipping...");
-            return;
+        // Taken out rather than borrowed with `resource_scope`: applying the
+        // closure's commands can run another `attrs()` command, which then
+        // builds its own state instead of finding this one missing.
+        let mut state = match world.remove_resource::<AttrsCommandState>() {
+            Some(cached) => cached.0,
+            None => SystemState::new(world),
         };
-        let mut bound = BoundAttributesMut {
-            entity,
-            attrs: &mut attrs_mut,
-        };
-        (self.f)(&mut bound);
-        state.apply(world);
+        match state.get_mut(world) {
+            Ok(mut attrs_mut) => {
+                let mut bound = BoundAttributesMut {
+                    entity,
+                    attrs: &mut attrs_mut,
+                };
+                (self.f)(&mut bound);
+                state.apply(world);
+            }
+            Err(err) => {
+                warn!(
+                    "bevy_gauge: attrs() command for {entity} skipped: AttributesMut is unavailable ({err}). Is AttributesPlugin added?"
+                );
+            }
+        }
+        if !world.contains_resource::<AttrsCommandState>() {
+            world.insert_resource(AttrsCommandState(state));
+        }
     }
 }

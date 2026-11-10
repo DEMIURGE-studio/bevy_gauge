@@ -3,7 +3,7 @@
 ///
 /// # Syntax
 ///
-/// ```ignore
+/// ```text
 /// mod_set! {
 ///     "AttributeName" => value,                         // untagged modifier
 ///     "AttributeName" [TAG_EXPR] => value,              // tagged modifier
@@ -18,14 +18,23 @@
 /// - **`value`** can be an `f32` literal (becomes a flat modifier) or a
 ///   `&str` / string literal (becomes an expression modifier compiled at
 ///   apply time).
-/// - **`TAG_EXPR`** is any Rust expression that evaluates to a [`TagMask`].
+/// - **`TAG_EXPR`** is any Rust expression that evaluates to a [`TagMask`](crate::tags::TagMask).
 ///   Typically `FIRE | MELEE` or `DamageTags::PHYSICAL`.
 /// - **`@build`** adds an [`AttributeBuilder`](crate::modifier_set::AttributeBuilder)
 ///   that runs before modifier entries during apply.
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # use bevy::ecs::system::RunSystemOnce;
+/// # let mut app = App::new();
+/// # app.add_plugins(AttributesPlugin);
+/// # const FIRE: TagMask = TagMask::bit(0);
+/// # const MELEE: TagMask = TagMask::bit(1);
+/// # let entity = app.world_mut().spawn(Attributes::new()).id();
+/// # app.world_mut().run_system_once(move |mut attributes: AttributesMut| {
 /// let set = mod_set! {
 ///     "Damage.base" => 50.0,
 ///     "Damage.Added" [FIRE | MELEE] => 10.0,
@@ -35,6 +44,8 @@
 ///     ),
 /// };
 /// set.apply_all(entity, &mut attributes);
+/// # assert_eq!(attributes.evaluate(entity, "Damage"), 50.0);
+/// # }).unwrap();
 /// ```
 #[macro_export]
 macro_rules! mod_set {
@@ -135,19 +146,25 @@ macro_rules! mod_set {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// # const FIRE: TagMask = TagMask::bit(0);
+/// # const MELEE: TagMask = TagMask::bit(1);
+/// # fn setup(mut commands: Commands) {
 /// commands.spawn((
 ///     Attributes::new(),
 ///     attributes! {
 ///         "Strength" => 50.0,
 ///         "Damage.Added" [FIRE | MELEE] => 10.0,
-///         "Health" => "Strength * 2.0",
+///         "Health.base" => "Strength * 2.0",
 ///         @build ComplexAttribute::new("Health",
 ///             &[("base", ReduceFn::Sum), ("increased", ReduceFn::Sum)],
 ///             "base * (1 + increased)",
 ///         ),
 ///     },
 /// ));
+/// # }
 /// ```
 #[macro_export]
 macro_rules! attributes {

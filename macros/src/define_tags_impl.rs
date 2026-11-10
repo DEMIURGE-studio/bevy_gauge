@@ -102,12 +102,12 @@ fn gen_constants(
     let name_str = tag_node.name.to_string();
     let const_ident = format_ident!("{}", name_str.to_uppercase());
 
-    let mask_expr: proc_macro2::TokenStream;
+    
 
-    if tag_node.children.is_empty() {
+    let mask_expr: proc_macro2::TokenStream = if tag_node.children.is_empty() {
         let bit_index = *counter;
         *counter += 1;
-        mask_expr = quote! { #gauge::tags::TagMask::bit(#bit_index) };
+        quote! { #gauge::tags::TagMask::bit(#bit_index) }
     } else {
         let child_exprs: Vec<_> = tag_node
             .children
@@ -116,10 +116,10 @@ fn gen_constants(
             .collect();
 
         // OR together via raw u64 bits so the result is a const expression.
-        mask_expr = quote! {
+        quote! {
             #gauge::tags::TagMask::new(#(#child_exprs .0)|*)
-        };
-    }
+        }
+    };
 
     const_defs.push(quote! {
         pub const #const_ident: #gauge::tags::TagMask = #mask_expr;

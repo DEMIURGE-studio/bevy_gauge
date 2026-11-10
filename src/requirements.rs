@@ -4,25 +4,33 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! # use bevy::prelude::*;
+//! # use bevy_gauge::prelude::*;
+//! # fn setup(mut commands: Commands) {
 //! // As a component on a state-machine edge:
 //! commands.spawn((
 //!     requires! { "ProjectileLife <= 0" },
 //!     // ...
 //! ));
-//!
+//! # }
+//! # fn check(attribute_requirements: &AttributeRequirements, attrs: &Attributes) {
 //! // Checking requirements in a system:
-//! if attribute_requirements.met(&attrs) {
+//! if attribute_requirements.met(attrs) {
 //!     // all requirements satisfied
 //! }
+//! # }
 //! ```
+
+use std::sync::OnceLock;
 
 use bevy::ecs::lifecycle::HookContext;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 
 use crate::attributes::Attributes;
-use crate::expr::Expr;
+use crate::expr::{Dependency, Expr};
+use crate::tags::TagResolver;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -30,78 +38,90 @@ use crate::expr::Expr;
 
 /// A single boolean requirement over attributes.
 ///
-/// The expression is compiled eagerly when [`AttributeRequirements`] is added
-/// to an entity (via a component hook), or lazily on first [`met`](Self::met)
-/// call as a fallback.
+/// The expression is compiled once. When [`AttributeRequirements`] is added
+/// to an entity, a component hook compiles it against the app's
+/// [`TagResolver`], so `{TAG}` syntax works. A requirement that was never
+/// compiled that way compiles itself on its first [`met`](Self::met) call,
+/// without tag support. An expression that fails to compile logs its error
+/// once and is never met.
 #[derive(Clone, Debug)]
 pub struct AttributeRequirement {
     source: String,
-    compiled: Option<Expr>,
+    /// `None` inside once compilation was attempted and failed.
+    compiled: OnceLock<Option<Expr>>,
 }
 
 impl AttributeRequirement {
     /// Create a new requirement from an expression string.
     ///
-    /// The expression is stored but not compiled until [`compile`](Self::compile)
-    /// is called (typically by the component hook) or first evaluation.
+    /// The expression is stored but not compiled until
+    /// [`compile_with`](Self::compile_with) (typically from the component
+    /// hook), [`compile`](Self::compile), or its first evaluation.
     pub fn new(source: impl Into<String>) -> Self {
         Self {
             source: source.into(),
-            compiled: None,
+            compiled: OnceLock::new(),
         }
     }
 
     #[cfg(test)]
     fn compiled(source: impl Into<String>) -> Self {
-        let source = source.into();
-        Self {
-            compiled: Self::compile_internal(source.as_str()),
-            source,
-        }
+        let mut req = Self::new(source);
+        req.compile();
+        req
     }
 
-    /// Compile the expression eagerly. Called by the component hook.
+    /// Compile the expression without a tag resolver (no `{TAG}` syntax).
+    /// Does nothing if it was already compiled.
     pub fn compile(&mut self) {
-        if self.compiled.is_some() {
-            return;
-        }
-        if let Some(expr) = Self::compile_internal(&self.source) {
-            self.compiled = Some(expr);
-        }
+        self.compiled.get_or_init(|| compile_source(&self.source, None));
     }
 
-    fn compile_internal(source: &str) -> Option<Expr> {
-        match Expr::compile(source, None) {
-            Ok(expr) => Some(expr),
-            Err(err) => {
-                warn!(
-                    "AttributeRequirement compile error for '{}': {}",
-                    source, err
-                );
-                None
-            }
-        }
+    /// Compile the expression against `resolver`, so it can use `{TAG}`
+    /// syntax. Does nothing if it was already compiled. Called by the
+    /// component hook.
+    pub fn compile_with(&mut self, resolver: &TagResolver) {
+        self.compiled
+            .get_or_init(|| compile_source(&self.source, Some(resolver)));
     }
 
-    /// Check whether this requirement is satisfied.
+    /// Check whether this requirement is satisfied. Compiles the expression
+    /// (without tag support) if nothing has compiled it yet.
     ///
-    /// Panics if the expression hasn't been compiled yet.
+    /// `{TAG}` queries are answered by [`Attributes::get_tagged`], so they
+    /// work whether or not anything registered the query on that entity.
     pub fn met(&self, attrs: &Attributes) -> bool {
-        match &self.compiled {
-            Some(expr) => expr.evaluate(&attrs.context) != 0.0,
-            None => {
-                warn!(
-                    "AttributeRequirement::check called before compile for '{}'",
-                    self.source
-                );
-                false
+        let Some(expr) = self.compiled.get_or_init(|| compile_source(&self.source, None)) else {
+            return false;
+        };
+        let value = expr.evaluate_with(|id| {
+            let tag_query = expr.dependencies().iter().find_map(|dep| match dep {
+                Dependency::TagQuery { attribute, mask, synthetic } if *synthetic == id => {
+                    Some((*attribute, *mask))
+                }
+                _ => None,
+            });
+            match tag_query {
+                Some((attribute, mask)) => attrs.get_tagged(attribute, mask),
+                None => attrs.context.get(id),
             }
-        }
+        });
+        value != 0.0
     }
 
     /// Get the source expression string.
     pub fn source(&self) -> &str {
         &self.source
+    }
+}
+
+fn compile_source(source: &str, resolver: Option<&TagResolver>) -> Option<Expr> {
+    match Expr::compile(source, resolver) {
+        Ok(expr) => Some(expr),
+        Err(err) => {
+            warn!("AttributeRequirement '{source}' failed to compile ({err}); it will never be met");
+            None
+        }
     }
 }
 
@@ -117,18 +137,39 @@ impl<S: Into<String>> From<S> for AttributeRequirement {
 
 /// A component holding one or more boolean attribute requirements.
 ///
-/// All requirements must be satisfied for [`check`](Self::check) to return `true`.
-/// Expressions are compiled eagerly via a component hook when this is added to
-/// an entity.
+/// All requirements must be satisfied for [`met`](Self::met) to return `true`.
+/// Expressions are compiled against the app's [`TagResolver`] by a component
+/// hook when this is added to an entity.
 #[derive(Component, Debug, Default, Clone)]
 #[component(on_add = compile_requirements_hook)]
 pub struct AttributeRequirements(pub Vec<AttributeRequirement>);
 
 fn compile_requirements_hook(mut world: DeferredWorld, ctx: HookContext) {
+    // Compile against a borrowed resolver, then store: the component can't be
+    // borrowed mutably while the resource is borrowed.
+    let compiled: Vec<Option<Option<Expr>>> = {
+        let Some(reqs) = world.get::<AttributeRequirements>(ctx.entity) else {
+            return;
+        };
+        let resolver = world.get_resource::<TagResolver>();
+        reqs.0
+            .iter()
+            .map(|req| {
+                req.compiled
+                    .get()
+                    .is_none()
+                    .then(|| compile_source(&req.source, resolver))
+            })
+            .collect()
+    };
     let Some(mut reqs) = world.get_mut::<AttributeRequirements>(ctx.entity) else {
         return;
     };
-    reqs.compile();
+    for (req, compiled) in reqs.0.iter_mut().zip(compiled) {
+        if let Some(compiled) = compiled {
+            let _ = req.compiled.set(compiled);
+        }
+    }
 }
 
 impl AttributeRequirements {
@@ -146,10 +187,17 @@ impl AttributeRequirements {
         self.0.extend(other.0.iter().cloned());
     }
 
-    /// Compile each [`AttributeRequirement`] eagerly. Called by the component hook.
+    /// Compile each [`AttributeRequirement`] without a tag resolver.
     pub fn compile(&mut self) {
         for req in self.0.iter_mut() {
             req.compile();
+        }
+    }
+
+    /// Compile each [`AttributeRequirement`] against `resolver`.
+    pub fn compile_with(&mut self, resolver: &TagResolver) {
+        for req in self.0.iter_mut() {
+            req.compile_with(resolver);
         }
     }
 
@@ -187,9 +235,12 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
-/// requires! { "ProjectileLife <= 0" }
-/// requires! { "Strength >= 10", "Level >= 5" }
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
+/// let one = requires! { "ProjectileLife <= 0" };
+/// let all = requires! { "Strength >= 10", "Level >= 5" };
+/// # assert_eq!((one.len(), all.len()), (1, 2));
 /// ```
 #[macro_export]
 macro_rules! requires {

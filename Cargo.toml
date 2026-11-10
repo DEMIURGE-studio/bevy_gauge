@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gauge"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 description = "A flexible attribute and stat system for Bevy"
 license = "MIT OR Apache-2.0"
@@ -11,11 +11,11 @@ default = []
 avian3d = ["dep:avian3d"]
 
 [dependencies]
-bevy = { version = "0.19.0", default-features = false, features = ["bevy_log"] }
+bevy = { version = "0.20.1", default-features = false, features = ["bevy_log"] }
 lasso = { version = "0.7", features = ["multi-threaded"] }
 inventory = "0.3"
-bevy_gauge_macros = { path = "./macros", version = "0.5.1" }
-avian3d = { version = "0.7", default-features = false, features = ["3d", "f32", "parry-f32"], optional = true }
+bevy_gauge_macros = { path = "./macros", version = "0.6.0" }
+avian3d = { version = "0.8", default-features = false, features = ["3d", "parry-f32"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

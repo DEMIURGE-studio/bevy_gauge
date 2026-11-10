@@ -27,7 +27,7 @@ impl Modifier {
 impl PartialEq for Modifier {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Modifier::Flat(a), Modifier::Flat(b)) => (a - b).abs() < f32::EPSILON,
+            (Modifier::Flat(a), Modifier::Flat(b)) => a == b,
             (Modifier::Expr(a), Modifier::Expr(b)) => a == b,
             _ => false,
         }

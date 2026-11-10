@@ -13,13 +13,23 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! # use bevy::prelude::*;
+//! # use bevy_gauge::prelude::*;
+//! # use bevy::ecs::system::RunSystemOnce;
+//! # let mut app = App::new();
+//! # app.add_plugins(AttributesPlugin);
+//! # let defender = app.world_mut().spawn(attributes! { "Doom" => 3.0 }).id();
+//! # app.world_mut().run_system_once(move |mut attributes: AttributesMut| {
+//! # let roles = [("target", defender)];
 //! let instant = instant! {
 //!     "Scorch" += 1.0,
 //!     "Doom" += "-Doom@target",
 //!     "ProjectileLife" -= 1.0,
 //! };
 //! attributes.apply_instant(&instant, &roles, defender);
+//! # assert_eq!(attributes.evaluate(defender, "Doom"), 0.0);
+//! # }).unwrap();
 //! ```
 
 use bevy::ecs::query::QueryFilter;
@@ -58,6 +68,77 @@ pub struct InstantEntry {
     /// The value - either a literal f32 or an expression source string that
     /// is compiled at apply time.
     pub value: ModifierValue,
+    /// The parsed attribute name and compiled expression, reused while the
+    /// tag resolver they were built against is unchanged.
+    compiled: CompiledCache,
+}
+
+impl InstantEntry {
+    pub fn new(attribute: &str, op: InstantOp, value: impl Into<ModifierValue>) -> Self {
+        Self {
+            attribute: attribute.to_string(),
+            op,
+            value: value.into(),
+            compiled: CompiledCache::default(),
+        }
+    }
+
+    /// This entry parsed and compiled against `resolver`, from the cache when
+    /// it is still current. Errors are logged once per compile, not per apply.
+    fn compiled(&self, resolver: &crate::tags::TagResolver) -> std::sync::Arc<CompiledEntry> {
+        let version = resolver.version();
+        let mut slot = self.compiled.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cached) = slot.as_ref().filter(|c| c.version == version) {
+            return cached.clone();
+        }
+        let attribute = parse_attribute_tag(&self.attribute, resolver);
+        if let Err(err) = &attribute {
+            warn!(
+                "bevy_gauge: instant attribute '{}' has a bad tag ({err:?}); the entry is skipped",
+                self.attribute
+            );
+        }
+        let expr = match &self.value {
+            ModifierValue::Literal(_) => None,
+            ModifierValue::ExprSource(src) => {
+                let compiled = Expr::compile(src, Some(resolver));
+                if let Err(err) = &compiled {
+                    warn!(
+                        "bevy_gauge: instant expression '{src}' for '{}' failed to compile ({err:?}); the entry is skipped",
+                        self.attribute
+                    );
+                }
+                Some(compiled)
+            }
+        };
+        let entry = std::sync::Arc::new(CompiledEntry { version, attribute, expr });
+        *slot = Some(entry.clone());
+        entry
+    }
+}
+
+/// An [`InstantEntry`] parsed and compiled against one resolver version.
+struct CompiledEntry {
+    version: crate::tags::ResolverVersion,
+    attribute: Result<(String, Option<TagMask>), CompileError>,
+    /// `None` for a literal value.
+    expr: Option<Result<Expr, CompileError>>,
+}
+
+#[derive(Default)]
+struct CompiledCache(std::sync::Mutex<Option<std::sync::Arc<CompiledEntry>>>);
+
+impl Clone for CompiledCache {
+    fn clone(&self) -> Self {
+        let cached = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        Self(std::sync::Mutex::new(cached))
+    }
+}
+
+impl std::fmt::Debug for CompiledCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CompiledCache")
+    }
 }
 
 /// A portable collection of one-shot attribute operations.
@@ -67,7 +148,7 @@ pub struct InstantEntry {
 /// operations once and does not leave any modifiers behind.
 ///
 /// Build one with the [`instant!`](crate::instant!) macro or the builder
-/// methods, then apply it via [`apply_instant`].
+/// methods, then apply it via [`apply_instant`](InstantExt::apply_instant).
 #[derive(Component, Clone, Debug, Default)]
 pub struct InstantModifierSet {
     pub(crate) entries: Vec<InstantEntry>,
@@ -80,29 +161,17 @@ impl InstantModifierSet {
 
     /// Push a **Set** operation (overwrites the attribute value).
     pub fn push_set(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
-        self.entries.push(InstantEntry {
-            attribute: attribute.to_string(),
-            op: InstantOp::Set,
-            value: value.into(),
-        });
+        self.entries.push(InstantEntry::new(attribute, InstantOp::Set, value));
     }
 
     /// Push an **Add** operation (adds to the current attribute value).
     pub fn push_add(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
-        self.entries.push(InstantEntry {
-            attribute: attribute.to_string(),
-            op: InstantOp::Add,
-            value: value.into(),
-        });
+        self.entries.push(InstantEntry::new(attribute, InstantOp::Add, value));
     }
 
     /// Push a **Sub** operation (subtracts from the current attribute value).
     pub fn push_sub(&mut self, attribute: &str, value: impl Into<ModifierValue>) {
-        self.entries.push(InstantEntry {
-            attribute: attribute.to_string(),
-            op: InstantOp::Sub,
-            value: value.into(),
-        });
+        self.entries.push(InstantEntry::new(attribute, InstantOp::Sub, value));
     }
 
     pub fn len(&self) -> usize {
@@ -300,45 +369,62 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
         roles: RoleMap,
         target_entity: Entity,
     ) -> Vec<EvaluatedInstantEntry> {
+        // Register roles as temporary source aliases - but never clobber an
+        // alias that already exists on the target. Only aliases we actually
+        // registered are unregistered afterwards.
+        let mut registered: Vec<&str> = Vec::new();
         for &(role_name, role_entity) in roles {
-            self.register_source(target_entity, role_name, role_entity);
+            match self.resolve_source(target_entity, role_name) {
+                Some(existing) if existing != role_entity => {
+                    warn!(
+                        "bevy_gauge: instant role '{role_name}' collides with an \
+                         existing source alias on {target_entity:?} (currently -> \
+                         {existing:?}); keeping the existing alias. Consider \
+                         prefixing instant role names, e.g. '_{role_name}'."
+                    );
+                }
+                Some(_) => {
+                    // Already points at the role entity; leave it in place.
+                }
+                None => {
+                    self.register_source(target_entity, role_name, role_entity);
+                    registered.push(role_name);
+                }
+            }
         }
 
         let mut out = Vec::with_capacity(instant.entries.len());
 
         for entry in &instant.entries {
-            let (base_attr, tag) = parse_attribute_tag(&entry.attribute, self.tag_resolver())
-                .unwrap_or_else(|_| (entry.attribute.clone(), None));
+            // A bad tag or an expression that doesn't compile skips the entry
+            // (logged when compiled): writing to a literal `Damage{TYPO}`, or
+            // applying 0.0 (a Set would zero the attribute), are both worse.
+            let compiled = entry.compiled(self.tag_resolver());
+            let Ok((base_attr, tag)) = &compiled.attribute else {
+                continue;
+            };
 
-            let value = match &entry.value {
-                ModifierValue::Literal(v) => *v,
-                ModifierValue::ExprSource(src) => {
-                    let expr = crate::expr::Expr::compile(
-                        src,
-                        Some(self.tag_resolver()),
-                    );
-                    match expr {
-                        Ok(compiled) => {
-                            self.cache_expr_source_values(target_entity, &compiled);
-                            match AttributeQueries::get_attributes(self, target_entity) {
-                                Some(attrs) => compiled.evaluate(&attrs.context),
-                                None => 0.0,
-                            }
-                        }
-                        Err(_) => 0.0,
+            let value = match (&entry.value, &compiled.expr) {
+                (ModifierValue::Literal(v), _) => *v,
+                (ModifierValue::ExprSource(_), Some(Ok(expr))) => {
+                    self.cache_expr_source_values(target_entity, expr);
+                    match AttributeQueries::get_attributes(self, target_entity) {
+                        Some(attrs) => expr.evaluate(&attrs.context),
+                        None => 0.0,
                     }
                 }
+                (ModifierValue::ExprSource(_), _) => continue,
             };
 
             out.push(EvaluatedInstantEntry {
-                attribute: base_attr,
+                attribute: base_attr.clone(),
                 op: entry.op.clone(),
                 value,
-                tag,
+                tag: *tag,
             });
         }
 
-        for &(role_name, _) in roles {
+        for role_name in registered {
             self.unregister_source(target_entity, role_name);
         }
 
@@ -358,21 +444,26 @@ impl<'w, 's, F: QueryFilter> InstantExt for AttributesMut<'w, 's, F> {
                 (InstantOp::Set, None) => {
                     self.set_base(target_entity, &entry.attribute, entry.value);
                 }
+                // Add/Sub adjust the FLAT BASE (the modifiers that set_base
+                // replaces), not the fully-evaluated value. For a Sum node
+                // this makes the final value exactly `old_total ± delta`.
+                // Reading the evaluated value here would bake expression
+                // modifiers into the base and count them twice.
                 (InstantOp::Add, Some(tag)) => {
-                    let current = self.evaluate_tagged(target_entity, &entry.attribute, tag);
-                    self.set_base_tagged(target_entity, &entry.attribute, current + entry.value, tag);
+                    let base = self.flat_base(target_entity, &entry.attribute, tag);
+                    self.set_base_tagged(target_entity, &entry.attribute, base + entry.value, tag);
                 }
                 (InstantOp::Add, None) => {
-                    let current = self.evaluate(target_entity, &entry.attribute);
-                    self.set_base(target_entity, &entry.attribute, current + entry.value);
+                    let base = self.flat_base(target_entity, &entry.attribute, TagMask::NONE);
+                    self.set_base(target_entity, &entry.attribute, base + entry.value);
                 }
                 (InstantOp::Sub, Some(tag)) => {
-                    let current = self.evaluate_tagged(target_entity, &entry.attribute, tag);
-                    self.set_base_tagged(target_entity, &entry.attribute, current - entry.value, tag);
+                    let base = self.flat_base(target_entity, &entry.attribute, tag);
+                    self.set_base_tagged(target_entity, &entry.attribute, base - entry.value, tag);
                 }
                 (InstantOp::Sub, None) => {
-                    let current = self.evaluate(target_entity, &entry.attribute);
-                    self.set_base(target_entity, &entry.attribute, current - entry.value);
+                    let base = self.flat_base(target_entity, &entry.attribute, TagMask::NONE);
+                    self.set_base(target_entity, &entry.attribute, base - entry.value);
                 }
             }
         }
@@ -495,11 +586,7 @@ fn substitute_tag_params(
             }
             other => other.clone(),
         };
-        out.entries.push(InstantEntry {
-            attribute: attr,
-            op: entry.op.clone(),
-            value,
-        });
+        out.entries.push(InstantEntry::new(&attr, entry.op.clone(), value));
     }
     Ok(out)
 }
@@ -512,7 +599,7 @@ fn substitute_tag_params(
 ///
 /// # Syntax
 ///
-/// ```ignore
+/// ```text
 /// instant! {
 ///     "AttributeName" = value,             // Set
 ///     "AttributeName" += value,            // Add
@@ -528,13 +615,16 @@ fn substitute_tag_params(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy::prelude::*;
+/// # use bevy_gauge::prelude::*;
 /// let effects = instant! {
 ///     "Scorch" += 1.0,
 ///     "Doom" += "-Doom@target",
 ///     "ProjectileLife" -= 1.0,
 ///     "Health" = "Strength@attacker * 0.5",
 /// };
+/// # assert_eq!(effects.len(), 4);
 /// ```
 #[macro_export]
 macro_rules! instant {
