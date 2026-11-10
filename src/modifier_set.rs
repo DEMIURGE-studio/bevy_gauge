@@ -108,7 +108,8 @@ impl AttributeBuilder for ComplexAttribute {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use bevy_gauge::prelude::*;
 /// let builder = TaggedAttribute::new("Damage",
 ///     &[("added", ReduceFn::Sum), ("increased", ReduceFn::Sum), ("more", ReduceFn::Product)],
 ///     "added * (1 + increased) * more",

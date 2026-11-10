@@ -1,5 +1,5 @@
 //! `#[derive(AttributeResolvable)]`: f64 and full-path primitive fields,
-//! enums, generics, and the per-prefix path cache.
+//! enums, generics, the per-prefix path cache, and leaving unset fields alone.
 
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
@@ -141,3 +141,22 @@ fn generic_structs_derive() {
     assert_eq!(wrapped, Wrapper { value: 6, scale: 0.5 });
 }
 
+#[derive(AttributeResolvable, Debug, PartialEq)]
+struct Gatherer {
+    radius: f32,
+    count: usize,
+    enabled: bool,
+}
+
+#[test]
+fn unset_fields_keep_their_authored_values() {
+    // Driving one field from gauge must not zero its siblings.
+    let (app, e) = attrs_with(&[("Gatherer.count", 3.0)]);
+    let attrs = app.world().get::<Attributes>(e).unwrap();
+
+    let mut g = Gatherer { radius: 2.5, count: 1, enabled: true };
+    assert!(g.should_resolve("Gatherer", attrs));
+    g.resolve("Gatherer", attrs);
+    assert_eq!(g, Gatherer { radius: 2.5, count: 3, enabled: true });
+    assert!(!g.should_resolve("Gatherer", attrs), "unset fields don't ask to resolve");
+}

@@ -10,7 +10,8 @@ fn is_skip(field: &syn::Field) -> bool {
 
 /// How generated code reaches one field's attribute.
 struct FieldAccess {
-    /// An `f32` expression: the attribute's current value.
+    /// An `Option<f32>` expression: the attribute's current value, or `None`
+    /// if the entity doesn't have it (the field is then left alone).
     value: TokenStream,
     /// A `&str` expression: the attribute path, for delegating to a composite.
     path: TokenStream,
@@ -20,7 +21,7 @@ impl FieldAccess {
     /// The field is the whole value (a single resolvable field): use the prefix itself.
     fn transparent() -> Self {
         Self {
-            value: quote! { attrs.value(prefix) },
+            value: quote! { attrs.try_value(prefix) },
             path: quote! { prefix },
         }
     }
@@ -28,7 +29,7 @@ impl FieldAccess {
     /// The field's entry in the `__paths` slice fetched from the type's cache.
     fn cached(index: usize) -> Self {
         Self {
-            value: quote! { attrs.get(__paths[#index].id) },
+            value: quote! { attrs.try_get(__paths[#index].id) },
             path: quote! { &*__paths[#index].path },
         }
     }
@@ -40,17 +41,17 @@ fn gen_should_resolve(target: &TokenStream, kind: FieldKind, ty: &Type, access: 
     let FieldAccess { value, path } = access;
     match kind {
         FieldKind::Float => quote! {
-            if _gauge::resolvable::float_differs(#target as f32, #value) {
+            if (#value).is_some_and(|__v| _gauge::resolvable::float_differs(#target as f32, __v)) {
                 return true;
             }
         },
         FieldKind::Integer => quote! {
-            if #target != (#value).round() as #ty {
+            if (#value).is_some_and(|__v| #target != __v.round() as #ty) {
                 return true;
             }
         },
         FieldKind::Bool => quote! {
-            if #target != (#value != 0.0) {
+            if (#value).is_some_and(|__v| #target != (__v != 0.0)) {
                 return true;
             }
         },
@@ -66,9 +67,15 @@ fn gen_should_resolve(target: &TokenStream, kind: FieldKind, ty: &Type, access: 
 fn gen_resolve(target: &TokenStream, kind: FieldKind, ty: &Type, access: &FieldAccess) -> TokenStream {
     let FieldAccess { value, path } = access;
     match kind {
-        FieldKind::Float => quote! { #target = (#value) as #ty; },
-        FieldKind::Integer => quote! { #target = (#value).round() as #ty; },
-        FieldKind::Bool => quote! { #target = #value != 0.0; },
+        FieldKind::Float => quote! {
+            if let Some(__v) = #value { #target = __v as #ty; }
+        },
+        FieldKind::Integer => quote! {
+            if let Some(__v) = #value { #target = __v.round() as #ty; }
+        },
+        FieldKind::Bool => quote! {
+            if let Some(__v) = #value { #target = __v != 0.0; }
+        },
         FieldKind::Composite => quote! {
             _gauge::resolvable::AttributeResolvable::resolve(&mut #target, #path, attrs);
         },

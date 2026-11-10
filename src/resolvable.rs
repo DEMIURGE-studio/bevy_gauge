@@ -5,6 +5,10 @@
 //! Duration) read a single attribute value. Composite types delegate to their
 //! fields, appending the field name to the prefix.
 //!
+//! A terminal whose attribute doesn't exist on the entity is left as it is
+//! (and never asks to be resolved), so gauge can drive some fields of a
+//! composite while the rest keep their authored values.
+//!
 //! # Path convention
 //!
 //! Given:
@@ -67,22 +71,26 @@ pub trait AttributeResolvable {
 
 impl AttributeResolvable for f32 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        !crate::expr::approx_eq(*self, attrs.value(prefix))
+        attrs.try_value(prefix).is_some_and(|v| float_differs(*self, v))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix);
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v;
+        }
     }
 }
 
 impl AttributeResolvable for f64 {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
         // Attribute values are f32; compare at f32 precision.
-        !crate::expr::approx_eq(*self as f32, attrs.value(prefix))
+        attrs.try_value(prefix).is_some_and(|v| float_differs(*self as f32, v))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix) as f64;
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v as f64;
+        }
     }
 }
 
@@ -94,11 +102,13 @@ macro_rules! impl_resolvable_int {
     ($($ty:ty),*) => {$(
         impl AttributeResolvable for $ty {
             fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-                *self != attrs.value(prefix).round() as $ty
+                attrs.try_value(prefix).is_some_and(|v| *self != v.round() as $ty)
             }
 
             fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-                *self = attrs.value(prefix).round() as $ty;
+                if let Some(v) = attrs.try_value(prefix) {
+                    *self = v.round() as $ty;
+                }
             }
         }
     )*};
@@ -112,11 +122,13 @@ impl_resolvable_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 
 impl AttributeResolvable for bool {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        *self != (attrs.value(prefix) != 0.0)
+        attrs.try_value(prefix).is_some_and(|v| *self != (v != 0.0))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        *self = attrs.value(prefix) != 0.0;
+        if let Some(v) = attrs.try_value(prefix) {
+            *self = v != 0.0;
+        }
     }
 }
 
@@ -124,20 +136,23 @@ impl AttributeResolvable for bool {
 // Terminal impls — Duration
 // ---------------------------------------------------------------------------
 
-/// Resolves from seconds. Zero is a valid duration; only negative or
-/// non-finite values are ignored (a `Duration` can't represent them).
+/// Resolves from seconds. Zero is a valid duration; negative or non-finite
+/// values are ignored (a `Duration` can't represent them), as is a missing
+/// attribute.
 impl AttributeResolvable for Duration {
     fn should_resolve(&self, prefix: &str, attrs: &Attributes) -> bool {
-        let secs = attrs.value(prefix);
-        secs >= 0.0 && secs.is_finite() && !crate::expr::approx_eq(self.as_secs_f32(), secs)
+        duration_secs(prefix, attrs).is_some_and(|secs| float_differs(self.as_secs_f32(), secs))
     }
 
     fn resolve(&mut self, prefix: &str, attrs: &Attributes) {
-        let secs = attrs.value(prefix);
-        if secs >= 0.0 && secs.is_finite() {
+        if let Some(secs) = duration_secs(prefix, attrs) {
             *self = Duration::from_secs_f32(secs);
         }
     }
+}
+
+fn duration_secs(prefix: &str, attrs: &Attributes) -> Option<f32> {
+    attrs.try_value(prefix).filter(|secs| *secs >= 0.0 && secs.is_finite())
 }
 
 // ---------------------------------------------------------------------------

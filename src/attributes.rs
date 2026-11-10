@@ -126,6 +126,20 @@ impl Attributes {
         }
     }
 
+    /// Read an attribute by id, or `None` if this entity doesn't have it.
+    ///
+    /// Unlike [`get`](Self::get), this tells "unset" apart from `0.0`.
+    pub fn try_get(&self, id: AttributeId) -> Option<f32> {
+        self.has_attribute(id).then(|| self.context.get(id))
+    }
+
+    /// Read an attribute by name, or `None` if this entity doesn't have it.
+    ///
+    /// Unlike [`value`](Self::value), this tells "unset" apart from `0.0`.
+    pub fn try_value(&self, name: &str) -> Option<f32> {
+        self.try_get(AttributeId(global_rodeo().get(name)?))
+    }
+
     /// Check if a attribute node exists.
     pub fn has_attribute(&self, id: AttributeId) -> bool {
         self.nodes.contains_key(&id)
